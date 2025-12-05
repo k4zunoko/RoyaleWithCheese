@@ -1,5 +1,6 @@
 mod domain;
 mod logging;
+mod application;
 
 use crate::logging::init_logging;
 use std::path::PathBuf;
