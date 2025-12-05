@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
 
-use crate::domain::{DomainError, DomainResult, HsvRange, ProcessorBackend, Roi};
+use crate::domain::{DomainError, DomainResult, HsvRange, Roi};
 
 /// アプリケーション設定のルート構造
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub capture: CaptureConfig,
@@ -45,14 +46,17 @@ impl Default for CaptureConfig {
 }
 
 impl CaptureConfig {
+    #[allow(dead_code)]
     pub fn timeout(&self) -> Duration {
         Duration::from_millis(self.timeout_ms)
     }
 
+    #[allow(dead_code)]
     pub fn reinit_initial_delay(&self) -> Duration {
         Duration::from_millis(self.reinit_initial_delay_ms)
     }
 
+    #[allow(dead_code)]
     pub fn reinit_max_delay(&self) -> Duration {
         Duration::from_millis(self.reinit_max_delay_ms)
     }
@@ -205,6 +209,7 @@ impl Default for AppConfig {
 
 impl AppConfig {
     /// TOMLファイルから設定を読み込む
+    #[allow(dead_code)]
     pub fn from_file<P: AsRef<Path>>(path: P) -> DomainResult<Self> {
         let content = std::fs::read_to_string(path).map_err(|e| {
             DomainError::Configuration(format!("Failed to read config file: {}", e))
@@ -216,6 +221,7 @@ impl AppConfig {
     }
 
     /// デフォルト設定をTOMLファイルに書き出す
+    #[allow(dead_code)]
     pub fn write_default<P: AsRef<Path>>(path: P) -> DomainResult<()> {
         let config = Self::default();
         let content = toml::to_string_pretty(&config).map_err(|e| {
@@ -228,6 +234,7 @@ impl AppConfig {
     }
 
     /// 設定の妥当性を検証
+    #[allow(dead_code)]
     pub fn validate(&self) -> DomainResult<()> {
         // ROIの検証
         if self.process.roi.width == 0 || self.process.roi.height == 0 {

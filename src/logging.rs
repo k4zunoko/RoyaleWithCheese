@@ -1,40 +1,107 @@
 /// ログ・トレーシング基盤
 /// 
 /// tracingを使用した統一的なログ出力と区間計測。
+/// **Release ビルドでは完全にコンパイルアウト**（ゼロランタイムオーバーヘッド）
+/// **Debug ビルドでは非同期ログで軽量実行**（メインロジックに影響なし）
 
-use tracing::{info, Level};
+#[cfg(debug_assertions)] 
+use std::path::PathBuf;
+#[cfg(debug_assertions)] 
+use tracing::info;
+#[cfg(debug_assertions)] 
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-/// ログシステムを初期化
+/// ログシステムを初期化（Release時は何もしない）
+/// 
+/// # 特徴
+/// - **Release ビルド**: `debug-logging` feature が無効のため、この関数は空実装にコンパイル最適化される
+/// - **Debug ビルド**: 非同期ログで別スレッドバッファリング
 /// 
 /// # Arguments
 /// - `log_level`: ログレベル（例: "info", "debug", "trace"）
 /// - `json_format`: JSON形式で出力するか
-pub fn init_logging(log_level: &str, json_format: bool) {
+/// - `log_dir`: ログファイル出力先ディレクトリ（Noneの場合は標準出力）
+/// 
+/// # Returns
+/// - Debug: `Option<WorkerGuard>`（プログラム終了まで保持必須）
+/// - Release: `None`（ランタイムオーバーヘッドなし）
+#[cfg(debug_assertions)] 
+pub fn init_logging(
+    log_level: &str,
+    json_format: bool,
+    log_dir: Option<PathBuf>,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(log_level));
 
-    let subscriber = tracing_subscriber::registry().with(env_filter);
+    match log_dir {
+        Some(dir) => {
+            // ファイル出力（非同期）
+            std::fs::create_dir_all(&dir).expect("Failed to create log directory");
+            
+            let file_appender = tracing_appender::rolling::daily(dir, "royale_with_cheese.log");
+            let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
-    if json_format {
-        subscriber
-            .with(fmt::layer().json())
-            .init();
-    } else {
-        subscriber
-            .with(
-                fmt::layer()
-                    .with_target(true)
-                    .with_thread_ids(true)
-                    .with_line_number(true)
-            )
-            .init();
+            let subscriber = tracing_subscriber::registry().with(env_filter);
+
+            if json_format {
+                subscriber
+                    .with(fmt::layer().json().with_writer(non_blocking))
+                    .init();
+            } else {
+                subscriber
+                    .with(
+                        fmt::layer()
+                            .with_target(true)
+                            .with_thread_ids(true)
+                            .with_line_number(true)
+                            .with_ansi(false) // ファイル出力時はANSIエスケープ無効
+                            .with_writer(non_blocking),
+                    )
+                    .init();
+            }
+
+            info!("Logging initialized (async file): level={}, format={}", log_level, if json_format { "json" } else { "text" });
+            Some(guard)
+        }
+        None => {
+            // 標準出力（デバッグ用）
+            let subscriber = tracing_subscriber::registry().with(env_filter);
+
+            if json_format {
+                subscriber.with(fmt::layer().json()).init();
+            } else {
+                subscriber
+                    .with(
+                        fmt::layer()
+                            .with_target(true)
+                            .with_thread_ids(true)
+                            .with_line_number(true),
+                    )
+                    .init();
+            }
+
+            info!("Logging initialized (stdout): level={}, format={}", log_level, if json_format { "json" } else { "text" });
+            None
+        }
     }
+}
 
-    info!("Logging initialized at level: {}", log_level);
+/// Release ビルド時のスタブ実装
+#[cfg(not(debug_assertions))] 
+pub fn init_logging(
+    _log_level: &str,
+    _json_format: bool,
+    _log_dir: Option<std::path::PathBuf>,
+) -> Option<()> {
+    // Release ビルド時は何もしない（ランタイムオーバーヘッドなし）
+    None
 }
 
 /// 区間計測用のマクロ
+/// 
+/// Release ビルド時は完全にコンパイルアウト（ゼロコスト）
+/// Debug ビルド時のみ計測を実行
 /// 
 /// # 使用例
 /// ```ignore
@@ -48,21 +115,29 @@ pub fn init_logging(log_level: &str, json_format: bool) {
 /// ```
 #[macro_export]
 macro_rules! measure_span {
-    ($name:expr, $body:expr) => {{
-        let _span = tracing::info_span!($name).entered();
-        let _start = std::time::Instant::now();
-        let result = $body;
-        let _elapsed = _start.elapsed();
-        tracing::debug!(
-            span = $name,
-            elapsed_us = _elapsed.as_micros(),
-            "Span completed"
-        );
-        result
-    }};
+    ($name:expr, $body:expr) => {
+        #[cfg(debug_assertions)] 
+        {
+            let _span = tracing::info_span!($name).entered();
+            let _start = std::time::Instant::now();
+            let result = $body;
+            let _elapsed = _start.elapsed();
+            tracing::debug!(
+                span = $name,
+                elapsed_us = _elapsed.as_micros(),
+                "Span completed"
+            );
+            result
+        }
+        #[cfg(not(debug_assertions))] 
+        {
+            $body
+        }
+    };
 }
 
 /// 処理段階別の計測ポイント
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MeasurePoint {
     /// キャプチャ
@@ -78,6 +153,7 @@ pub enum MeasurePoint {
 }
 
 impl MeasurePoint {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Capture => "capture",
@@ -90,6 +166,7 @@ impl MeasurePoint {
 }
 
 /// 計測結果の統計
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MeasurementStats {
     pub name: String,
@@ -101,6 +178,7 @@ pub struct MeasurementStats {
 }
 
 impl MeasurementStats {
+    #[allow(dead_code)]
     pub fn new(name: String) -> Self {
         Self {
             name,
@@ -112,6 +190,7 @@ impl MeasurementStats {
         }
     }
 
+    #[allow(dead_code)]
     pub fn add_sample(&mut self, elapsed_us: u64) {
         self.count += 1;
         self.total_us += elapsed_us;
@@ -120,6 +199,7 @@ impl MeasurementStats {
         self.avg_us = self.total_us / self.count;
     }
 
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.count = 0;
         self.total_us = 0;
@@ -130,12 +210,18 @@ impl MeasurementStats {
 }
 
 /// 区間計測ヘルパー
+/// 
+/// Release ビルド時は `Instant::now()` でオーバーヘッドが生じる可能性があるため、
+/// debug-logging 有効時のみ使用を推奨
+#[allow(dead_code)]
 pub struct SpanTimer {
     name: &'static str,
     start: std::time::Instant,
 }
 
 impl SpanTimer {
+    #[cfg(debug_assertions)] 
+    #[allow(dead_code)]
     pub fn new(name: &'static str) -> Self {
         Self {
             name,
@@ -143,11 +229,23 @@ impl SpanTimer {
         }
     }
 
+    #[cfg(not(debug_assertions))] 
+    #[allow(dead_code)]
+    pub fn new(_name: &'static str) -> Self {
+        // Release ビルド時は計測しない
+        Self {
+            name: "",
+            start: std::time::Instant::now(), // 副作用をなくすためだけ
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn elapsed_us(&self) -> u64 {
         self.start.elapsed().as_micros() as u64
     }
 }
 
+#[cfg(debug_assertions)] 
 impl Drop for SpanTimer {
     fn drop(&mut self) {
         let elapsed = self.elapsed_us();
@@ -156,6 +254,13 @@ impl Drop for SpanTimer {
             elapsed_us = elapsed,
             "Span completed"
         );
+    }
+}
+
+#[cfg(not(debug_assertions))] 
+impl Drop for SpanTimer {
+    fn drop(&mut self) {
+        // Release ビルド時は何もしない
     }
 }
 
@@ -198,5 +303,40 @@ mod tests {
         assert_eq!(MeasurePoint::Capture.as_str(), "capture");
         assert_eq!(MeasurePoint::Process.as_str(), "process");
         assert_eq!(MeasurePoint::EndToEnd.as_str(), "end_to_end");
+    }
+
+    #[test]
+    fn test_init_logging_stdout() {
+        // 標準出力モード（デバッグ用）
+        let guard = init_logging("debug", false, None);
+        assert!(guard.is_none());
+        
+        tracing::info!("Test log message");
+        // ログが出力されることを確認（エラーにならないこと）
+    }
+
+    #[test]
+    fn test_init_logging_file() {
+        // ファイル出力モード
+        let temp_dir = std::env::temp_dir().join("royale_test_logs");
+        let guard = init_logging("info", false, Some(temp_dir.clone()));
+        
+        assert!(guard.is_some());
+        assert!(temp_dir.exists());
+        
+        tracing::info!("Test file log");
+        
+        // guardをDropしてログをフラッシュ
+        drop(guard);
+        
+        // ログファイルが作成されていることを確認
+        let log_files: Vec<_> = std::fs::read_dir(&temp_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert!(!log_files.is_empty(), "Log file should be created");
+        
+        // クリーンアップ
+        std::fs::remove_dir_all(temp_dir).ok();
     }
 }

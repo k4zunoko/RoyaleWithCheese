@@ -5,6 +5,7 @@
 use thiserror::Error;
 
 /// Domain層の統一エラー型
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum DomainError {
     /// キャプチャ関連のエラー

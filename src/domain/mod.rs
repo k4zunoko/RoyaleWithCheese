@@ -8,7 +8,10 @@ pub mod ports;
 pub mod config;
 pub mod error;
 
+#[allow(unused_imports)]
 pub use types::*;
+#[allow(unused_imports)]
 pub use ports::*;
+#[allow(unused_imports)]
 pub use config::*;
 pub use error::*;

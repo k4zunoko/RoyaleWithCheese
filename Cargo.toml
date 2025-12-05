@@ -16,6 +16,7 @@ anyhow = "1.0"
 # ログ・トレーシング
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-appender = "0.2"
 
 # 設定管理
 serde = { version = "1.0", features = ["derive"] }
@@ -23,6 +24,12 @@ toml = "0.8"
 
 # スレッド間通信
 crossbeam-channel = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
 
 [dev-dependencies]
 # テスト用

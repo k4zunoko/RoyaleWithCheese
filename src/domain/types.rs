@@ -6,6 +6,7 @@
 use std::time::Instant;
 
 /// ピクセル座標で指定されるROI（Region of Interest）
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Roi {
     pub x: u32,
@@ -16,21 +17,25 @@ pub struct Roi {
 
 impl Roi {
     /// 新しいROIを作成
+    #[allow(dead_code)]
     pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
         Self { x, y, width, height }
     }
 
     /// ROIの中心座標を取得
+    #[allow(dead_code)]
     pub fn center(&self) -> (u32, u32) {
         (self.x + self.width / 2, self.y + self.height / 2)
     }
 
     /// ROIの面積を取得
+    #[allow(dead_code)]
     pub fn area(&self) -> u32 {
         self.width * self.height
     }
 
     /// 指定された矩形との交差判定
+    #[allow(dead_code)]
     pub fn intersects(&self, other: &Roi) -> bool {
         let self_x2 = self.x + self.width;
         let self_y2 = self.y + self.height;
@@ -42,6 +47,7 @@ impl Roi {
 }
 
 /// HSV色空間のレンジ（OpenCV準拠: H[0-180], S[0-255], V[0-255]）
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HsvRange {
     pub h_min: u8,
@@ -54,6 +60,7 @@ pub struct HsvRange {
 
 impl HsvRange {
     /// 新しいHSVレンジを作成
+    #[allow(dead_code)]
     pub fn new(h_min: u8, h_max: u8, s_min: u8, s_max: u8, v_min: u8, v_max: u8) -> Self {
         Self {
             h_min,
@@ -66,17 +73,20 @@ impl HsvRange {
     }
 
     /// OpenCVのScalar形式で下限を取得 [H, S, V]
+    #[allow(dead_code)]
     pub fn lower_bound(&self) -> [u8; 3] {
         [self.h_min, self.s_min, self.v_min]
     }
 
     /// OpenCVのScalar形式で上限を取得 [H, S, V]
+    #[allow(dead_code)]
     pub fn upper_bound(&self) -> [u8; 3] {
         [self.h_max, self.s_max, self.v_max]
     }
 }
 
 /// キャプチャされたフレームデータ
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Frame {
     /// フレーム取得時刻
@@ -93,6 +103,7 @@ pub struct Frame {
 
 impl Frame {
     /// 新しいフレームを作成
+    #[allow(dead_code)]
     pub fn new(data: Vec<u8>, width: u32, height: u32) -> Self {
         Self {
             timestamp: Instant::now(),
@@ -104,12 +115,14 @@ impl Frame {
     }
 
     /// DirtyRectsを設定
+    #[allow(dead_code)]
     pub fn with_dirty_rects(mut self, rects: Vec<Roi>) -> Self {
         self.dirty_rects = rects;
         self
     }
 
     /// 指定されたROIとDirtyRectsが交差するか判定
+    #[allow(dead_code)]
     pub fn roi_is_dirty(&self, roi: &Roi) -> bool {
         if self.dirty_rects.is_empty() {
             // DirtyRect情報がない場合は常に更新されたと見なす
@@ -120,6 +133,7 @@ impl Frame {
 }
 
 /// 色検知の結果
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DetectionResult {
     /// 検出時刻
@@ -136,6 +150,7 @@ pub struct DetectionResult {
 
 impl DetectionResult {
     /// 検出なしの結果を作成
+    #[allow(dead_code)]
     pub fn none() -> Self {
         Self {
             timestamp: Instant::now(),
@@ -147,6 +162,7 @@ impl DetectionResult {
     }
 
     /// 検出ありの結果を作成
+    #[allow(dead_code)]
     pub fn some(center_x: f32, center_y: f32, coverage: u32) -> Self {
         Self {
             timestamp: Instant::now(),
@@ -159,6 +175,7 @@ impl DetectionResult {
 }
 
 /// 処理バックエンドの種類
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessorBackend {
     /// CPU処理（OpenCV Mat使用）

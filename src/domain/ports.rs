@@ -6,6 +6,7 @@
 use crate::domain::{DetectionResult, DomainResult, Frame, HsvRange, ProcessorBackend, Roi};
 
 /// キャプチャポート: 画面フレームの取得を抽象化
+#[allow(dead_code)]
 pub trait CapturePort: Send + Sync {
     /// フレームをキャプチャする
     /// 
@@ -25,6 +26,7 @@ pub trait CapturePort: Send + Sync {
 }
 
 /// デバイス情報
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
     pub width: u32,
@@ -34,6 +36,7 @@ pub struct DeviceInfo {
 }
 
 /// 処理ポート: 画像処理（色検知/YOLO等）を抽象化
+#[allow(dead_code)]
 pub trait ProcessPort: Send + Sync {
     /// フレームを処理して検出結果を返す
     /// 
@@ -62,6 +65,7 @@ pub trait ProcessPort: Send + Sync {
 }
 
 /// 処理統計情報
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct ProcessStats {
     pub total_frames: u64,
@@ -70,6 +74,7 @@ pub struct ProcessStats {
 }
 
 /// 通信ポート: HID送信を抽象化
+#[allow(dead_code)]
 pub trait CommPort: Send + Sync {
     /// 検出結果をデバイスに送信
     /// 
@@ -98,6 +103,7 @@ pub trait CommPort: Send + Sync {
 /// - [9-10]: Coverage area (u16)
 /// - [11]: Detection flag (0/1)
 /// - [12-15]: Reserved (0x00)
+#[allow(dead_code)]
 pub fn detection_to_hid_report(result: &DetectionResult) -> Vec<u8> {
     let mut report = vec![0u8; 16];
 
