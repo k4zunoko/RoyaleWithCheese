@@ -1,0 +1,68 @@
+# RoyaleWithCheese 設定ファイル例
+# このファイルをコピーして config.toml として使用してください
+
+[capture]
+# キャプチャタイムアウト（ミリ秒）
+timeout_ms = 8
+
+# 連続タイムアウト許容回数（この回数を超えたら再初期化）
+max_consecutive_timeouts = 120
+
+# 再初期化時の初期待機時間（ミリ秒）
+reinit_initial_delay_ms = 100
+
+# 再初期化時の最大待機時間（ミリ秒、指数バックオフの上限）
+reinit_max_delay_ms = 5000
+
+# メインモニタのインデックス（通常は0）
+monitor_index = 0
+
+[process]
+# 処理モード: "fast-color" または "yolo-ort"（将来実装）
+mode = "fast-color"
+
+# OpenCL（UMat）を使用するか（false の場合は CPU/Mat を使用）
+use_opencl = true
+
+# 最小検出面積（ピクセル数、これ未満は無視）
+min_detection_area = 100
+
+[process.roi]
+# ROI（Region of Interest）の設定（ピクセル座標）
+# 1920x1080 の画面中心 960x540 の例
+x = 480
+y = 270
+width = 960
+height = 540
+
+[process.hsv_range]
+# HSV色空間のレンジ（fast-colorモードのみ使用）
+# OpenCV準拠: H [0-180], S [0-255], V [0-255]
+# デフォルト: 黄色系の検出
+h_min = 25
+h_max = 45
+s_min = 80
+s_max = 255
+v_min = 80
+v_max = 255
+
+[communication]
+# HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）
+vendor_id = 0x0000
+
+# HIDデバイスのProduct ID
+product_id = 0x0000
+
+# レポート送信のタイムアウト（ミリ秒）
+send_timeout_ms = 10
+
+# デバイス再接続試行間隔（ミリ秒）
+reconnect_interval_ms = 1000
+
+[pipeline]
+# DirtyRect最適化を有効にするか
+# true の場合、ROI と交差しない DirtyRect は処理をスキップ
+enable_dirty_rect_optimization = true
+
+# 統計情報の出力間隔（秒）
+stats_interval_sec = 10

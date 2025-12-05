@@ -1,6 +1,29 @@
 [package]
 name = "RoyaleWithCheese"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+
+[features]
+default = ["fast-color"]
+fast-color = []
+yolo-ort = []
 
 [dependencies]
+# エラー処理
+thiserror = "2.0"
+anyhow = "1.0"
+
+# ログ・トレーシング
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+# 設定管理
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+# スレッド間通信
+crossbeam-channel = "0.5"
+
+[dev-dependencies]
+# テスト用
+criterion = "0.5"
