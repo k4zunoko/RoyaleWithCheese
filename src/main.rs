@@ -1,6 +1,7 @@
 mod domain;
 mod logging;
 mod application;
+mod infrastructure;
 
 use crate::logging::init_logging;
 use std::path::PathBuf;

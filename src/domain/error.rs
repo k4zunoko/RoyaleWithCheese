@@ -28,6 +28,19 @@ pub enum DomainError {
     #[error("Operation timed out: {0}")]
     Timeout(String),
 
+    /// デバイス一時不可（Recoverable）
+    /// 
+    /// ロック画面遷移やディスプレイモード変更など、
+    /// すぐに復旧可能なエラー。
+    #[error("Device temporarily unavailable")]
+    DeviceNotAvailable,
+
+    /// 再初期化必要（Non-recoverable）
+    /// 
+    /// インスタンス再作成が必要な致命的エラー。
+    #[error("Reinitialization required")]
+    ReInitializationRequired,
+
     /// 初期化エラー
     #[error("Initialization failed: {0}")]
     Initialization(String),

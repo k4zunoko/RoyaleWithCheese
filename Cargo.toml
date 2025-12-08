@@ -25,6 +25,9 @@ toml = "0.8"
 # スレッド間通信
 crossbeam-channel = "0.5"
 
+# 画面キャプチャ (Windows Desktop Duplication API)
+win_desktop_duplication = "0.10"
+
 [profile.release]
 opt-level = 3
 lto = true
