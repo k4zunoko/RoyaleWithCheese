@@ -460,7 +460,7 @@ mod integration_tests {
             
             // デスクトップ環境: 安定した144 FPS（またはモニターのリフレッシュレート）
             let device_refresh_rate = capture.device_info().refresh_rate as f64;
-            let min_expected_fps = device_refresh_rate * 0.9; // 90%以上
+            let min_expected_fps = device_refresh_rate * 0.85; // 85%以上（VSync待機のずれを考慮）
             
             assert!(
                 effective_fps >= min_expected_fps,
@@ -468,8 +468,8 @@ mod integration_tests {
                 min_expected_fps,
                 effective_fps
             );
-            println!("  ✓ Stable frame rate: {:.2} FPS (device: {} Hz)", 
-                effective_fps, device_refresh_rate);
+            println!("  ✓ Stable frame rate: {:.2} FPS (device: {} Hz, threshold: {:.2})", 
+                effective_fps, device_refresh_rate, min_expected_fps);
             
             assert_eq!(
                 device_not_available_count, 0,

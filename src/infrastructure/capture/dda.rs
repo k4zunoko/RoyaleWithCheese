@@ -11,6 +11,7 @@ use win_desktop_duplication::{
     set_process_dpi_awareness, co_init,
     tex_reader::TextureReader,
     DesktopDuplicationApi,
+    DuplicationApiOptions,
 };
 
 // DDApiErrorはpublicではないため、Result型から推論する必要がある
@@ -63,10 +64,15 @@ impl DdaCaptureAdapter {
             })?;
 
         // DDA API初期化
-        let dupl = DesktopDuplicationApi::new(adapter.clone(), output.clone())
+        let mut dupl = DesktopDuplicationApi::new(adapter.clone(), output.clone())
             .map_err(|e| DomainError::Capture(format!("Failed to initialize DDA: {:?}", e)))?;
 
-        // TextureReader初期化（GPU → CPU転送用）
+        // カーソル描画を無効化(マウスカーソルを画面キャプチャに含めない)
+        let mut options = DuplicationApiOptions::default();
+        options.skip_cursor = true;
+        dupl.configure(options);
+
+        // TextureReader初期化(GPU → CPU転送用)
         let (device, ctx) = dupl.get_device_and_ctx();
         let texture_reader = TextureReader::new(device, ctx);
 
@@ -177,8 +183,13 @@ impl CapturePort for DdaCaptureAdapter {
             .get_display_by_idx(0)
             .ok_or_else(|| DomainError::Capture("Failed to get display during reinit".to_string()))?;
 
-        let dupl = DesktopDuplicationApi::new(adapter, output.clone())
+        let mut dupl = DesktopDuplicationApi::new(adapter, output.clone())
             .map_err(|e| DomainError::Capture(format!("Failed to reinitialize DDA: {:?}", e)))?;
+
+        // カーソル描画を無効化(再初期化時も設定を適用)
+        let mut options = DuplicationApiOptions::default();
+        options.skip_cursor = true;
+        dupl.configure(options);
 
         let (device, ctx) = dupl.get_device_and_ctx();
         let texture_reader = TextureReader::new(device, ctx);
