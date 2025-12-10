@@ -8,13 +8,32 @@ use crate::domain::{DetectionResult, DomainResult, Frame, HsvRange, ProcessorBac
 /// キャプチャポート: 画面フレームの取得を抽象化
 #[allow(dead_code)]
 pub trait CapturePort: Send + Sync {
-    /// フレームをキャプチャする
+    /// ROI指定でフレームをキャプチャする（GPU ROI実装）
+    /// 
+    /// 指定されたROI領域のみをGPU上で切り出し、CPU転送量を削減します。
+    /// 
+    /// # Arguments
+    /// - `roi`: キャプチャするROI領域（デバイス座標系）
+    /// 
+    /// # Returns
+    /// - `Ok(Some(Frame))`: フレームの取得成功（ROI領域のみ、Frame.width/heightはROIサイズ）
+    /// - `Ok(None)`: タイムアウト（フレーム更新なし）
+    /// - `Err(DomainError)`: 致命的エラー（再初期化が必要）
+    fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>>;
+
+    /// フレームをキャプチャする（全画面、デフォルト実装）
+    /// 
+    /// 内部的にはcapture_frame_with_roi()を全画面ROIで呼び出します。
     /// 
     /// # Returns
     /// - `Ok(Some(Frame))`: フレームの取得成功
     /// - `Ok(None)`: タイムアウト（フレーム更新なし）
     /// - `Err(DomainError)`: 致命的エラー（再初期化が必要）
-    fn capture_frame(&mut self) -> DomainResult<Option<Frame>>;
+    fn capture_frame(&mut self) -> DomainResult<Option<Frame>> {
+        let info = self.device_info();
+        let full_roi = Roi::new(0, 0, info.width, info.height);
+        self.capture_frame_with_roi(&full_roi)
+    }
 
     /// キャプチャセッションを再初期化
     /// 

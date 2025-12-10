@@ -290,11 +290,11 @@ mod tests {
     // モック実装
     struct MockCapture;
     impl CapturePort for MockCapture {
-        fn capture_frame(&mut self) -> DomainResult<Option<Frame>> {
+        fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
             Ok(Some(Frame {
-                data: vec![0u8; 1920 * 1080 * 4],
-                width: 1920,
-                height: 1080,
+                data: vec![0u8; (roi.width * roi.height * 4) as usize],
+                width: roi.width,
+                height: roi.height,
                 timestamp: std::time::Instant::now(),
                 dirty_rects: vec![],
             }))
@@ -353,7 +353,7 @@ mod tests {
 
     struct FailingCapture;
     impl CapturePort for FailingCapture {
-        fn capture_frame(&mut self) -> DomainResult<Option<Frame>> {
+        fn capture_frame_with_roi(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
             Err(DomainError::Timeout("Test timeout".to_string()))
         }
 

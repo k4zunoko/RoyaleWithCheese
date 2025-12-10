@@ -3,8 +3,10 @@
 /// Windows Desktop Duplication APIを使用した低レイテンシ画面キャプチャ。
 /// 144Hzモニタで毎秒144フレーム取得可能。
 
-use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame};
+use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, Roi};
 use std::time::Instant;
+use std::mem;
+use std::ptr;
 use win_desktop_duplication::{
     devices::AdapterFactory,
     outputs::Display,
@@ -13,6 +15,8 @@ use win_desktop_duplication::{
     DesktopDuplicationApi,
     DuplicationApiOptions,
 };
+use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::Dxgi::Common::*;
 
 // DDApiErrorはpublicではないため、Result型から推論する必要がある
 // エラーハンドリングでは具体的なエラー型を使用せず、Result<T>のパターンマッチで対応
@@ -27,6 +31,11 @@ pub struct DdaCaptureAdapter {
     device_info: DeviceInfo,
     #[allow(dead_code)]  // 将来的に使用予定
     timeout_ms: u32,
+    
+    // GPU ROI実装用のD3D11リソース
+    // Note: win_desktop_duplicationとwindows crateで同じバージョン(0.57)を使用
+    device: ID3D11Device4,
+    context: ID3D11DeviceContext4,
 }
 
 impl DdaCaptureAdapter {
@@ -74,7 +83,7 @@ impl DdaCaptureAdapter {
 
         // TextureReader初期化(GPU → CPU転送用)
         let (device, ctx) = dupl.get_device_and_ctx();
-        let texture_reader = TextureReader::new(device, ctx);
+        let texture_reader = TextureReader::new(device.clone(), ctx.clone());
 
         // デバイス情報の取得
         let display_mode = output
@@ -94,6 +103,8 @@ impl DdaCaptureAdapter {
             output,
             device_info,
             timeout_ms,
+            device,
+            context: ctx,
         })
     }
 
@@ -116,7 +127,7 @@ impl DdaCaptureAdapter {
 }
 
 impl CapturePort for DdaCaptureAdapter {
-    fn capture_frame(&mut self) -> DomainResult<Option<Frame>> {
+    fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
         // VSync待機（リフレッシュレートに同期）
         self.wait_for_vsync()?;
 
@@ -145,16 +156,92 @@ impl CapturePort for DdaCaptureAdapter {
             }
         };
 
-        // テクスチャ情報の取得
-        let desc = tex.desc();
-        let width = desc.width;
-        let height = desc.height;
+        // ROI領域のデータサイズを計算（BGRA形式）
+        let roi_data_size = (roi.width * roi.height * 4) as usize;
+        let mut data = vec![0u8; roi_data_size];
 
-        // GPU → CPU転送
-        let mut data = vec![0u8; (width * height * 4) as usize]; // BGRA形式
-        self.texture_reader
-            .get_data(&mut data, &tex)
-            .map_err(|e| DomainError::Capture(format!("Failed to read texture: {:?}", e)))?;
+        // ROIサイズのSTAGINGテクスチャを作成
+        let staging_tex = unsafe {
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: roi.width,
+                Height: roi.height,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_STAGING,
+                BindFlags: D3D11_BIND_FLAG(0).0 as u32,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                MiscFlags: D3D11_RESOURCE_MISC_FLAG(0).0 as u32,
+            };
+
+            let mut staging_tex: Option<ID3D11Texture2D> = None;
+            self.device
+                .CreateTexture2D(&desc, None, Some(&mut staging_tex))
+                .map_err(|e| DomainError::Capture(format!("Failed to create staging texture: {:?}", e)))?;
+            
+            staging_tex.ok_or_else(|| DomainError::Capture("Staging texture creation returned None".to_string()))?
+        };
+
+        // GPU上でROI領域だけをSTAGINGへコピー
+        unsafe {
+            let src_box = D3D11_BOX {
+                left: roi.x,
+                top: roi.y,
+                front: 0,
+                right: roi.x + roi.width,
+                bottom: roi.y + roi.height,
+                back: 1,
+            };
+
+            // win_desktop_duplicationのTextureをID3D11Resourceとして取得
+            let src_resource: &ID3D11Resource = std::mem::transmute(tex.as_raw_ref());
+
+            self.context.CopySubresourceRegion(
+                &staging_tex,
+                0,
+                0,
+                0,
+                0,
+                src_resource,
+                0,
+                Some(&src_box),
+            );
+        }
+
+        // STAGINGテクスチャをMapしてCPUアクセス
+        unsafe {
+            let mut mapped: D3D11_MAPPED_SUBRESOURCE = mem::zeroed();
+            self.context
+                .Map(
+                    &staging_tex,
+                    0,
+                    D3D11_MAP_READ,
+                    0,
+                    Some(&mut mapped),
+                )
+                .map_err(|e| DomainError::Capture(format!("Failed to map staging texture: {:?}", e)))?;
+
+            // RowPitchを考慮してデータをコピー
+            let row_pitch = mapped.RowPitch as usize;
+            let row_size = (roi.width * 4) as usize;
+            
+            for y in 0..roi.height as usize {
+                let src_offset = y * row_pitch;
+                let dst_offset = y * row_size;
+                
+                ptr::copy_nonoverlapping(
+                    (mapped.pData as *const u8).add(src_offset),
+                    data.as_mut_ptr().add(dst_offset),
+                    row_size,
+                );
+            }
+
+            self.context.Unmap(&staging_tex, 0);
+        }
 
         // DirtyRect情報の取得（最適化用）
         // 注: win_desktop_duplicationクレートはDirtyRect情報を直接提供しない可能性があるため、
@@ -163,8 +250,8 @@ impl CapturePort for DdaCaptureAdapter {
 
         Ok(Some(Frame {
             data,
-            width,
-            height,
+            width: roi.width,
+            height: roi.height,
             timestamp: Instant::now(),
             dirty_rects,
         }))
@@ -192,11 +279,13 @@ impl CapturePort for DdaCaptureAdapter {
         dupl.configure(options);
 
         let (device, ctx) = dupl.get_device_and_ctx();
-        let texture_reader = TextureReader::new(device, ctx);
+        let texture_reader = TextureReader::new(device.clone(), ctx.clone());
 
         self.dupl = dupl;
         self.texture_reader = texture_reader;
         self.output = output;
+        self.device = device;
+        self.context = ctx;
 
         #[cfg(debug_assertions)]
         tracing::info!("DDA reinitialization completed");
