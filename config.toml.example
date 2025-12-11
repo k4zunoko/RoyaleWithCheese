@@ -22,7 +22,7 @@ monitor_index = 0
 mode = "fast-color"
 
 # OpenCL（UMat）を使用するか（false の場合は CPU/Mat を使用）
-use_opencl = true
+use_opencl = false
 
 # 最小検出面積（ピクセル数、これ未満は無視）
 min_detection_area = 100
@@ -62,7 +62,7 @@ reconnect_interval_ms = 1000
 [pipeline]
 # DirtyRect最適化を有効にするか
 # true の場合、ROI と交差しない DirtyRect は処理をスキップ
-enable_dirty_rect_optimization = true
+enable_dirty_rect_optimization = false
 
 # 統計情報の出力間隔（秒）
 stats_interval_sec = 10
