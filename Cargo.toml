@@ -28,6 +28,9 @@ crossbeam-channel = "0.5"
 # 画面キャプチャ (Windows Desktop Duplication API)
 win_desktop_duplication = "0.10"
 
+# 画像処理 (OpenCV)
+opencv = "0.92"
+
 # Windows API (GPU ROI実装用 - win_desktop_duplicationと同じバージョン)
 windows = { version = "0.57", features = [
     "Win32_Graphics_Direct3D11",

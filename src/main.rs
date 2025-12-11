@@ -6,7 +6,7 @@ mod infrastructure;
 use crate::domain::config::AppConfig;
 use crate::domain::ports::CapturePort; // traitメソッド使用のため
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
-use crate::infrastructure::mock_process::MockProcessAdapter;
+use crate::infrastructure::color_process::ColorProcessAdapter;
 use crate::infrastructure::mock_comm::MockCommAdapter;
 use crate::application::pipeline::{PipelineRunner, PipelineConfig};
 use crate::application::recovery::{RecoveryState, RecoveryStrategy};
@@ -82,9 +82,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         device_info.name
     );
 
-    // モック処理アダプタの初期化（実際の処理は未実装）
-    tracing::info!("Initializing mock process adapter...");
-    let process = MockProcessAdapter::new();
+    // 色検知処理アダプタの初期化
+    tracing::info!("Initializing color process adapter...");
+    let process = ColorProcessAdapter::new(
+        config.process.use_opencl,
+        config.process.min_detection_area,
+    )?;
+    tracing::info!("Process backend: {:?}", process.backend());
 
     // モック通信アダプタの初期化（実際のHIDは未実装）
     tracing::info!("Initializing mock communication adapter...");

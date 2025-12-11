@@ -3,5 +3,6 @@
 /// Domain層のtraitを実装し、外部ライブラリ（DDA/OpenCV/HID/ORT）と接続する。
 
 pub mod capture;
+pub mod color_process;
 pub mod mock_process;
 pub mod mock_comm;
