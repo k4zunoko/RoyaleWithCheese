@@ -417,4 +417,48 @@ mod tests {
         let value = rx.try_recv().unwrap();
         assert_eq!(value, 2);
     }
+
+    #[test]
+    fn test_capture_with_roi_abstraction() {
+        // CapturePort traitの抽象化を通じてcapture_frame_with_roi()を使用するテスト
+        let mut capture = MockCapture;
+
+        // テスト1: 小さいROI (400x300)
+        let roi_small = Roi::new(100, 100, 400, 300);
+        let frame = capture.capture_frame_with_roi(&roi_small)
+            .expect("Capture should succeed")
+            .expect("Frame should be present");
+
+        assert_eq!(frame.width, roi_small.width, "Frame width should match ROI");
+        assert_eq!(frame.height, roi_small.height, "Frame height should match ROI");
+        assert_eq!(frame.data.len(), (roi_small.width * roi_small.height * 4) as usize, "Data size should match ROI");
+
+        // テスト2: 設計目標サイズ (800x600)
+        let roi_medium = Roi::new(560, 240, 800, 600);
+        let frame = capture.capture_frame_with_roi(&roi_medium)
+            .expect("Capture should succeed")
+            .expect("Frame should be present");
+
+        assert_eq!(frame.width, roi_medium.width, "Frame width should match ROI");
+        assert_eq!(frame.height, roi_medium.height, "Frame height should match ROI");
+        assert_eq!(frame.data.len(), (roi_medium.width * roi_medium.height * 4) as usize, "Data size should match ROI");
+
+        // テスト3: フルスクリーンROI
+        let roi_full = Roi::new(0, 0, 1920, 1080);
+        let frame = capture.capture_frame_with_roi(&roi_full)
+            .expect("Capture should succeed")
+            .expect("Frame should be present");
+
+        assert_eq!(frame.width, roi_full.width, "Frame width should match full screen ROI");
+        assert_eq!(frame.height, roi_full.height, "Frame height should match full screen ROI");
+
+        // テスト4: capture_frame()のデフォルト実装がフルスクリーンROIを使用することを確認
+        let device_info = capture.device_info();
+        let frame_default = capture.capture_frame()
+            .expect("Capture should succeed")
+            .expect("Frame should be present");
+
+        assert_eq!(frame_default.width, device_info.width, "Default capture should return full screen width");
+        assert_eq!(frame_default.height, device_info.height, "Default capture should return full screen height");
+    }
 }
