@@ -1,6 +1,7 @@
 //! パイプライン制御モジュール
 //!
-//! Capture / Process / Communication の3スレッド構成でパイプラインを制御します。
+//! Capture / Process / HID / Stats の4スレッド構成でパイプラインを制御します。
+//! HID送信を統計処理から分離し、低レイテンシを実現します。
 
 use crate::domain::{
     error::DomainResult,
@@ -8,7 +9,7 @@ use crate::domain::{
     types::{DetectionResult, Frame, Roi, HsvRange},
 };
 use crate::application::{recovery::RecoveryState, stats::{StatKind, StatsCollector}};
-use crossbeam_channel::{bounded, Sender, Receiver, TrySendError};
+use crossbeam_channel::{bounded, unbounded, Sender, Receiver, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -49,6 +50,15 @@ pub struct TimestampedDetection {
     pub result: DetectionResult,
     pub captured_at: Instant,
     pub processed_at: Instant,
+}
+
+/// 統計データ（Stats/UIスレッドへ送信用）
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct StatData {
+    pub captured_at: Instant,
+    pub processed_at: Instant,
+    pub hid_sent_at: Instant,
 }
 
 /// パイプライン実行コンテキスト
@@ -106,6 +116,7 @@ where
     pub fn run(mut self) -> DomainResult<()> {
         let (capture_tx, capture_rx) = bounded::<TimestampedFrame>(1);
         let (process_tx, process_rx) = bounded::<TimestampedDetection>(1);
+        let (stats_tx, stats_rx) = unbounded::<StatData>();
 
         // Capture Thread
         let capture_handle = {
@@ -123,15 +134,25 @@ where
             let hsv_range = self.hsv_range.clone();
             let rx = capture_rx;
             let tx = process_tx;
+            let stats_tx = stats_tx.clone();
             std::thread::spawn(move || {
-                Self::process_thread(process, rx, tx, roi, hsv_range);
+                Self::process_thread(process, rx, tx, roi, hsv_range, stats_tx);
             })
         };
 
-        // Communication Thread（メインスレッドで実行）
-        Self::communication_thread(
-            Arc::clone(&self.comm),
-            process_rx,
+        // HID Thread
+        let hid_handle = {
+            let comm = Arc::clone(&self.comm);
+            let rx = process_rx;
+            let stats_tx = stats_tx.clone();
+            std::thread::spawn(move || {
+                Self::hid_thread(comm, rx, stats_tx);
+            })
+        };
+
+        // Stats/UI Thread（メインスレッドで実行）
+        Self::stats_thread(
+            stats_rx,
             &mut self.stats,
             &mut self.recovery,
         );
@@ -139,6 +160,7 @@ where
         // スレッドの終了を待つ
         let _ = capture_handle.join();
         let _ = process_handle.join();
+        let _ = hid_handle.join();
 
         Ok(())
     }
@@ -181,6 +203,7 @@ where
         tx: Sender<TimestampedDetection>,
         roi: Roi,
         hsv_range: HsvRange,
+        _stats_tx: Sender<StatData>,
     ) {
         loop {
             match rx.recv() {
@@ -215,24 +238,23 @@ where
         }
     }
 
-    /// Communicationスレッド（メインスレッド）
-    fn communication_thread(
+    /// HIDスレッド（低レイテンシ送信専用）
+    fn hid_thread(
         comm: Arc<Mutex<H>>,
         rx: Receiver<TimestampedDetection>,
-        stats: &mut StatsCollector,
-        _recovery: &mut RecoveryState,
+        stats_tx: Sender<StatData>,
     ) {
         loop {
             match rx.recv() {
                 Ok(detection) => {
-                    let now = Instant::now();
-
-                    // HID送信
+                    // HID送信（低レイテンシ最優先）
                     let hid_report = crate::domain::ports::detection_to_hid_report(&detection.result);
                     let send_result = {
                         let mut guard = comm.lock().unwrap();
                         guard.send(&hid_report)
                     };
+
+                    let hid_sent_at = Instant::now();
 
                     if let Err(e) = send_result {
                         #[cfg(debug_assertions)]
@@ -241,11 +263,37 @@ where
                         let _ = e;
                     }
 
+                    // 統計データをStats/UIスレッドに送信（非ブロッキング）
+                    let stat_data = StatData {
+                        captured_at: detection.captured_at,
+                        processed_at: detection.processed_at,
+                        hid_sent_at,
+                    };
+                    let _ = stats_tx.try_send(stat_data);
+                }
+                Err(_) => {
+                    // Channel closed
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Stats/UIスレッド（統計情報管理とユーザー対話）
+    fn stats_thread(
+        stats_rx: Receiver<StatData>,
+        stats: &mut StatsCollector,
+        _recovery: &mut RecoveryState,
+    ) {
+        loop {
+            match stats_rx.recv() {
+                Ok(stat_data) => {
                     // 統計記録
                     stats.record_frame();
-                    let end_to_end = now.duration_since(detection.captured_at);
-                    let process_time = detection.processed_at.duration_since(detection.captured_at);
-                    let comm_time = now.duration_since(detection.processed_at);
+                    
+                    let process_time = stat_data.processed_at.duration_since(stat_data.captured_at);
+                    let comm_time = stat_data.hid_sent_at.duration_since(stat_data.processed_at);
+                    let end_to_end = stat_data.hid_sent_at.duration_since(stat_data.captured_at);
 
                     stats.record_duration(StatKind::Process, process_time);
                     stats.record_duration(StatKind::Communication, comm_time);
