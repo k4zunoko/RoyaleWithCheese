@@ -87,6 +87,10 @@ $env:OPENCV_INCLUDE_DIR = "C:\path\to\vcpkg\installed\x64-windows\include"
 # https://github.com/llvm/llvm-project/releases からインストール
 # または
 winget install LLVM.LLVM
+
+# または
+vcpkg install llvm:x64-windows
+
 ```
 
 #### オプション3: モック実装のまま開発継続
