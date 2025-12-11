@@ -127,7 +127,14 @@ impl DdaCaptureAdapter {
     /// VSync待機
     /// 
     /// 144Hzモニタなら約6.9ms間隔でVSync信号が来る。
-    /// この待機により、リフレッシュレートに同期したキャプチャが可能。
+    /// 
+    /// **注意**: レイテンシ最小化のため、現在は使用していない。
+    /// VSync待機は次のVBlankまで必ず待つため、最大1フレーム分の遅延が発生する。
+    /// acquire_next_frame_now()のみを使用することで、OSのデスクトップ更新時に
+    /// 即座に復帰し、最低レイテンシを実現する。
+    /// 
+    /// 将来的にフレームレート制御が必要になった場合のために保持。
+    #[allow(dead_code)]
     fn wait_for_vsync(&self) -> DomainResult<()> {
         self.output
             .wait_for_vsync()
@@ -486,7 +493,7 @@ mod tests {
                 }
             }
         }
-
+        println!();
         println!("Capture statistics (1 second):");
         println!("  Frames captured: {}", frame_count);
         println!("  Timeouts: {}", timeout_count);
