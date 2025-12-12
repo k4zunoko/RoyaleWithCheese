@@ -8,6 +8,7 @@ use crate::domain::{
 use opencv::{
     core::{self, Mat, Scalar},
     imgproc,
+    prelude::{MatTraitConst, MatExprTraitConst},
 };
 use std::time::Instant;
 
@@ -41,19 +42,27 @@ impl ColorProcessAdapter {
     /// # Returns
     /// BGR形式のMat
     fn frame_to_mat(&self, frame: &Frame) -> DomainResult<Mat> {
-        // BGRA（4チャンネル）からBGR（3チャンネル）に変換
+        // BGRA（4チャンネル）データからMatを作成
         let rows = frame.height as i32;
         let cols = frame.width as i32;
 
-        // BGRAデータからMatを作成
-        let bgra_mat = Mat::new_rows_cols_with_data(
-            rows,
-            cols,
-            &frame.data,
-        )
-        .map_err(|e| DomainError::Process(format!("Failed to create Mat: {:?}", e)))?;
+        // OpenCV VecN<u8, 4>型を使ってBGRAピクセルを表現
+        use opencv::core::VecN;
+        let pixel_count = (frame.width * frame.height) as usize;
+        
+        // Vec<VecN<u8, 4>>に変換
+        let mut pixels: Vec<VecN<u8, 4>> = Vec::with_capacity(pixel_count);
+        for chunk in frame.data.chunks_exact(4) {
+            pixels.push(VecN::<u8, 4>::from([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
 
-        // BGRA → BGR変換
+        // new_size_with_dataでVecN<u8, 4>のスライスから Mat を作成
+        use opencv::core::Size;
+        let size = Size::new(cols, rows);
+        let bgra_mat = Mat::new_size_with_data(size, &pixels)
+            .map_err(|e| DomainError::Process(format!("Failed to create BGRA Mat: {:?}", e)))?;
+
+        // BGRA → BGR変換（4チャンネル → 3チャンネル）
         let mut bgr_mat = Mat::default();
         imgproc::cvt_color_def(&bgra_mat, &mut bgr_mat, imgproc::COLOR_BGRA2BGR)
             .map_err(|e| DomainError::Process(format!("Failed to convert BGRA to BGR: {:?}", e)))?;
@@ -139,5 +148,189 @@ impl ProcessPort for ColorProcessAdapter {
 
     fn backend(&self) -> ProcessorBackend {
         ProcessorBackend::Cpu
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// テスト用のダミーフレームを作成
+    fn create_test_frame(width: usize, height: usize) -> Frame {
+        // 黄色のBGRA画像（B=0, G=255, R=255, A=255）
+        let size = width * height * 4;
+        let mut data = vec![0u8; size];
+        
+        // 中心部分を黄色で塗りつぶす
+        let center_x = width / 2;
+        let center_y = height / 2;
+        let radius = 50;
+        
+        for y in 0..height {
+            for x in 0..width {
+                let dx = x as i32 - center_x as i32;
+                let dy = y as i32 - center_y as i32;
+                
+                if dx * dx + dy * dy < radius * radius {
+                    let idx = (y * width + x) * 4;
+                    data[idx] = 0;      // B
+                    data[idx + 1] = 255; // G
+                    data[idx + 2] = 255; // R
+                    data[idx + 3] = 255; // A
+                }
+            }
+        }
+        
+        Frame {
+            data,
+            width: width as u32,
+            height: height as u32,
+            timestamp: Instant::now(),
+            dirty_rects: vec![],
+        }
+    }
+
+    #[test]
+    fn test_adapter_creation() {
+        let adapter = ColorProcessAdapter::new(100);
+        assert!(adapter.is_ok());
+        let adapter = adapter.unwrap();
+        assert_eq!(adapter.min_detection_area, 100);
+    }
+
+    #[test]
+    fn test_backend() {
+        let adapter = ColorProcessAdapter::new(100).unwrap();
+        assert_eq!(adapter.backend(), ProcessorBackend::Cpu);
+    }
+
+    #[test]
+    fn test_process_frame_with_detection() {
+        let mut adapter = ColorProcessAdapter::new(100).unwrap();
+        let frame = create_test_frame(640, 480);
+        let roi = Roi::new(0, 0, 640, 480);
+        
+        // 黄色を検出するHSV範囲
+        let hsv_range = HsvRange {
+            h_min: 20,
+            h_max: 40,
+            s_min: 100,
+            s_max: 255,
+            v_min: 100,
+            v_max: 255,
+        };
+
+        let result = adapter.process_frame(&frame, &roi, &hsv_range);
+        assert!(result.is_ok());
+        
+        let detection = result.unwrap();
+        assert!(detection.detected, "Should detect yellow color");
+        assert!(detection.coverage >= 100, "Coverage should be at least min_detection_area");
+        
+        // 重心が中心付近にあることを確認（誤差を考慮）
+        let center_x = 640.0 / 2.0;
+        let center_y = 480.0 / 2.0;
+        assert!((detection.center_x - center_x).abs() < 50.0, 
+            "Center X should be near frame center: expected {}, got {}", 
+            center_x, detection.center_x);
+        assert!((detection.center_y - center_y).abs() < 50.0,
+            "Center Y should be near frame center: expected {}, got {}",
+            center_y, detection.center_y);
+    }
+
+    #[test]
+    fn test_process_frame_no_detection() {
+        let mut adapter = ColorProcessAdapter::new(100).unwrap();
+        
+        // 黒いフレーム（検出なし）
+        let frame = Frame {
+            data: vec![0u8; 640 * 480 * 4],
+            width: 640,
+            height: 480,
+            timestamp: Instant::now(),
+            dirty_rects: vec![],
+        };
+        
+        let roi = Roi::new(0, 0, 640, 480);
+        
+        // 黄色を検出するHSV範囲
+        let hsv_range = HsvRange {
+            h_min: 20,
+            h_max: 40,
+            s_min: 100,
+            s_max: 255,
+            v_min: 100,
+            v_max: 255,
+        };
+
+        let result = adapter.process_frame(&frame, &roi, &hsv_range);
+        assert!(result.is_ok());
+        
+        let detection = result.unwrap();
+        assert!(!detection.detected, "Should not detect anything in black frame");
+        assert_eq!(detection.coverage, 0, "Coverage should be 0");
+    }
+
+    #[test]
+    fn test_process_frame_small_area() {
+        // 検出はされるが、カバレッジが記録されることを確認
+        let mut adapter = ColorProcessAdapter::new(100).unwrap(); // 低い閾値で検出
+        let frame = create_test_frame(640, 480);
+        let roi = Roi::new(0, 0, 640, 480);
+        
+        // 黄色を検出するHSV範囲
+        let hsv_range = HsvRange {
+            h_min: 20,
+            h_max: 40,
+            s_min: 100,
+            s_max: 255,
+            v_min: 100,
+            v_max: 255,
+        };
+
+        let result = adapter.process_frame(&frame, &roi, &hsv_range);
+        assert!(result.is_ok());
+        
+        let detection = result.unwrap();
+        // 検出されることを確認
+        assert!(detection.detected, "Should detect yellow color");
+        // カバレッジが記録されていることを確認（0より大きい）
+        assert!(detection.coverage > 0, "Coverage should be greater than 0");
+    }
+
+    #[test]
+    fn test_frame_to_mat_conversion() {
+        let adapter = ColorProcessAdapter::new(100).unwrap();
+        let frame = create_test_frame(320, 240);
+        
+        let result = adapter.frame_to_mat(&frame);
+        if let Err(e) = &result {
+            eprintln!("Error in frame_to_mat: {:?}", e);
+        }
+        assert!(result.is_ok(), "Frame to Mat conversion should succeed");
+        
+        let mat = result.unwrap();
+        assert_eq!(mat.rows(), 240);
+        assert_eq!(mat.cols(), 320);
+    }
+
+    #[test]
+    fn test_calculate_moments_empty_mask() {
+        let adapter = ColorProcessAdapter::new(100).unwrap();
+        
+        // 空のマスク（全て0）
+        let mask = Mat::zeros(100, 100, opencv::core::CV_8UC1)
+            .unwrap()
+            .to_mat()
+            .unwrap();
+        
+        let result = adapter.calculate_moments(&mask);
+        assert!(result.is_ok());
+        
+        let detection = result.unwrap();
+        assert!(!detection.detected);
+        assert_eq!(detection.coverage, 0);
+        assert_eq!(detection.center_x, 0.0);
+        assert_eq!(detection.center_y, 0.0);
     }
 }
