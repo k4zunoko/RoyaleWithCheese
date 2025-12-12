@@ -33,6 +33,9 @@ win_desktop_duplication = "0.10"
 # 画像処理 (OpenCV)
 opencv = { version = "0.92", features = ["highgui"] }
 
+# HID通信
+hidapi = "2.6"
+
 # Windows API (GPU ROI実装用 - win_desktop_duplicationと同じバージョン)
 windows = { version = "0.57", features = [
     "Win32_Graphics_Direct3D11",

@@ -250,6 +250,8 @@ where
                                     tracing::debug!("Frame processed: detected={}, latency={:?}ms, count={}", 
                                         detection_result.detected, latency.as_millis(), process_count);
                                 }
+                                // println!("x: {}, y: {}, coverage: {}", 
+                                //     detection_result.center_x, detection_result.center_y, detection_result.coverage);
                             }
                             
                             Self::send_latest_only(&tx, detection);
@@ -271,12 +273,24 @@ where
     }
 
     /// HIDスレッド（低レイテンシ送信専用）
+    /// 
+    /// # 再接続戦略
+    /// - 送信エラー時、指数バックオフで再接続を試みる
+    /// - 初回: 100ms, 2回目: 200ms, 3回目: 400ms, ...最大10秒
+    /// - 最大リトライ回数: 10回
     fn hid_thread(
         comm: Arc<Mutex<H>>,
         rx: Receiver<TimestampedDetection>,
         stats_tx: Sender<StatData>,
     ) {
         tracing::info!("HID thread started");
+        
+        let mut consecutive_errors = 0u32;
+        let mut last_reconnect_attempt = None::<Instant>;
+        const MAX_RETRY: u32 = 10;
+        const INITIAL_BACKOFF_MS: u64 = 100;
+        const MAX_BACKOFF_MS: u64 = 10_000;
+        
         loop {
             match rx.recv() {
                 Ok(detection) => {
@@ -289,11 +303,71 @@ where
 
                     let hid_sent_at = Instant::now();
 
-                    if let Err(e) = send_result {
-                        #[cfg(debug_assertions)]
-                        tracing::error!("HID send error: {:?}", e);
-                        #[cfg(not(debug_assertions))]
-                        let _ = e;
+                    match send_result {
+                        Ok(_) => {
+                            // 送信成功: エラーカウントをリセット
+                            if consecutive_errors > 0 {
+                                tracing::info!("HID communication recovered");
+                                consecutive_errors = 0;
+                            }
+                        }
+                        Err(e) => {
+                            consecutive_errors += 1;
+                            
+                            #[cfg(debug_assertions)]
+                            tracing::error!("HID send error (consecutive: {}): {:?}", consecutive_errors, e);
+                            #[cfg(not(debug_assertions))]
+                            let _ = e;
+                            
+                            // 再接続を試みる
+                            if consecutive_errors <= MAX_RETRY {
+                                // 指数バックオフの計算
+                                let backoff_ms = (INITIAL_BACKOFF_MS * 2u64.pow(consecutive_errors - 1))
+                                    .min(MAX_BACKOFF_MS);
+                                
+                                // レート制限: 前回の再接続試行から十分な時間が経過しているか確認
+                                let should_retry = if let Some(last_attempt) = last_reconnect_attempt {
+                                    last_attempt.elapsed() >= Duration::from_millis(backoff_ms)
+                                } else {
+                                    true
+                                };
+                                
+                                if should_retry {
+                                    tracing::info!(
+                                        "Attempting to reconnect HID device (retry {}/{}, backoff: {}ms)",
+                                        consecutive_errors,
+                                        MAX_RETRY,
+                                        backoff_ms
+                                    );
+                                    
+                                    last_reconnect_attempt = Some(Instant::now());
+                                    
+                                    let reconnect_result = {
+                                        let mut guard = comm.lock().unwrap();
+                                        guard.reconnect()
+                                    };
+                                    
+                                    match reconnect_result {
+                                        Ok(_) => {
+                                            tracing::info!("HID device reconnected successfully");
+                                            consecutive_errors = 0;
+                                        }
+                                        Err(reconnect_err) => {
+                                            tracing::warn!("Reconnect failed: {:?}", reconnect_err);
+                                            // 次のフレームで再試行（バックオフを適用）
+                                            std::thread::sleep(Duration::from_millis(backoff_ms));
+                                        }
+                                    }
+                                }
+                            } else {
+                                tracing::error!(
+                                    "Max retry count exceeded ({}), giving up on HID communication",
+                                    MAX_RETRY
+                                );
+                                // 最大リトライ回数を超えた場合もスレッドは継続
+                                // （デバイスが復帰した場合に備えて）
+                            }
+                        }
                     }
 
                     // 統計データをStats/UIスレッドに送信（非ブロッキング）

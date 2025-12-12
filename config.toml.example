@@ -21,7 +21,6 @@ monitor_index = 0
 # 処理モード: "fast-color" または "yolo-ort"（将来実装）
 mode = "fast-color"
 
-
 # 最小検出面積（ピクセル数、これ未満は無視）
 min_detection_area = 100
 
@@ -46,16 +45,16 @@ v_max = 255
 
 [communication]
 # HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）
+# 実際のデバイスを接続する場合は適切な値に変更してください
+# 例: Arduino Leonardoの場合 vendor_id = 0x2341, product_id = 0x8036
 vendor_id = 0x0000
 
 # HIDデバイスのProduct ID
 product_id = 0x0000
 
 # レポート送信のタイムアウト（ミリ秒）
+# 注: 現在は未使用（将来的にHIDデバイスのwrite timeoutとして使用予定）
 send_timeout_ms = 10
-
-# デバイス再接続試行間隔（ミリ秒）
-reconnect_interval_ms = 1000
 
 [pipeline]
 # DirtyRect最適化を有効にするか

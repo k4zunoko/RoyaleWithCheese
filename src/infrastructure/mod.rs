@@ -4,5 +4,4 @@
 
 pub mod capture;
 pub mod color_process;
-pub mod mock_process;
-pub mod mock_comm;
+pub mod hid_comm;

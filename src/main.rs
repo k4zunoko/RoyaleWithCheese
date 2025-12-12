@@ -7,7 +7,7 @@ use crate::domain::config::AppConfig;
 use crate::domain::ports::CapturePort; // traitメソッド使用のため
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
 use crate::infrastructure::color_process::ColorProcessAdapter;
-use crate::infrastructure::mock_comm::MockCommAdapter;
+use crate::infrastructure::hid_comm::HidCommAdapter;
 use crate::application::pipeline::{PipelineRunner, PipelineConfig};
 use crate::application::recovery::{RecoveryState, RecoveryStrategy};
 use crate::logging::init_logging;
@@ -86,10 +86,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Initializing color process adapter...");
     let process = ColorProcessAdapter::new(config.process.min_detection_area)?;
 
-    // モック通信アダプタの初期化（実際のHIDは未実装）
-    tracing::info!("Initializing mock communication adapter...");
-    let comm = MockCommAdapter::new();
-
     // 再初期化戦略の設定
     let recovery_strategy = RecoveryStrategy {
         consecutive_timeout_threshold: config.capture.max_consecutive_timeouts,
@@ -113,17 +109,28 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Starting pipeline with 4-thread architecture...");
     tracing::info!("Threads: Capture -> Process -> HID -> Stats/UI");
 
+    // HID通信アダプタの初期化
+    tracing::info!("Initializing HID communication adapter...");
+    let hid_comm = HidCommAdapter::new(
+        config.communication.vendor_id,
+        config.communication.product_id,
+        config.communication.send_timeout_ms,
+    )?;
+    tracing::info!("HID adapter initialized: VID=0x{:04X}, PID=0x{:04X}", 
+        config.communication.vendor_id,
+        config.communication.product_id
+    );
+
     // パイプラインの起動（ブロッキング）
     let runner = PipelineRunner::new(
         capture,
         process,
-        comm,
+        hid_comm,
         pipeline_config,
         recovery,
         roi,
         hsv_range,
     );
-
     runner.run()?;
 
     Ok(())

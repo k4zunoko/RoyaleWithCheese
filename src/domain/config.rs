@@ -159,9 +159,8 @@ pub struct CommunicationConfig {
     /// HIDデバイスのProduct ID
     pub product_id: u16,
     /// レポート送信のタイムアウト（ミリ秒）
+    /// 注: 現在は未使用、将来的にHIDデバイスのwrite timeoutとして使用予定
     pub send_timeout_ms: u64,
-    /// 再接続試行間隔（ミリ秒）
-    pub reconnect_interval_ms: u64,
 }
 
 impl Default for CommunicationConfig {
@@ -170,7 +169,6 @@ impl Default for CommunicationConfig {
             vendor_id: 0x0000,
             product_id: 0x0000,
             send_timeout_ms: 10,
-            reconnect_interval_ms: 1000,
         }
     }
 }
