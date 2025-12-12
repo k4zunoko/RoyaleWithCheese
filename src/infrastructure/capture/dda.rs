@@ -233,9 +233,13 @@ impl CapturePort for DdaCaptureAdapter {
             ))
         })?;
         
-        // VSync待機（リフレッシュレートに同期）
-        self.wait_for_vsync()?;
+        // VSync待機を削除: acquire_next_frame_now()が最新フレームを即座に返すため、
+        // VSync待機は不要。レイテンシ最小化のため、DDAの更新通知を直接待つ。
+        // self.wait_for_vsync()?; // ← 削除
 
+        #[cfg(feature = "performance-timing")]
+        let acquire_start = Instant::now();
+        
         // フレーム取得（即座に取得、ブロッキング）
         let tex = match self.dupl.acquire_next_frame_now() {
             Ok(tex) => tex,
@@ -261,12 +265,18 @@ impl CapturePort for DdaCaptureAdapter {
             }
         };
 
+        #[cfg(feature = "performance-timing")]
+        let acquire_time = acquire_start.elapsed();
+
         // ROI領域のデータサイズを計算（BGRA形式）
         let roi_data_size = (clamped_roi.width * clamped_roi.height * 4) as usize;
         let mut data = vec![0u8; roi_data_size];
 
         // ステージングテクスチャを確保または再利用（パフォーマンス最適化）
         let staging_tex = self.ensure_staging_texture(clamped_roi.width, clamped_roi.height)?;
+
+        #[cfg(feature = "performance-timing")]
+        let gpu_copy_start = Instant::now();
 
         // GPU上でROI領域だけをSTAGINGへコピー
         unsafe {
@@ -296,6 +306,11 @@ impl CapturePort for DdaCaptureAdapter {
                 Some(&src_box),
             );
         }
+
+        #[cfg(feature = "performance-timing")]
+        let gpu_copy_time = gpu_copy_start.elapsed();
+        #[cfg(feature = "performance-timing")]
+        let cpu_transfer_start = Instant::now();
 
         // STAGINGテクスチャをMapしてCPUアクセス
         unsafe {
@@ -327,6 +342,19 @@ impl CapturePort for DdaCaptureAdapter {
 
             self.context.Unmap(&staging_tex, 0);
         }
+
+        #[cfg(feature = "performance-timing")]
+        let cpu_transfer_time = cpu_transfer_start.elapsed();
+        #[cfg(feature = "performance-timing")]
+        tracing::debug!(
+            "DDA Capture breakdown: Acquire={:.2}ms, GPU_Copy={:.2}ms, CPU_Transfer={:.2}ms, Total={:.2}ms ({}x{} ROI)",
+            acquire_time.as_secs_f64() * 1000.0,
+            gpu_copy_time.as_secs_f64() * 1000.0,
+            cpu_transfer_time.as_secs_f64() * 1000.0,
+            acquire_start.elapsed().as_secs_f64() * 1000.0,
+            clamped_roi.width,
+            clamped_roi.height
+        );
 
         // DirtyRect情報の取得（最適化用）
         // 注: win_desktop_duplicationクレートはDirtyRect情報を直接提供しない可能性があるため、

@@ -11,7 +11,7 @@ use opencv::{
 };
 
 #[cfg(test)]
-use opencv::prelude::MatExprTraitConst;
+use opencv::prelude::{MatExprTraitConst, MatTraitConst};
 use std::time::Instant;
 
 /// 色検知処理アダプタ
@@ -28,8 +28,18 @@ impl ColorProcessAdapter {
     /// # Returns
     /// ColorProcessAdapterインスタンス
     pub fn new(min_detection_area: u32) -> DomainResult<Self> {
+        // OpenCVのスレッド数を設定（0 = 自動、全コア使用）
+        // cvtColor、moments等の一部関数で並列化が有効
+        let _ = opencv::core::set_num_threads(0);
+        
         #[cfg(debug_assertions)]
-        tracing::info!("Color process adapter initialized with OpenCV (CPU/Mat)");
+        {
+            let num_threads = opencv::core::get_num_threads().unwrap_or(1);
+            tracing::info!(
+                "Color process adapter initialized with OpenCV (CPU/Mat, {} threads)",
+                num_threads
+            );
+        }
 
         Ok(Self {
             min_detection_area,
@@ -43,28 +53,34 @@ impl ColorProcessAdapter {
     /// 
     /// # Returns
     /// BGR形式のMat
+    /// 
+    /// # 最適化
+    /// - Vec中間バッファを削除し、直接frame.dataからMatを作成
+    /// - メモリコピー回数を削減（2回 → 1回）
     fn frame_to_mat(&self, frame: &Frame) -> DomainResult<Mat> {
-        // BGRA（4チャンネル）データからMatを作成
+        use opencv::core::CV_8UC4;
+        
         let rows = frame.height as i32;
         let cols = frame.width as i32;
-
-        // OpenCV VecN<u8, 4>型を使ってBGRAピクセルを表現
-        use opencv::core::VecN;
-        let pixel_count = (frame.width * frame.height) as usize;
+        let step = (frame.width * 4) as usize; // BGRA = 4 bytes per pixel
         
-        // Vec<VecN<u8, 4>>に変換
-        let mut pixels: Vec<VecN<u8, 4>> = Vec::with_capacity(pixel_count);
-        for chunk in frame.data.chunks_exact(4) {
-            pixels.push(VecN::<u8, 4>::from([chunk[0], chunk[1], chunk[2], chunk[3]]));
-        }
-
-        // new_size_with_dataでVecN<u8, 4>のスライスから Mat を作成
-        use opencv::core::Size;
-        let size = Size::new(cols, rows);
-        let bgra_mat = Mat::new_size_with_data(size, &pixels)
-            .map_err(|e| DomainError::Process(format!("Failed to create BGRA Mat: {:?}", e)))?;
+        // BGRA（4チャンネル）データから直接Matを作成（ゼロコピー）
+        // SAFETY: frame.dataは有効なBGRAデータを含み、サイズは width * height * 4
+        // Matはframe.dataへの参照のみ保持（shallow copy）するため、
+        // frameのライフタイムがこの関数スコープ内で保証される
+        let bgra_mat = unsafe {
+            Mat::new_rows_cols_with_data_unsafe(
+                rows,
+                cols,
+                CV_8UC4,
+                frame.data.as_ptr() as *mut std::ffi::c_void,
+                step,
+            )
+            .map_err(|e| DomainError::Process(format!("Failed to create BGRA Mat: {:?}", e)))?
+        };
 
         // BGRA → BGR変換（4チャンネル → 3チャンネル）
+        // この時点でメモリコピーが1回発生（deep copy）
         let mut bgr_mat = Mat::default();
         imgproc::cvt_color_def(&bgra_mat, &mut bgr_mat, imgproc::COLOR_BGRA2BGR)
             .map_err(|e| DomainError::Process(format!("Failed to convert BGRA to BGR: {:?}", e)))?;
@@ -80,10 +96,18 @@ impl ColorProcessAdapter {
         bgr: &Mat,
         hsv_range: &HsvRange,
     ) -> DomainResult<DetectionResult> {
+        #[cfg(feature = "performance-timing")]
+        let start = Instant::now();
+        
         // BGR → HSV変換
         let mut hsv = Mat::default();
         imgproc::cvt_color_def(bgr, &mut hsv, imgproc::COLOR_BGR2HSV)
             .map_err(|e| DomainError::Process(format!("Failed to convert BGR to HSV: {:?}", e)))?;
+
+        #[cfg(feature = "performance-timing")]
+        let hsv_time = start.elapsed();
+        #[cfg(feature = "performance-timing")]
+        let mask_start = Instant::now();
 
         // HSVレンジでマスク生成
         let lower = Scalar::new(hsv_range.h_min as f64, hsv_range.s_min as f64, hsv_range.v_min as f64, 0.0);
@@ -93,8 +117,26 @@ impl ColorProcessAdapter {
         core::in_range(&hsv, &lower, &upper, &mut mask)
             .map_err(|e| DomainError::Process(format!("Failed to create mask: {:?}", e)))?;
 
+        #[cfg(feature = "performance-timing")]
+        let mask_time = mask_start.elapsed();
+        #[cfg(feature = "performance-timing")]
+        let moment_start = Instant::now();
+
         // モーメント計算
-        self.calculate_moments(&mask)
+        let result = self.calculate_moments(&mask)?;
+        
+        #[cfg(feature = "performance-timing")]
+        let moment_time = moment_start.elapsed();
+        #[cfg(feature = "performance-timing")]
+        tracing::debug!(
+            "Process breakdown: HSV={:.2}ms, Mask={:.2}ms, Moment={:.2}ms, Total={:.2}ms",
+            hsv_time.as_secs_f64() * 1000.0,
+            mask_time.as_secs_f64() * 1000.0,
+            moment_time.as_secs_f64() * 1000.0,
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+        
+        Ok(result)
     }
 
 
@@ -144,8 +186,28 @@ impl ProcessPort for ColorProcessAdapter {
     ) -> DomainResult<DetectionResult> {
         // フレームは既にROI領域のみを含んでいる（DDAがROI切り出し済み）
         // そのため、ここではフレーム全体を処理すればよい
+        
+        #[cfg(feature = "performance-timing")]
+        let start = Instant::now();
+        
         let mat = self.frame_to_mat(frame)?;
-        self.process_with_mat(&mat, hsv_range)
+        
+        #[cfg(feature = "performance-timing")]
+        let frame_to_mat_time = start.elapsed();
+        
+        let result = self.process_with_mat(&mat, hsv_range)?;
+        
+        #[cfg(feature = "performance-timing")]
+        tracing::debug!(
+            "Frame processing: FrameToMat={:.2}ms, Processing={:.2}ms, Total={:.2}ms ({}x{} pixels)",
+            frame_to_mat_time.as_secs_f64() * 1000.0,
+            (start.elapsed() - frame_to_mat_time).as_secs_f64() * 1000.0,
+            start.elapsed().as_secs_f64() * 1000.0,
+            frame.width,
+            frame.height
+        );
+        
+        Ok(result)
     }
 
     fn backend(&self) -> ProcessorBackend {
