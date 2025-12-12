@@ -122,8 +122,9 @@ where
         let capture_handle = {
             let capture = Arc::clone(&self.capture);
             let tx = capture_tx.clone();
+            let roi = self.roi.clone();
             std::thread::spawn(move || {
-                Self::capture_thread(capture, tx);
+                Self::capture_thread(capture, tx, roi);
             })
         };
 
@@ -166,17 +167,24 @@ where
     }
 
     /// Captureスレッドのメインループ
-    fn capture_thread(capture: Arc<Mutex<C>>, tx: Sender<TimestampedFrame>) {
+    fn capture_thread(capture: Arc<Mutex<C>>, tx: Sender<TimestampedFrame>, roi: Roi) {
+        tracing::info!("Capture thread started with ROI: {}x{} at ({}, {})", 
+            roi.width, roi.height, roi.x, roi.y);
         loop {
             let captured_at = Instant::now();
 
             let result = {
                 let mut guard = capture.lock().unwrap();
-                guard.capture_frame()
+                guard.capture_frame_with_roi(&roi)
             };
 
             match result {
                 Ok(Some(frame)) => {
+                    #[cfg(debug_assertions)]
+                    if captured_at.elapsed().as_millis() % 1000 < 20 { // 約1秒に1回ログ出力
+                        tracing::debug!("Frame captured: {}x{}", frame.width, frame.height);
+                    }
+                    
                     let timestamped = TimestampedFrame { frame, captured_at };
                     Self::send_latest_only(tx.clone(), timestamped);
                 }
@@ -205,6 +213,7 @@ where
         hsv_range: HsvRange,
         _stats_tx: Sender<StatData>,
     ) {
+        tracing::info!("Process thread started");
         loop {
             match rx.recv() {
                 Ok(timestamped) => {
@@ -215,11 +224,20 @@ where
 
                     match result {
                         Ok(detection_result) => {
+                            let processed_at = Instant::now();
                             let detection = TimestampedDetection {
                                 result: detection_result,
                                 captured_at: timestamped.captured_at,
-                                processed_at: Instant::now(),
+                                processed_at,
                             };
+                            
+                            #[cfg(debug_assertions)]
+                            if processed_at.elapsed().as_millis() % 1000 < 20 { // 約1秒に1回ログ出力
+                                let latency = processed_at.duration_since(timestamped.captured_at);
+                                tracing::debug!("Frame processed: detected={}, latency={:?}", 
+                                    detection_result.detected, latency);
+                            }
+                            
                             Self::send_latest_only(tx.clone(), detection);
                         }
                         Err(e) => {
@@ -244,6 +262,7 @@ where
         rx: Receiver<TimestampedDetection>,
         stats_tx: Sender<StatData>,
     ) {
+        tracing::info!("HID thread started");
         loop {
             match rx.recv() {
                 Ok(detection) => {
@@ -285,6 +304,7 @@ where
         stats: &mut StatsCollector,
         _recovery: &mut RecoveryState,
     ) {
+        tracing::info!("Stats/UI thread started");
         loop {
             match stats_rx.recv() {
                 Ok(stat_data) => {

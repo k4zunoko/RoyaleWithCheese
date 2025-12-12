@@ -19,7 +19,7 @@ fn main() {
     // ログシステムの初期化（非同期ファイル出力）
     // WindowsGUIサブシステムではコンソールが使えないため、ファイル出力必須
     let log_dir = PathBuf::from("logs");
-    let _guard = init_logging("info", false, Some(log_dir));
+    let _guard = init_logging("debug", false, Some(log_dir));
     // 注意: _guardはmain終了まで保持する必要がある（Dropでログスレッドが終了）
 
     tracing::info!("RoyaleWithCheese starting...");

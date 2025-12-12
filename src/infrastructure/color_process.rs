@@ -8,8 +8,10 @@ use crate::domain::{
 use opencv::{
     core::{self, Mat, Scalar},
     imgproc,
-    prelude::{MatTraitConst, MatExprTraitConst},
 };
+
+#[cfg(test)]
+use opencv::prelude::MatExprTraitConst;
 use std::time::Instant;
 
 /// 色検知処理アダプタ
