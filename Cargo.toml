@@ -8,6 +8,7 @@ default = ["fast-color"]
 fast-color = []
 yolo-ort = []
 performance-timing = []  # パフォーマンス測定用のタイミングログを有効化
+opencv-debug-display = []  # デバッグ用：OpenCVで画像処理中の画像を表示
 
 [dependencies]
 # エラー処理
@@ -30,7 +31,7 @@ crossbeam-channel = "0.5"
 win_desktop_duplication = "0.10"
 
 # 画像処理 (OpenCV)
-opencv = "0.92"
+opencv = { version = "0.92", features = ["highgui"] }
 
 # Windows API (GPU ROI実装用 - win_desktop_duplicationと同じバージョン)
 windows = { version = "0.57", features = [

@@ -123,6 +123,10 @@ impl ColorProcessAdapter {
         #[cfg(feature = "performance-timing")]
         let mask_time = hsv_time.elapsed();
 
+        // デバッグ表示：画像処理の中間結果を表示
+        #[cfg(feature = "opencv-debug-display")]
+        self.display_debug_images(bgr, &hsv, &mask)?;
+
         // モーメント計算
         let result = self.calculate_moments(&mask)?;
         
@@ -140,6 +144,47 @@ impl ColorProcessAdapter {
         }
         
         Ok(result)
+    }
+
+    /// デバッグ用：画像処理の中間結果を表示
+    /// 
+    /// opencv-debug-display featureが有効な場合のみコンパイルされます。
+    /// BGR、HSV、マスク画像を別々のウィンドウに表示し、
+    /// ESCキーまたは'q'キーで次のフレームに進みます。
+    #[cfg(feature = "opencv-debug-display")]
+    fn display_debug_images(
+        &self,
+        bgr: &Mat,
+        hsv: &Mat,
+        mask: &Mat,
+    ) -> DomainResult<()> {
+        use opencv::highgui;
+
+        // ウィンドウを作成（初回のみ）
+        let _ = highgui::named_window("Debug: BGR Original", highgui::WINDOW_NORMAL);
+        let _ = highgui::named_window("Debug: HSV", highgui::WINDOW_NORMAL);
+        let _ = highgui::named_window("Debug: Mask", highgui::WINDOW_NORMAL);
+
+        // 画像を表示
+        highgui::imshow("Debug: BGR Original", bgr)
+            .map_err(|e| DomainError::Process(format!("Failed to show BGR image: {:?}", e)))?;
+        highgui::imshow("Debug: HSV", hsv)
+            .map_err(|e| DomainError::Process(format!("Failed to show HSV image: {:?}", e)))?;
+        highgui::imshow("Debug: Mask", mask)
+            .map_err(|e| DomainError::Process(format!("Failed to show Mask image: {:?}", e)))?;
+
+        // キー入力を待つ（1ms待機、キー入力があればその値を返す）
+        // ESCキー(27)または'q'(113)で終了
+        let key = highgui::wait_key(1)
+            .map_err(|e| DomainError::Process(format!("Failed to wait for key: {:?}", e)))?;
+        
+        if key == 27 || key == 113 { // ESC or 'q'
+            tracing::info!("Debug display: User requested exit (ESC or 'q' pressed)");
+            // ウィンドウを破棄
+            let _ = highgui::destroy_all_windows();
+        }
+
+        Ok(())
     }
 
 

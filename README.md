@@ -34,7 +34,26 @@ cargo run --release --features performance-timing
 
 - **`--features fast-color`** (デフォルト): OpenCVベースの色検出処理を使用
 - **`--features performance-timing`**: 各処理の詳細なタイミングログを出力（パフォーマンス解析用）
+- **`--features opencv-debug-display`**: OpenCVで画像処理の中間結果を表示（デバッグ用）
 - **`--features yolo-ort`**: YOLO + ONNX Runtimeベースの物体検出（未実装）
+
+### デバッグ機能
+
+**opencv-debug-display**: 画像処理スレッドで取得した画像を確認
+
+```powershell
+# デバッグ表示を有効化して実行
+cargo run --features opencv-debug-display
+```
+
+このFeatureを有効にすると、以下の3つのウィンドウが表示されます：
+- **Debug: BGR Original**: キャプチャされた元画像（ROI領域）
+- **Debug: HSV**: HSV色空間に変換された画像
+- **Debug: Mask**: HSV範囲でフィルタリングされたマスク画像
+
+**操作**: ESCキーまたは'q'キーで終了
+
+**注意**: 画像表示により処理速度が大幅に低下するため、デバッグ目的でのみ使用してください。
 
 ## 現在の実装状況
 
