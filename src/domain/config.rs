@@ -71,8 +71,6 @@ pub struct ProcessConfig {
     pub roi: RoiConfig,
     /// HSVレンジ設定（fast-colorモードのみ）
     pub hsv_range: HsvRangeConfig,
-    /// OpenCL使用フラグ
-    pub use_opencl: bool,
     /// 最小検出面積（ピクセル）
     pub min_detection_area: u32,
 }
@@ -83,7 +81,6 @@ impl Default for ProcessConfig {
             mode: "fast-color".to_string(),
             roi: RoiConfig::default(),
             hsv_range: HsvRangeConfig::default(),
-            use_opencl: true,
             min_detection_area: 100,
         }
     }

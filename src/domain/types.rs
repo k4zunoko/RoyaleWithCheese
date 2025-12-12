@@ -180,8 +180,6 @@ impl DetectionResult {
 pub enum ProcessorBackend {
     /// CPU処理（OpenCV Mat使用）
     Cpu,
-    /// OpenCL処理（OpenCV UMat使用）
-    OpenCl,
 }
 
 #[cfg(test)]

@@ -84,11 +84,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 色検知処理アダプタの初期化
     tracing::info!("Initializing color process adapter...");
-    let process = ColorProcessAdapter::new(
-        config.process.use_opencl,
-        config.process.min_detection_area,
-    )?;
-    tracing::info!("Process backend: {:?}", process.backend());
+    let process = ColorProcessAdapter::new(config.process.min_detection_area)?;
 
     // モック通信アダプタの初期化（実際のHIDは未実装）
     tracing::info!("Initializing mock communication adapter...");

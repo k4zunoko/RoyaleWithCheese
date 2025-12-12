@@ -21,8 +21,6 @@ monitor_index = 0
 # 処理モード: "fast-color" または "yolo-ort"（将来実装）
 mode = "fast-color"
 
-# OpenCL（UMat）を使用するか（false の場合は CPU/Mat を使用）
-use_opencl = false
 
 # 最小検出面積（ピクセル数、これ未満は無視）
 min_detection_area = 100
