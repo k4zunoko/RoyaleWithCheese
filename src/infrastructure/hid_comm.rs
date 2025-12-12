@@ -21,6 +21,10 @@ pub struct HidCommAdapter {
     vendor_id: u16,
     /// Product ID
     product_id: u16,
+    /// シリアル番号（オプション）
+    serial_number: Option<String>,
+    /// デバイスパス（オプション）
+    device_path: Option<String>,
     /// 送信タイムアウト
     #[allow(dead_code)]
     send_timeout: Duration,
@@ -32,6 +36,8 @@ impl HidCommAdapter {
     /// # Arguments
     /// - `vendor_id`: HIDデバイスのVendor ID
     /// - `product_id`: HIDデバイスのProduct ID
+    /// - `serial_number`: デバイスのシリアル番号（オプション）
+    /// - `device_path`: デバイスパス（オプション、最優先）
     /// - `send_timeout_ms`: 送信タイムアウト（ミリ秒）、現在は未使用
     /// 
     /// # Returns
@@ -40,9 +46,16 @@ impl HidCommAdapter {
     /// # Errors
     /// - HIDAPI初期化失敗
     /// - デバイスオープン失敗（初回接続時）
+    /// 
+    /// # デバイス識別の優先順位
+    /// 1. device_path（最も確実）
+    /// 2. vendor_id + product_id + serial_number
+    /// 3. vendor_id + product_id（最初にマッチしたデバイス）
     pub fn new(
         vendor_id: u16,
         product_id: u16,
+        serial_number: Option<String>,
+        device_path: Option<String>,
         send_timeout_ms: u64,
     ) -> DomainResult<Self> {
         let api = HidApi::new()
@@ -50,25 +63,62 @@ impl HidCommAdapter {
         
         let send_timeout = Duration::from_millis(send_timeout_ms);
         
-        // デバイスのオープンを試行
-        let device = match api.open(vendor_id, product_id) {
-            Ok(dev) => {
-                tracing::info!(
-                    "HID device opened: VID=0x{:04X}, PID=0x{:04X}",
-                    vendor_id,
-                    product_id
-                );
-                
-                Some(dev)
+        // デバイスのオープンを試行（優先順位: device_path > serial_number > vid/pid）
+        let device = if let Some(ref path) = device_path {
+            // デバイスパスで開く（最も確実）
+            match api.open_path(std::ffi::CString::new(path.as_bytes()).unwrap().as_c_str()) {
+                Ok(dev) => {
+                    tracing::info!("HID device opened by path: {}", path);
+                    Some(dev)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to open HID device by path '{}': {:?}. Will retry on reconnect.", path, e);
+                    None
+                }
             }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to open HID device (VID=0x{:04X}, PID=0x{:04X}): {:?}. Will retry on reconnect.",
-                    vendor_id,
-                    product_id,
-                    e
-                );
-                None
+        } else if let Some(ref serial) = serial_number {
+            // シリアル番号で開く
+            match api.open_serial(vendor_id, product_id, serial) {
+                Ok(dev) => {
+                    tracing::info!(
+                        "HID device opened: VID=0x{:04X}, PID=0x{:04X}, SN={}",
+                        vendor_id,
+                        product_id,
+                        serial
+                    );
+                    Some(dev)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to open HID device (VID=0x{:04X}, PID=0x{:04X}, SN={}): {:?}. Will retry on reconnect.",
+                        vendor_id,
+                        product_id,
+                        serial,
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            // VID/PIDのみで開く
+            match api.open(vendor_id, product_id) {
+                Ok(dev) => {
+                    tracing::info!(
+                        "HID device opened: VID=0x{:04X}, PID=0x{:04X}",
+                        vendor_id,
+                        product_id
+                    );
+                    Some(dev)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to open HID device (VID=0x{:04X}, PID=0x{:04X}): {:?}. Will retry on reconnect.",
+                        vendor_id,
+                        product_id,
+                        e
+                    );
+                    None
+                }
             }
         };
         
@@ -77,6 +127,8 @@ impl HidCommAdapter {
             api: Mutex::new(api),
             vendor_id,
             product_id,
+            serial_number,
+            device_path,
             send_timeout,
         })
     }
@@ -183,19 +235,36 @@ impl CommPort for HidCommAdapter {
     /// - レート制限や指数バックオフはApplication層で実装
     /// - Infrastructure層はシンプルに再接続のみ行う
     fn reconnect(&mut self) -> DomainResult<()> {
-        tracing::info!(
-            "Attempting to reconnect HID device (VID=0x{:04X}, PID=0x{:04X})...",
-            self.vendor_id,
-            self.product_id
-        );
+        let log_msg = if let Some(ref path) = self.device_path {
+            format!("Attempting to reconnect HID device by path: {}", path)
+        } else if let Some(ref serial) = self.serial_number {
+            format!(
+                "Attempting to reconnect HID device (VID=0x{:04X}, PID=0x{:04X}, SN={})...",
+                self.vendor_id, self.product_id, serial
+            )
+        } else {
+            format!(
+                "Attempting to reconnect HID device (VID=0x{:04X}, PID=0x{:04X})...",
+                self.vendor_id, self.product_id
+            )
+        };
+        tracing::info!("{}", log_msg);
         
         // HID APIを再初期化（デバイス列挙を更新）
         let new_api = HidApi::new()
             .map_err(|e| DomainError::Communication(format!("Failed to reinitialize HIDAPI: {:?}", e)))?;
         
-        // デバイスをオープン
-        let device = new_api.open(self.vendor_id, self.product_id)
-            .map_err(|e| DomainError::Communication(format!("Failed to open HID device: {:?}", e)))?;
+        // デバイスをオープン（優先順位: device_path > serial_number > vid/pid）
+        let device = if let Some(ref path) = self.device_path {
+            new_api.open_path(std::ffi::CString::new(path.as_bytes()).unwrap().as_c_str())
+                .map_err(|e| DomainError::Communication(format!("Failed to open HID device by path: {:?}", e)))?
+        } else if let Some(ref serial) = self.serial_number {
+            new_api.open_serial(self.vendor_id, self.product_id, serial)
+                .map_err(|e| DomainError::Communication(format!("Failed to open HID device with serial: {:?}", e)))?
+        } else {
+            new_api.open(self.vendor_id, self.product_id)
+                .map_err(|e| DomainError::Communication(format!("Failed to open HID device: {:?}", e)))?
+        };
         
         // 更新
         *self.api.lock().unwrap() = new_api;
@@ -214,7 +283,7 @@ mod tests {
     #[test]
     fn test_adapter_creation() {
         // ダミーのVID/PIDで作成（実デバイスなしでも成功する設計）
-        let adapter = HidCommAdapter::new(0x0000, 0x0000, 10);
+        let adapter = HidCommAdapter::new(0x0000, 0x0000, None, None, 10);
         assert!(adapter.is_ok());
         
         let adapter = adapter.unwrap();
@@ -224,7 +293,7 @@ mod tests {
     
     #[test]
     fn test_send_without_device() {
-        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, 10).unwrap();
+        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None, 10).unwrap();
         
         // デバイス未接続の状態で送信
         let data = vec![0x01, 0x02, 0x03];
@@ -236,7 +305,7 @@ mod tests {
     
     #[test]
     fn test_send_empty_data() {
-        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, 10).unwrap();
+        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None, 10).unwrap();
         
         // 空データを送信
         let data = vec![];
@@ -248,10 +317,65 @@ mod tests {
     
     #[test]
     fn test_reconnect_without_device() {
-        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, 10).unwrap();
+        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None, 10).unwrap();
         
         // デバイスが存在しないので再接続は失敗する
         let result = adapter.reconnect();
         assert!(result.is_err());
+    }
+    
+    /// PCに接続されているHIDデバイスをすべて列挙するテスト
+    /// 
+    /// `cargo test test_enumerate_hid_devices -- --nocapture` で実行してください。
+    /// 実際のデバイス情報が出力されます。
+    #[test]
+    fn test_enumerate_hid_devices() {
+        use hidapi::HidApi;
+        
+        println!("\n========== Enumerating HID Devices ==========\n");
+        
+        let api = match HidApi::new() {
+            Ok(api) => api,
+            Err(e) => {
+                println!("Failed to initialize HIDAPI: {:?}", e);
+                return;
+            }
+        };
+        
+        let devices = api.device_list();
+        let mut count = 0;
+        
+        for device in devices {
+            count += 1;
+            println!("Device #{}:", count);
+            println!("  Vendor ID:       0x{:04X}", device.vendor_id());
+            println!("  Product ID:      0x{:04X}", device.product_id());
+            println!("  Path:            {:?}", device.path());
+            
+            if let Some(serial) = device.serial_number() {
+                println!("  Serial Number:   {}", serial);
+            } else {
+                println!("  Serial Number:   (none)");
+            }
+            
+            if let Some(manufacturer) = device.manufacturer_string() {
+                println!("  Manufacturer:    {}", manufacturer);
+            }
+            
+            if let Some(product) = device.product_string() {
+                println!("  Product:         {}", product);
+            }
+            
+            println!("  Release Number:  {}", device.release_number());
+            println!("  Interface:       {}", device.interface_number());
+            println!("  Usage Page:      0x{:04X}", device.usage_page());
+            println!("  Usage:           0x{:04X}", device.usage());
+            println!();
+        }
+        
+        println!("========== Total: {} HID devices found ==========\n", count);
+        
+        // このテストは常に成功（列挙のみ）
+        assert!(true);
     }
 }

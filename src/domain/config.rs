@@ -158,9 +158,19 @@ pub struct CommunicationConfig {
     pub vendor_id: u16,
     /// HIDデバイスのProduct ID
     pub product_id: u16,
+    /// デバイスのシリアル番号（オプション、VID/PIDだけで特定できない場合に使用）
+    #[serde(default)]
+    pub serial_number: Option<String>,
+    /// デバイスパス（オプション、最も確実な識別方法）
+    /// 例: "\\\\?\\hid#vid_2341&pid_8036#..." (Windows)
+    #[serde(default)]
+    pub device_path: Option<String>,
     /// レポート送信のタイムアウト（ミリ秒）
     /// 注: 現在は未使用、将来的にHIDデバイスのwrite timeoutとして使用予定
     pub send_timeout_ms: u64,
+    /// HIDレポート送信間隔（ミリ秒）
+    /// 新しい検出結果がない場合でも、この間隔で直前の値を送信し続ける
+    pub hid_send_interval_ms: u64,
 }
 
 impl Default for CommunicationConfig {
@@ -168,7 +178,10 @@ impl Default for CommunicationConfig {
         Self {
             vendor_id: 0x0000,
             product_id: 0x0000,
+            serial_number: None,
+            device_path: None,
             send_timeout_ms: 10,
+            hid_send_interval_ms: 8,  // 約144Hz（8ms間隔）
         }
     }
 }

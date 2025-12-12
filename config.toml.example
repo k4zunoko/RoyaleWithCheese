@@ -52,6 +52,17 @@ vendor_id = 0x0000
 # HIDデバイスのProduct ID
 product_id = 0x0000
 
+# デバイスのシリアル番号（オプション）
+# VID/PIDだけで複数デバイスがマッチする場合に指定
+# 例: serial_number = "12345ABCDE"
+# serial_number = ""
+
+# デバイスパス（オプション、最も確実な識別方法）
+# `cargo test test_enumerate_hid_devices -- --nocapture` で取得できます
+# 例 (Windows): device_path = "\\\\?\\hid#vid_2341&pid_8036#..."
+# 例 (Linux):   device_path = "/dev/hidraw0"
+# device_path = ""
+
 # レポート送信のタイムアウト（ミリ秒）
 # 注: 現在は未使用（将来的にHIDデバイスのwrite timeoutとして使用予定）
 send_timeout_ms = 10

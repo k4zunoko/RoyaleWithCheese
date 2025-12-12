@@ -100,6 +100,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         stats_interval: Duration::from_secs(config.pipeline.stats_interval_sec),
         capture_timeout: config.capture.timeout(),
         enable_dirty_rect_optimization: config.pipeline.enable_dirty_rect_optimization,
+        hid_send_interval: Duration::from_millis(config.communication.hid_send_interval_ms),
     };
 
     // ROIとHSVレンジの変換
@@ -114,6 +115,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let hid_comm = HidCommAdapter::new(
         config.communication.vendor_id,
         config.communication.product_id,
+        config.communication.serial_number.clone(),
+        config.communication.device_path.clone(),
         config.communication.send_timeout_ms,
     )?;
     tracing::info!("HID adapter initialized: VID=0x{:04X}, PID=0x{:04X}", 

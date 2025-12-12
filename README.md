@@ -23,6 +23,9 @@ cargo test dda -- --ignored --nocapture --test-threads=1
 # Application層の統合テスト（排他的フルスクリーン環境）
 cargo test test_exclusive_fullscreen_recovery -- --ignored --nocapture --test-threads=1
 
+# HIDデバイス列挙テスト
+cargo test test_enumerate_hid_devices -- --nocapture
+
 # 実行（通常）
 cargo run --release
 

@@ -23,6 +23,8 @@ pub struct PipelineConfig {
     pub capture_timeout: Duration,
     /// DirtyRect最適化を有効化
     pub enable_dirty_rect_optimization: bool,
+    /// HID送信間隔（新しい値がない場合も直前の値を送信）
+    pub hid_send_interval: Duration,
 }
 
 impl Default for PipelineConfig {
@@ -31,6 +33,7 @@ impl Default for PipelineConfig {
             stats_interval: Duration::from_secs(10),
             capture_timeout: Duration::from_millis(8),
             enable_dirty_rect_optimization: true,
+            hid_send_interval: Duration::from_millis(8),  // 約144Hz
         }
     }
 }
@@ -146,8 +149,9 @@ where
             let comm = Arc::clone(&self.comm);
             let rx = process_rx;
             let stats_tx = stats_tx.clone();
+            let hid_send_interval = self.config.hid_send_interval;
             std::thread::spawn(move || {
-                Self::hid_thread(comm, rx, stats_tx);
+                Self::hid_thread(comm, rx, stats_tx, hid_send_interval);
             })
         };
 
@@ -274,6 +278,10 @@ where
 
     /// HIDスレッド（低レイテンシ送信専用）
     /// 
+    /// # 送信戦略
+    /// - 新しい検出結果を受信したら即座に送信
+    /// - 新しい値がない場合は、hid_send_interval間隔で直前の値を送信し続ける
+    /// 
     /// # 再接続戦略
     /// - 送信エラー時、指数バックオフで再接続を試みる
     /// - 初回: 100ms, 2回目: 200ms, 3回目: 400ms, ...最大10秒
@@ -282,8 +290,9 @@ where
         comm: Arc<Mutex<H>>,
         rx: Receiver<TimestampedDetection>,
         stats_tx: Sender<StatData>,
+        hid_send_interval: Duration,
     ) {
-        tracing::info!("HID thread started");
+        tracing::info!("HID thread started with send interval: {:?}", hid_send_interval);
         
         let mut consecutive_errors = 0u32;
         let mut last_reconnect_attempt = None::<Instant>;
@@ -291,15 +300,43 @@ where
         const INITIAL_BACKOFF_MS: u64 = 100;
         const MAX_BACKOFF_MS: u64 = 10_000;
         
+        // 直前の検出結果を保持（初期値: 検出なし）
+        let mut last_detection: Option<DetectionResult> = None;
+        
         loop {
-            match rx.recv() {
-                Ok(detection) => {
-                    // HID送信（低レイテンシ最優先）
-                    let hid_report = crate::domain::ports::detection_to_hid_report(&detection.result);
-                    let send_result = {
-                        let mut guard = comm.lock().unwrap();
-                        guard.send(&hid_report)
-                    };
+            // タイムアウト付きでrecv（新しい値がない場合は直前の値を使用）
+            let detection = match rx.recv_timeout(hid_send_interval) {
+                Ok(new_detection) => {
+                    // 新しい検出結果を受信
+                    last_detection = Some(new_detection.result);
+                    Some(new_detection)
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    // タイムアウト: 直前の値を使用
+                    if let Some(last_result) = last_detection {
+                        Some(TimestampedDetection {
+                            result: last_result,
+                            captured_at: Instant::now(),  // 現在時刻を使用
+                            processed_at: Instant::now(),
+                        })
+                    } else {
+                        // まだ一度も検出結果を受信していない場合はスキップ
+                        continue;
+                    }
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    // Channel closed
+                    break;
+                }
+            };
+            
+            if let Some(detection) = detection {
+                // HID送信（低レイテンシ最優先）
+                let hid_report = crate::domain::ports::detection_to_hid_report(&detection.result);
+                let send_result = {
+                    let mut guard = comm.lock().unwrap();
+                    guard.send(&hid_report)
+                };
 
                     let hid_sent_at = Instant::now();
 
@@ -370,18 +407,13 @@ where
                         }
                     }
 
-                    // 統計データをStats/UIスレッドに送信（非ブロッキング）
-                    let stat_data = StatData {
-                        captured_at: detection.captured_at,
-                        processed_at: detection.processed_at,
-                        hid_sent_at,
-                    };
-                    let _ = stats_tx.try_send(stat_data);
-                }
-                Err(_) => {
-                    // Channel closed
-                    break;
-                }
+                // 統計データをStats/UIスレッドに送信（非ブロッキング）
+                let stat_data = StatData {
+                    captured_at: detection.captured_at,
+                    processed_at: detection.processed_at,
+                    hid_sent_at,
+                };
+                let _ = stats_tx.try_send(stat_data);
             }
         }
     }
@@ -537,6 +569,7 @@ mod tests {
         assert_eq!(config.stats_interval, Duration::from_secs(10));
         assert_eq!(config.capture_timeout, Duration::from_millis(8));
         assert!(config.enable_dirty_rect_optimization);
+        assert_eq!(config.hid_send_interval, Duration::from_millis(8));
     }
 
     #[test]

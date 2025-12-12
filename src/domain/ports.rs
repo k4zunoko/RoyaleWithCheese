@@ -122,7 +122,6 @@ pub trait CommPort: Send + Sync {
 /// - [9-10]: Coverage area (u16)
 /// - [11]: Detection flag (0/1)
 /// - [12-15]: Reserved (0x00)
-#[allow(dead_code)]
 pub fn detection_to_hid_report(result: &DetectionResult) -> Vec<u8> {
     let mut report = vec![0u8; 16];
 
