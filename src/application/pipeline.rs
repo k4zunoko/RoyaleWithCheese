@@ -170,6 +170,10 @@ where
     fn capture_thread(capture: Arc<Mutex<C>>, tx: Sender<TimestampedFrame>, roi: Roi) {
         tracing::info!("Capture thread started with ROI: {}x{} at ({}, {})", 
             roi.width, roi.height, roi.x, roi.y);
+        
+        #[cfg(debug_assertions)]
+        let mut frame_count = 0u64;
+        
         loop {
             let captured_at = Instant::now();
 
@@ -181,12 +185,15 @@ where
             match result {
                 Ok(Some(frame)) => {
                     #[cfg(debug_assertions)]
-                    if captured_at.elapsed().as_millis() % 1000 < 20 { // 約1秒に1回ログ出力
-                        tracing::debug!("Frame captured: {}x{}", frame.width, frame.height);
+                    {
+                        frame_count += 1;
+                        if frame_count % 144 == 0 { // 144フレーム（約1秒@144Hz）に1回ログ出力
+                            tracing::debug!("Frame captured: {}x{} (count: {})", frame.width, frame.height, frame_count);
+                        }
                     }
                     
                     let timestamped = TimestampedFrame { frame, captured_at };
-                    Self::send_latest_only(tx.clone(), timestamped);
+                    Self::send_latest_only(&tx, timestamped);
                 }
                 Ok(None) => {
                     // Timeout - no new frame
@@ -214,6 +221,10 @@ where
         _stats_tx: Sender<StatData>,
     ) {
         tracing::info!("Process thread started");
+        
+        #[cfg(debug_assertions)]
+        let mut process_count = 0u64;
+        
         loop {
             match rx.recv() {
                 Ok(timestamped) => {
@@ -232,13 +243,16 @@ where
                             };
                             
                             #[cfg(debug_assertions)]
-                            if processed_at.elapsed().as_millis() % 1000 < 20 { // 約1秒に1回ログ出力
-                                let latency = processed_at.duration_since(timestamped.captured_at);
-                                tracing::debug!("Frame processed: detected={}, latency={:?}", 
-                                    detection_result.detected, latency);
+                            {
+                                process_count += 1;
+                                if process_count % 144 == 0 { // 144フレーム（約1秒@144Hz）に1回ログ出力
+                                    let latency = processed_at.duration_since(timestamped.captured_at);
+                                    tracing::debug!("Frame processed: detected={}, latency={:?}ms, count={}", 
+                                        detection_result.detected, latency.as_millis(), process_count);
+                                }
                             }
                             
-                            Self::send_latest_only(tx.clone(), detection);
+                            Self::send_latest_only(&tx, detection);
                         }
                         Err(e) => {
                             #[cfg(debug_assertions)]
@@ -333,8 +347,12 @@ where
     }
 
     /// 最新のみ上書きポリシーで送信
-    fn send_latest_only<T>(tx: Sender<T>, value: T) {
-        match tx.try_send(value) {            Ok(_) => {}
+    /// 
+    /// bounded(1)キューを使用し、キューが満杯の場合は古いデータを破棄。
+    /// これにより常に最新のデータのみが処理される（低レイテンシ最優先）。
+    fn send_latest_only<T>(tx: &Sender<T>, value: T) {
+        match tx.try_send(value) {
+            Ok(_) => {}
             Err(TrySendError::Full(_)) => {
                 // キューが満杯 - 古いデータは受信側が破棄する
                 // Senderからは取り出せないため、単に無視
@@ -472,14 +490,14 @@ mod tests {
         let (tx, rx) = bounded::<i32>(1);
 
         // 最初の送信は成功
-        PipelineRunner::<MockCapture, MockProcess, MockComm>::send_latest_only(tx.clone(), 1);
+        PipelineRunner::<MockCapture, MockProcess, MockComm>::send_latest_only(&tx, 1);
         assert_eq!(rx.try_recv().unwrap(), 1);
 
         // キューを満たす
         tx.try_send(2).unwrap();
 
         // キューが満杯の状態で新しい値を送信（満杯なので無視される）
-        PipelineRunner::<MockCapture, MockProcess, MockComm>::send_latest_only(tx, 3);
+        PipelineRunner::<MockCapture, MockProcess, MockComm>::send_latest_only(&tx, 3);
 
         // キューには古い値（2）が残っている
         let value = rx.try_recv().unwrap();

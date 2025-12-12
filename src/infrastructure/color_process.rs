@@ -54,9 +54,10 @@ impl ColorProcessAdapter {
     /// # Returns
     /// BGR形式のMat
     /// 
-    /// # 最適化
-    /// - Vec中間バッファを削除し、直接frame.dataからMatを作成
-    /// - メモリコピー回数を削減（2回 → 1回）
+    /// # 低レイテンシ最適化
+    /// - ゼロコピー戦略: frame.dataから直接Matを作成（shallow copy）
+    /// - メモリコピーは1回のみ（BGRA→BGR変換時）
+    /// - 中間バッファを使用しない
     fn frame_to_mat(&self, frame: &Frame) -> DomainResult<Mat> {
         use opencv::core::CV_8UC4;
         
@@ -91,6 +92,10 @@ impl ColorProcessAdapter {
 
 
     /// HSVマスク処理（Mat版）
+    /// 
+    /// 低レイテンシのために以下の最適化を実施:
+    /// - OpenCVの並列処理を活用（cvtColor、moments）
+    /// - 条件付きパフォーマンスログ（performance-timing feature）
     fn process_with_mat(
         &self,
         bgr: &Mat,
@@ -106,8 +111,6 @@ impl ColorProcessAdapter {
 
         #[cfg(feature = "performance-timing")]
         let hsv_time = start.elapsed();
-        #[cfg(feature = "performance-timing")]
-        let mask_start = Instant::now();
 
         // HSVレンジでマスク生成
         let lower = Scalar::new(hsv_range.h_min as f64, hsv_range.s_min as f64, hsv_range.v_min as f64, 0.0);
@@ -118,23 +121,23 @@ impl ColorProcessAdapter {
             .map_err(|e| DomainError::Process(format!("Failed to create mask: {:?}", e)))?;
 
         #[cfg(feature = "performance-timing")]
-        let mask_time = mask_start.elapsed();
-        #[cfg(feature = "performance-timing")]
-        let moment_start = Instant::now();
+        let mask_time = hsv_time.elapsed();
 
         // モーメント計算
         let result = self.calculate_moments(&mask)?;
         
         #[cfg(feature = "performance-timing")]
-        let moment_time = moment_start.elapsed();
-        #[cfg(feature = "performance-timing")]
-        tracing::debug!(
-            "Process breakdown: HSV={:.2}ms, Mask={:.2}ms, Moment={:.2}ms, Total={:.2}ms",
-            hsv_time.as_secs_f64() * 1000.0,
-            mask_time.as_secs_f64() * 1000.0,
-            moment_time.as_secs_f64() * 1000.0,
-            start.elapsed().as_secs_f64() * 1000.0
-        );
+        {
+            let moment_time = mask_time.elapsed();
+            let total_time = start.elapsed();
+            tracing::debug!(
+                "Color process breakdown - HSV: {:.2}ms | Mask: {:.2}ms | Moment: {:.2}ms | Total: {:.2}ms",
+                hsv_time.as_secs_f64() * 1000.0,
+                mask_time.as_secs_f64() * 1000.0,
+                moment_time.as_secs_f64() * 1000.0,
+                total_time.as_secs_f64() * 1000.0
+            );
+        }
         
         Ok(result)
     }
@@ -198,14 +201,18 @@ impl ProcessPort for ColorProcessAdapter {
         let result = self.process_with_mat(&mat, hsv_range)?;
         
         #[cfg(feature = "performance-timing")]
-        tracing::debug!(
-            "Frame processing: FrameToMat={:.2}ms, Processing={:.2}ms, Total={:.2}ms ({}x{} pixels)",
-            frame_to_mat_time.as_secs_f64() * 1000.0,
-            (start.elapsed() - frame_to_mat_time).as_secs_f64() * 1000.0,
-            start.elapsed().as_secs_f64() * 1000.0,
-            frame.width,
-            frame.height
-        );
+        {
+            let processing_time = frame_to_mat_time.elapsed();
+            let total_time = start.elapsed();
+            tracing::debug!(
+                "Frame processing - Mat conversion: {:.2}ms | Color detection: {:.2}ms | Total: {:.2}ms ({}x{} px)",
+                frame_to_mat_time.as_secs_f64() * 1000.0,
+                processing_time.as_secs_f64() * 1000.0,
+                total_time.as_secs_f64() * 1000.0,
+                frame.width,
+                frame.height
+            );
+        }
         
         Ok(result)
     }
