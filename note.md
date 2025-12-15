@@ -12,3 +12,5 @@ dda.rs 237行目のコメントアウトを外すと、VSync待機が有効に�
 
 ビルド時にPATHに`\third_party\llvm\bin`を追加する必要があります。
 実行時にPATHに`\third_party\opencv\build\x64\vc16\bin`を追加する必要があります。
+
+レイテンシ最優先なら “YOLO11n（不十分なら s）+ TensorRT FP16” が第一候補。
