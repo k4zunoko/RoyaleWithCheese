@@ -337,12 +337,11 @@ mod tests {
         // ここに実際のデバイスパスを設定してください
         // 例 (Windows): r"\\?\hid#vid_2341&pid_8036#..."
         // 例 (Linux):   "/dev/hidraw0"
-        const DEVICE_PATH: &str = r"\\?\hid#vid_2341&pid_8036#6&1234abcd&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        const DEVICE_PATH: &str = r"\\?\\HID#VID_258A&PID_1007&MI_02#8&7c5162e&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
         
-        // 送信するテストパケット（16バイト）
-        let test_packet: [u8; 16] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+        // 送信するテストパケット（8バイト）
+        let test_packet: [u8; 8] = [
+            0x01, 0x00, 0x00, 0x0F, 0xFF, 0x00, 0x00, 0xFF,
         ];
         
         const SEND_COUNT: usize = 10;

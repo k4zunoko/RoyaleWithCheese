@@ -33,7 +33,10 @@ cargo test test_hid_communication -- --ignored --nocapture
 cargo run --release
 
 # 実行（パフォーマンス測定ログ付き）
-cargo run --release --features performance-timing
+cargo run --features performance-timing
+
+# 画像処理デバック
+cargo run --features opencv-debug-display
 ```
 
 ### ビルドオプション
