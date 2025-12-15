@@ -324,6 +324,92 @@ mod tests {
         assert!(result.is_err());
     }
     
+    /// HID通信確認テスト（実デバイス必須）
+    /// # 事前準備
+    /// 1. `test_enumerate_hid_devices`でデバイスパスを取得
+    /// 2. 以下のコード内の`DEVICE_PATH`を実際のパスに変更
+    #[test]
+    #[ignore]
+    fn test_hid_communication() {
+        use std::thread;
+        
+        // ===== テスト設定 =====
+        // ここに実際のデバイスパスを設定してください
+        // 例 (Windows): r"\\?\hid#vid_2341&pid_8036#..."
+        // 例 (Linux):   "/dev/hidraw0"
+        const DEVICE_PATH: &str = r"\\?\hid#vid_2341&pid_8036#6&1234abcd&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        
+        // 送信するテストパケット（16バイト）
+        let test_packet: [u8; 16] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
+        ];
+        
+        const SEND_COUNT: usize = 10;
+        const SEND_INTERVAL_MS: u64 = 1000;
+        // ===== テスト設定ここまで =====
+        
+        println!("\n========== HID Communication Test ==========");
+        println!("Device Path: {}", DEVICE_PATH);
+        println!("Packet Size: {} bytes", test_packet.len());
+        println!("Send Count:  {}", SEND_COUNT);
+        println!("Interval:    {} ms", SEND_INTERVAL_MS);
+        println!("===========================================\n");
+        
+        // HIDアダプタを作成（デバイスパスを使用）
+        let mut adapter = match HidCommAdapter::new(
+            0x0000, // VID（パスで開くため不使用）
+            0x0000, // PID（パスで開くため不使用）
+            None,   // シリアル番号（不使用）
+            Some(DEVICE_PATH.to_string()),
+            10,     // タイムアウト（ms）
+        ) {
+            Ok(adapter) => adapter,
+            Err(e) => {
+                panic!("Failed to create HID adapter: {:?}\nPlease check DEVICE_PATH is correct.", e);
+            }
+        };
+        
+        // デバイスが接続されているか確認
+        if !adapter.is_connected() {
+            panic!("Device is not connected. Please check the device path.");
+        }
+        
+        println!("Device connected successfully.\n");
+        
+        // 10回送信
+        let mut success_count = 0;
+        let mut error_count = 0;
+        
+        for i in 1..=SEND_COUNT {
+            println!("[{}/{}] Sending packet...", i, SEND_COUNT);
+            
+            match adapter.send(&test_packet.to_vec()) {
+                Ok(_) => {
+                    println!("  ✓ Sent successfully");
+                    success_count += 1;
+                }
+                Err(e) => {
+                    println!("  ✗ Error: {:?}", e);
+                    error_count += 1;
+                }
+            }
+            
+            // 最後の送信以外は待機
+            if i < SEND_COUNT {
+                thread::sleep(Duration::from_millis(SEND_INTERVAL_MS));
+            }
+        }
+        
+        println!("\n========== Test Results ==========");
+        println!("Success: {} / {}", success_count, SEND_COUNT);
+        println!("Error:   {} / {}", error_count, SEND_COUNT);
+        println!("==================================\n");
+        
+        // 少なくとも1回は成功することを確認
+        assert!(success_count > 0, "At least one packet should be sent successfully");
+    }
+    
     /// PCに接続されているHIDデバイスをすべて列挙するテスト
     /// 
     /// `cargo test test_enumerate_hid_devices -- --nocapture` で実行してください。

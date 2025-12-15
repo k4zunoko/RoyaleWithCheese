@@ -125,7 +125,13 @@ impl ColorProcessAdapter {
 
         // デバッグ表示：画像処理の中間結果を表示
         #[cfg(feature = "opencv-debug-display")]
-        self.display_debug_images(bgr, &hsv, &mask)?;
+        {
+            // 検出結果を計算してからオーバーレイ表示
+            let moments = imgproc::moments(&mask, false)
+                .map_err(|e| DomainError::Process(format!("Failed to calculate moments for debug: {:?}", e)))?;
+            let detection = self.calculate_detection_from_moments(&moments);
+            self.display_debug_images(bgr, &hsv, &mask, hsv_range, &detection)?;
+        }
 
         // モーメント計算
         let result = self.calculate_moments(&mask)?;
@@ -146,60 +152,335 @@ impl ColorProcessAdapter {
         Ok(result)
     }
 
-    /// デバッグ用：画像処理の中間結果を表示
+    /// デバッグ用：画像処理の中間結果を表示（拡張版）
     /// 
     /// opencv-debug-display featureが有効な場合のみコンパイルされます。
-    /// BGR、HSV、マスク画像を別々のウィンドウに表示し、
-    /// ESCキーまたは'q'キーで次のフレームに進みます。
+    /// BGR、マスク画像、デバッグ情報ウィンドウを表示します。
+    /// 
+    /// # 操作方法
+    /// - ESCキーまたは'q'キー: 終了
+    /// - その他: 継続（約30fps表示）
     #[cfg(feature = "opencv-debug-display")]
     fn display_debug_images(
         &self,
         bgr: &Mat,
-        hsv: &Mat,
+        _hsv: &Mat,
         mask: &Mat,
+        hsv_range: &HsvRange,
+        detection: &DetectionResult,
     ) -> DomainResult<()> {
         use opencv::highgui;
+        use opencv::prelude::MatTraitConst;
+
+        // BGR画像に検出マーカー（十字と円）のみ描画
+        let mut bgr_display = bgr.clone();
+        self.draw_detection_markers(&mut bgr_display, detection)?;
+
+        // デバッグ情報専用ウィンドウを作成
+        let info_window = self.create_info_window(hsv_range, detection, bgr.cols(), bgr.rows())?;
 
         // ウィンドウを作成（初回のみ）
-        let _ = highgui::named_window("Debug: BGR Original", highgui::WINDOW_NORMAL);
-        let _ = highgui::named_window("Debug: HSV", highgui::WINDOW_NORMAL);
-        let _ = highgui::named_window("Debug: Mask", highgui::WINDOW_NORMAL);
+        // WINDOW_AUTOSIZEで等倍表示（リサイズ不可）
+        let _ = highgui::named_window("Debug: BGR Capture", highgui::WINDOW_AUTOSIZE);
+        let _ = highgui::named_window("Debug: Mask", highgui::WINDOW_AUTOSIZE);
+        let _ = highgui::named_window("Debug: Info", highgui::WINDOW_AUTOSIZE);
 
         // 画像を表示
-        highgui::imshow("Debug: BGR Original", bgr)
+        highgui::imshow("Debug: BGR Capture", &bgr_display)
             .map_err(|e| DomainError::Process(format!("Failed to show BGR image: {:?}", e)))?;
-        highgui::imshow("Debug: HSV", hsv)
-            .map_err(|e| DomainError::Process(format!("Failed to show HSV image: {:?}", e)))?;
         highgui::imshow("Debug: Mask", mask)
             .map_err(|e| DomainError::Process(format!("Failed to show Mask image: {:?}", e)))?;
+        highgui::imshow("Debug: Info", &info_window)
+            .map_err(|e| DomainError::Process(format!("Failed to show Info window: {:?}", e)))?;
 
-        // キー入力を待つ（1ms待機、キー入力があればその値を返す）
-        // ESCキー(27)または'q'(113)で終了
-        let key = highgui::wait_key(1)
+        // キー入力を待つ（30ms待機 = 約33fps、ユーザーが画像を確認しやすい速度）
+        // ESCキー(27)、'q'(113)で終了
+        let key = highgui::wait_key(30)
             .map_err(|e| DomainError::Process(format!("Failed to wait for key: {:?}", e)))?;
         
         if key == 27 || key == 113 { // ESC or 'q'
             tracing::info!("Debug display: User requested exit (ESC or 'q' pressed)");
             // ウィンドウを破棄
             let _ = highgui::destroy_all_windows();
+            // プログラム全体を終了
+            std::process::exit(0);
         }
+
+        Ok(())
+    }
+
+    /// デバッグ情報専用ウィンドウを作成
+    #[cfg(feature = "opencv-debug-display")]
+    fn create_info_window(
+        &self,
+        hsv_range: &HsvRange,
+        detection: &DetectionResult,
+        img_width: i32,
+        img_height: i32,
+    ) -> DomainResult<Mat> {
+        use opencv::imgproc::{self, FONT_HERSHEY_SIMPLEX, LINE_8};
+        use opencv::core::{Point, Scalar};
+
+        // 固定サイズのウィンドウ（幅400px、高さは内容に応じて調整）
+        let window_width = 400;
+        let window_height = 300;
+        
+        // 黒背景のMatを作成
+        let mut info_img = Mat::new_rows_cols_with_default(
+            window_height,
+            window_width,
+            opencv::core::CV_8UC3,
+            Scalar::new(0.0, 0.0, 0.0, 0.0),
+        ).map_err(|e| DomainError::Process(format!("Failed to create info window: {:?}", e)))?;
+
+        let font_scale = 0.6;
+        let thickness = 1;
+        let white = Scalar::new(255.0, 255.0, 255.0, 0.0);
+        let green = Scalar::new(0.0, 255.0, 0.0, 0.0);
+        let red = Scalar::new(0.0, 0.0, 255.0, 0.0);
+        let yellow = Scalar::new(0.0, 255.0, 255.0, 0.0);
+        
+        let mut y = 30;
+        let line_height = 25;
+
+        // タイトル
+        imgproc::put_text(
+            &mut info_img,
+            "=== Detection Info ===",
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            0.7,
+            yellow,
+            2,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height + 5;
+
+        // ROIサイズ
+        let size_text = format!("ROI Size: {}x{} px", img_width, img_height);
+        imgproc::put_text(
+            &mut info_img,
+            &size_text,
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            white,
+            thickness,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height;
+
+        // HSV設定
+        let hsv_text = format!("HSV Range:");
+        imgproc::put_text(
+            &mut info_img,
+            &hsv_text,
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            white,
+            thickness,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height;
+
+        let hsv_detail = format!("  H: [{:3} - {:3}]", hsv_range.h_min, hsv_range.h_max);
+        imgproc::put_text(
+            &mut info_img,
+            &hsv_detail,
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            white,
+            thickness,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height;
+
+        let hsv_detail = format!("  S: [{:3} - {:3}]", hsv_range.s_min, hsv_range.s_max);
+        imgproc::put_text(
+            &mut info_img,
+            &hsv_detail,
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            white,
+            thickness,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height;
+
+        let hsv_detail = format!("  V: [{:3} - {:3}]", hsv_range.v_min, hsv_range.v_max);
+        imgproc::put_text(
+            &mut info_img,
+            &hsv_detail,
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            white,
+            thickness,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height + 5;
+
+        // 検出状態
+        let (status_text, status_color) = if detection.detected {
+            ("Status: DETECTED", green)
+        } else {
+            ("Status: NOT DETECTED", red)
+        };
+        imgproc::put_text(
+            &mut info_img,
+            status_text,
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            0.7,
+            status_color,
+            2,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height + 5;
+
+        // 検出面積
+        let area_text = format!("Coverage: {} px", detection.coverage);
+        imgproc::put_text(
+            &mut info_img,
+            &area_text,
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            white,
+            thickness,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height;
+
+        let min_area_text = format!("Min Area: {} px", self.min_detection_area);
+        imgproc::put_text(
+            &mut info_img,
+            &min_area_text,
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            white,
+            thickness,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        y += line_height + 5;
+
+        // 重心座標
+        if detection.detected {
+            let center_text = format!("Center: ({:.1}, {:.1})", 
+                detection.center_x, 
+                detection.center_y);
+            imgproc::put_text(
+                &mut info_img,
+                &center_text,
+                Point::new(20, y),
+                FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                white,
+                thickness,
+                LINE_8,
+                false,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+            y += line_height;
+        }
+
+        y += 10;
+
+        // 操作方法
+        imgproc::put_text(
+            &mut info_img,
+            "Press ESC or 'q' to quit",
+            Point::new(20, y),
+            FONT_HERSHEY_SIMPLEX,
+            0.5,
+            white,
+            thickness,
+            LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+
+        Ok(info_img)
+    }
+
+    /// 検出マーカー（十字と円）を描画
+    #[cfg(feature = "opencv-debug-display")]
+    fn draw_detection_markers(
+        &self,
+        img: &mut Mat,
+        detection: &DetectionResult,
+    ) -> DomainResult<()> {
+        use opencv::imgproc::{self, LINE_8};
+        use opencv::core::{Point, Scalar};
+
+        if !detection.detected {
+            return Ok(());
+        }
+
+        let green = Scalar::new(0.0, 255.0, 0.0, 0.0);
+        let center_point = Point::new(
+            detection.center_x as i32,
+            detection.center_y as i32,
+        );
+        let marker_size = 10;
+        
+        // 縦線
+        imgproc::line(
+            img,
+            Point::new(center_point.x, center_point.y - marker_size),
+            Point::new(center_point.x, center_point.y + marker_size),
+            green,
+            2,
+            LINE_8,
+            0,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw line: {:?}", e)))?;
+        
+        // 横線
+        imgproc::line(
+            img,
+            Point::new(center_point.x - marker_size, center_point.y),
+            Point::new(center_point.x + marker_size, center_point.y),
+            green,
+            2,
+            LINE_8,
+            0,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw line: {:?}", e)))?;
+
+        // 重心周りに円を描画
+        imgproc::circle(
+            img,
+            center_point,
+            5,
+            green,
+            2,
+            LINE_8,
+            0,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw circle: {:?}", e)))?;
 
         Ok(())
     }
 
 
 
-    /// モーメント計算から重心と面積を取得
-    fn calculate_moments(&self, mask: &Mat) -> DomainResult<DetectionResult> {
-        let moments = imgproc::moments(mask, false)
-            .map_err(|e| DomainError::Process(format!("Failed to calculate moments: {:?}", e)))?;
-
+    /// モーメントから検出結果を計算（内部ヘルパー）
+    fn calculate_detection_from_moments(&self, moments: &opencv::core::Moments) -> DetectionResult {
         let m00 = moments.m00;
         let coverage = m00 as u32;
 
         // 最小検出面積チェック
         if coverage < self.min_detection_area {
-            return Ok(DetectionResult::none());
+            return DetectionResult::none();
         }
 
         // 重心計算
@@ -215,13 +496,21 @@ impl ColorProcessAdapter {
             0.0
         };
 
-        Ok(DetectionResult {
+        DetectionResult {
             timestamp: Instant::now(),
             detected: true,
             center_x,
             center_y,
             coverage,
-        })
+        }
+    }
+
+    /// モーメント計算から重心と面積を取得
+    fn calculate_moments(&self, mask: &Mat) -> DomainResult<DetectionResult> {
+        let moments = imgproc::moments(mask, false)
+            .map_err(|e| DomainError::Process(format!("Failed to calculate moments: {:?}", e)))?;
+        
+        Ok(self.calculate_detection_from_moments(&moments))
     }
 }
 
