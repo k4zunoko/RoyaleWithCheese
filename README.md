@@ -72,11 +72,3 @@ cargo run --features opencv-debug-display
 
 **注意**: 画像表示により処理速度が大幅に低下するため、デバッグ・動作確認目的でのみ使用してください。
 
-## 現在の実装状況
-
-- ✅ **Domain層**: 型定義、Ports、エラーハンドリング、設定管理
-- ✅ **Application層**: 4スレッドパイプライン、再初期化ロジック、統計情報管理
-- ✅ **Infrastructure/Capture**: DDA実装（60-144Hz対応、GPU ROI実装）
-- 🔄 **Infrastructure/Process**: モック実装（OpenCV統合は未実装）
-- 🔄 **Infrastructure/Comm**: モック実装（HID統合は未実装）
-- ✅ **Presentation/main.rs**: 初期化処理、設定読み込み、パイプライン起動
