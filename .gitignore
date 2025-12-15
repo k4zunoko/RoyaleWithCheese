@@ -17,7 +17,7 @@ Thumbs.db
 logs/
 *.log
 
-config.toml
+/config.toml
 
 AGENT.md
 docs/

@@ -1,0 +1,14 @@
+
+# .cargo/config.toml
+[env]
+# --- libclang と llvm-config（既に設定済み）
+LIBCLANG_PATH     = { value = "third_party/llvm/bin",  relative = true }
+LLVM_CONFIG_PATH  = { value = "third_party/llvm/bin/llvm-config.exe", relative = true }
+
+# --- clang 実行ファイルの場所（PATH不要にする）
+CLANG_PATH        = { value = "third_party/llvm/bin/clang.exe", relative = true }
+
+# --- OpenCV のヘッダ／ライブラリ指定（既に設定済み）
+OPENCV_INCLUDE_PATHS = { value = "third_party/opencv/build/include", relative = true }
+OPENCV_LINK_PATHS    = { value = "third_party/opencv/build/x64/vc16/lib", relative = true }
+OPENCV_LINK_LIBS     = "opencv_world4120"
