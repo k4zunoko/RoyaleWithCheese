@@ -166,6 +166,21 @@ pub fn apply_coordinate_transform(
     TransformedCoordinates::new(clipped_x, clipped_y, true)
 }
 
+#[inline]
+fn encode_hid_delta(value: f32) -> (u8, u8) {
+    let v = value.trunc() as i32;
+    if v > 0 {
+        let mag = v.min(255) as u8;
+        (0x00, mag)
+    } else if v < 0 {
+        let abs = (-v).min(255);
+        let mag = (0x100 - abs) as u8;
+        (0xFF, mag)
+    } else {
+        (0x00, 0x00)
+    }
+}
+
 /// 変換座標をHIDレポートに変換
 /// 
 /// 中心からの相対座標（Δx, Δy）を符号付き16ビット整数に変換し、
@@ -185,26 +200,17 @@ pub fn apply_coordinate_transform(
 /// ```
 #[inline]
 pub fn coordinates_to_hid_report(coords: &TransformedCoordinates) -> Vec<u8> {
-    let mut report = vec![0u8; 8];
+    let mut report = vec![0x00; 8];
+    let (x_first, x_second) = encode_hid_delta(coords.x);
+    let (y_first, y_second) = encode_hid_delta(coords.y);
 
-    // ReportID
     report[0] = 0x01;
     report[1] = 0x00;
     report[2] = 0x00;
-
-    // Δx (i16, ビッグエンディアン)
-    let delta_x = coords.x.clamp(-32768.0, 32767.0) as i16;
-    let dx_bytes = delta_x.to_be_bytes();
-    report[3] = dx_bytes[0]; // 上位バイト
-    report[4] = dx_bytes[1]; // 下位バイト
-
-    // Δy (i16, ビッグエンディアン)
-    let delta_y = coords.y.clamp(-32768.0, 32767.0) as i16;
-    let dy_bytes = delta_y.to_be_bytes();
-    report[5] = dy_bytes[0]; // 上位バイト
-    report[6] = dy_bytes[1]; // 下位バイト
-
-    // Reserved
+    report[3] = x_second;
+    report[4] = x_first;
+    report[5] = y_second;
+    report[6] = y_first;
     report[7] = 0xFF;
 
     report

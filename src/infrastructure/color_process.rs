@@ -479,7 +479,7 @@ impl ColorProcessAdapter {
         let coverage = m00 as u32;
 
         // 最小検出面積チェック
-        if coverage < self.min_detection_area {
+        if coverage <= self.min_detection_area {
             return DetectionResult::none();
         }
 
