@@ -98,7 +98,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // パイプライン設定
     let pipeline_config = PipelineConfig {
         stats_interval: Duration::from_secs(config.pipeline.stats_interval_sec),
-        capture_timeout: config.capture.timeout(),
         enable_dirty_rect_optimization: config.pipeline.enable_dirty_rect_optimization,
         hid_send_interval: Duration::from_millis(config.communication.hid_send_interval_ms),
     };

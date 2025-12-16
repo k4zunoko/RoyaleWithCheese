@@ -60,6 +60,7 @@ y_clip_limit = 10000.0
 dead_zone = 0.0
 
 [communication]
+# `cargo test test_enumerate_hid_devices -- --nocapture` で取得できます
 # HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）
 vendor_id = 0x0000
 
@@ -71,9 +72,7 @@ product_id = 0x0000
 # serial_number = ""
 
 # デバイスパス（オプション、最も確実な識別方法）
-# `cargo test test_enumerate_hid_devices -- --nocapture` で取得できます
 # 例 (Windows): device_path = "\\\\?\\hid#vid_2341&pid_8036#..."
-# 例 (Linux):   device_path = "/dev/hidraw0"
 # device_path = ""
 
 # HIDレポート送信間隔（ミリ秒）
@@ -83,8 +82,9 @@ product_id = 0x0000
 hid_send_interval_ms = 8
 
 [pipeline]
-# DirtyRect最適化を有効にするか
+# DirtyRect最適化を有効にするか（未実装）
 # true の場合、ROI と交差しない DirtyRect は処理をスキップ
+# 注: 現在、win_desktop_duplication クレートから DirtyRect 情報を取得していないため機能しません
 enable_dirty_rect_optimization = false
 
 # 統計情報の出力間隔（秒）

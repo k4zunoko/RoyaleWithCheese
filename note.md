@@ -5,6 +5,8 @@
 
 ## パフォーマンスヒント
 
+// #![windows_subsystem = "windows"] // ← これでコンソール非表示（GUIサブシステム）
+
 dda.rs 237行目のコメントアウトを外すと、VSync待機が有効になります。
 ```rust
 // self.wait_for_vsync()?;

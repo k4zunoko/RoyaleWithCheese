@@ -41,7 +41,10 @@ pub struct DdaCaptureAdapter {
     staging_size: (u32, u32),
     
     // 再初期化時に元の設定を保持
+    // reinitialize() メソッドで使用されるため、コンパイラの "never read" 警告は誤検知
+    #[allow(dead_code)]
     adapter_idx: usize,
+    #[allow(dead_code)]
     output_idx: usize,
 }
 
@@ -115,13 +118,6 @@ impl DdaCaptureAdapter {
             adapter_idx,
             output_idx,
         })
-    }
-
-    /// プライマリモニタでの初期化（簡易版）
-    /// 
-    /// アダプタ0、ディスプレイ0、タイムアウト8msで初期化。
-    pub fn new_primary(timeout_ms: u32) -> DomainResult<Self> {
-        Self::new(0, 0, timeout_ms)
     }
 
     /// VSync待機
@@ -442,7 +438,7 @@ mod tests {
     fn test_dda_initialization() {
         // 注: DDA APIは同時に1つのインスタンスしか作成できない場合がある
         // 他のテストと同時実行しないこと
-        let adapter = DdaCaptureAdapter::new_primary(8);
+        let adapter = DdaCaptureAdapter::new(0, 0, 8);
         
         if adapter.is_err() {
             println!("DDA initialization failed (expected if another instance exists): {:?}", adapter.err());
@@ -465,7 +461,7 @@ mod tests {
     #[test]
     #[ignore] // 管理者権限 + GPU必須のため通常はスキップ
     fn test_dda_capture_single_frame() {
-        let mut adapter = match DdaCaptureAdapter::new_primary(8) {
+        let mut adapter = match DdaCaptureAdapter::new(0, 0, 8) {
             Ok(a) => a,
             Err(e) => {
                 println!("DDA initialization failed (expected if another instance exists): {:?}", e);
@@ -498,7 +494,7 @@ mod tests {
     #[test]
     #[ignore] // 管理者権限 + GPU必須 + 時間がかかるため通常はスキップ
     fn test_dda_capture_multiple_frames() {
-        let mut adapter = DdaCaptureAdapter::new_primary(8)
+        let mut adapter = DdaCaptureAdapter::new(0, 0, 8)
             .expect("DDA initialization failed");
 
         let mut frame_count = 0;
@@ -545,7 +541,7 @@ mod tests {
         // 新しいインスタンスを作成できないため、通常は失敗する。
         // 実際のアプリケーションでは、Application層が
         // RecoveryStateを使って適切にreinitialize()を呼び出す。
-        let mut adapter = match DdaCaptureAdapter::new_primary(8) {
+        let mut adapter = match DdaCaptureAdapter::new(0, 0, 8) {
             Ok(a) => a,
             Err(e) => {
                 println!("DDA initialization failed: {:?}", e);
@@ -571,7 +567,7 @@ mod tests {
     #[test]
     #[ignore] // 管理者権限 + GPU必須のため通常はスキップ
     fn test_dda_capture_with_roi() {
-        let mut adapter = match DdaCaptureAdapter::new_primary(8) {
+        let mut adapter = match DdaCaptureAdapter::new(0, 0, 8) {
             Ok(a) => a,
             Err(e) => {
                 println!("DDA initialization failed (expected if another instance exists): {:?}", e);

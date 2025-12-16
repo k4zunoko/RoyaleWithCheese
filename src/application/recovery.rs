@@ -284,7 +284,7 @@ mod integration_tests {
         println!();
 
         // DDAキャプチャアダプタを初期化
-        let mut capture = match DdaCaptureAdapter::new_primary(8) {
+        let mut capture = match DdaCaptureAdapter::new(0, 0, 8) {
             Ok(adapter) => {
                 let info = adapter.device_info();
                 println!("DDA initialized:");

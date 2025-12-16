@@ -19,9 +19,7 @@ use std::time::{Duration, Instant};
 pub struct PipelineConfig {
     /// 統計出力間隔
     pub stats_interval: Duration,
-    /// キャプチャタイムアウト
-    pub capture_timeout: Duration,
-    /// DirtyRect最適化を有効化
+    /// DirtyRect最適化を有効化（未実装）
     pub enable_dirty_rect_optimization: bool,
     /// HID送信間隔（新しい値がない場合も直前の値を送信）
     pub hid_send_interval: Duration,
@@ -31,7 +29,6 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             stats_interval: Duration::from_secs(10),
-            capture_timeout: Duration::from_millis(8),
             enable_dirty_rect_optimization: true,
             hid_send_interval: Duration::from_millis(8),  // 約144Hz
         }
@@ -580,7 +577,6 @@ mod tests {
     fn test_pipeline_config_default() {
         let config = PipelineConfig::default();
         assert_eq!(config.stats_interval, Duration::from_secs(10));
-        assert_eq!(config.capture_timeout, Duration::from_millis(8));
         assert!(config.enable_dirty_rect_optimization);
         assert_eq!(config.hid_send_interval, Duration::from_millis(8));
     }
