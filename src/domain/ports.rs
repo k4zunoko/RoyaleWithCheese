@@ -98,7 +98,7 @@ pub trait CommPort: Send + Sync {
     /// 検出結果をデバイスに送信
     /// 
     /// # Arguments
-    /// - `data`: 送信データ（最大16バイト程度を想定）
+    /// - `data`: 送信データ（8バイトを想定）
     /// 
     /// # Returns
     /// - `Ok(())`: 送信成功
@@ -114,40 +114,34 @@ pub trait CommPort: Send + Sync {
 
 /// 検出結果をHIDレポートに変換するヘルパー
 /// 
-/// # レポート構造（16バイト）
+/// # レポート構造（8バイト）
 /// - [0]: ReportID (固定 0x01)
-/// - [1-4]: Timestamp (u32, ms)
-/// - [5-6]: Center X (u16)
-/// - [7-8]: Center Y (u16)
-/// - [9-10]: Coverage area (u16)
-/// - [11]: Detection flag (0/1)
-/// - [12-15]: Reserved (0x00)
+/// - [3-4]: Center X (u16, ビッグエンディアン)
+/// - [5-6]: Center Y (u16, ビッグエンディアン)
+/// - [7]: Reserved (0xFF)
 pub fn detection_to_hid_report(result: &DetectionResult) -> Vec<u8> {
-    let mut report = vec![0u8; 16];
+    let mut report = vec![0u8; 8];
 
     // ReportID
     report[0] = 0x01;
 
-    // Timestamp (ms since epoch - 下位32bit)
-    let ts_ms = result.timestamp.elapsed().as_millis() as u32;
-    report[1..5].copy_from_slice(&ts_ms.to_le_bytes());
+    report[1] = 0x00;
+    report[2] = 0x00;
 
-    // Center X (u16)
+    // Center X (u16, ビッグエンディアン)
     let cx = result.center_x.clamp(0.0, 65535.0) as u16;
-    report[5..7].copy_from_slice(&cx.to_le_bytes());
+    let cx_bytes = cx.to_be_bytes();
+    report[3] = cx_bytes[0]; // 上位バイト
+    report[4] = cx_bytes[1]; // 下位バイト
 
-    // Center Y (u16)
+    // Center Y (u16, ビッグエンディアン)
     let cy = result.center_y.clamp(0.0, 65535.0) as u16;
-    report[7..9].copy_from_slice(&cy.to_le_bytes());
+    let cy_bytes = cy.to_be_bytes();
+    report[5] = cy_bytes[0]; // 上位バイト
+    report[6] = cy_bytes[1]; // 下位バイト
 
-    // Coverage (u16)
-    let coverage = result.coverage.clamp(0, 65535) as u16;
-    report[9..11].copy_from_slice(&coverage.to_le_bytes());
-
-    // Detection flag
-    report[11] = if result.detected { 1 } else { 0 };
-
-    // Reserved [12-15] は0のまま
+    // Reserved
+    report[7] = 0xFF;
 
     report
 }
@@ -169,23 +163,21 @@ mod tests {
 
         let report = detection_to_hid_report(&result);
 
-        assert_eq!(report.len(), 16);
+        assert_eq!(report.len(), 8);
         assert_eq!(report[0], 0x01); // ReportID
+        assert_eq!(report[1], 0x00); // Detection flag
 
-        // Center X
-        let cx = u16::from_le_bytes([report[5], report[6]]);
+        // Center X (ビッグエンディアン)
+        let cx = u16::from_be_bytes([report[3], report[4]]);
         assert_eq!(cx, 123);
 
-        // Center Y
-        let cy = u16::from_le_bytes([report[7], report[8]]);
+        // Center Y (ビッグエンディアン)
+        let cy = u16::from_be_bytes([report[5], report[6]]);
         assert_eq!(cy, 456);
 
-        // Coverage
-        let coverage = u16::from_le_bytes([report[9], report[10]]);
-        assert_eq!(coverage, 9999);
-
-        // Detection flag
-        assert_eq!(report[11], 1);
+        // Reserved bytes
+        assert_eq!(report[2], 0x00);
+        assert_eq!(report[7], 0xFF);
     }
 
     #[test]
@@ -193,8 +185,14 @@ mod tests {
         let result = DetectionResult::none();
         let report = detection_to_hid_report(&result);
 
-        assert_eq!(report[11], 0); // Detection flag = 0
-        assert_eq!(report[9], 0); // Coverage = 0
-        assert_eq!(report[10], 0);
+        assert_eq!(report.len(), 8);
+        assert_eq!(report[0], 0x01); // ReportID
+        assert_eq!(report[1], 0); // Detection flag = 0
+        
+        // Center X/Y は0
+        let cx = u16::from_be_bytes([report[3], report[4]]);
+        let cy = u16::from_be_bytes([report[5], report[6]]);
+        assert_eq!(cx, 0);
+        assert_eq!(cy, 0);
     }
 }
