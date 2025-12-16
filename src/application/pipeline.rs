@@ -78,9 +78,10 @@ where
     config: PipelineConfig,
     recovery: RecoveryState,
     stats: StatsCollector,
-    // TODO: 設定から読み込む
+    
     roi: Roi,
     hsv_range: HsvRange,
+    coordinate_transform: crate::domain::CoordinateTransformConfig,
 }
 
 #[allow(dead_code)]
@@ -99,6 +100,7 @@ where
         recovery: RecoveryState,
         roi: Roi,
         hsv_range: HsvRange,
+        coordinate_transform: crate::domain::CoordinateTransformConfig,
     ) -> Self {
         Self {
             capture: Arc::new(Mutex::new(capture)),
@@ -109,6 +111,7 @@ where
             recovery,
             roi,
             hsv_range,
+            coordinate_transform,
         }
     }
 
@@ -148,10 +151,12 @@ where
         let hid_handle = {
             let comm = Arc::clone(&self.comm);
             let rx = process_rx;
+            let roi = self.roi.clone();
+            let coordinate_transform = self.coordinate_transform.clone();
             let stats_tx = stats_tx.clone();
             let hid_send_interval = self.config.hid_send_interval;
             std::thread::spawn(move || {
-                Self::hid_thread(comm, rx, stats_tx, hid_send_interval);
+                Self::hid_thread(comm, rx, roi, coordinate_transform, stats_tx, hid_send_interval);
             })
         };
 
@@ -289,6 +294,8 @@ where
     fn hid_thread(
         comm: Arc<Mutex<H>>,
         rx: Receiver<TimestampedDetection>,
+        roi: Roi,
+        coordinate_transform: crate::domain::CoordinateTransformConfig,
         stats_tx: Sender<StatData>,
         hid_send_interval: Duration,
     ) {
@@ -332,7 +339,13 @@ where
             
             if let Some(detection) = detection {
                 // HID送信（低レイテンシ最優先）
-                let hid_report = crate::domain::ports::detection_to_hid_report(&detection.result);
+                // 2段階変換: DetectionResult → TransformedCoordinates → HIDレポート
+                let transformed = crate::domain::ports::apply_coordinate_transform(
+                    &detection.result,
+                    &roi,
+                    &coordinate_transform,
+                );
+                let hid_report = crate::domain::ports::coordinates_to_hid_report(&transformed);
                 let send_result = {
                     let mut guard = comm.lock().unwrap();
                     guard.send(&hid_report)

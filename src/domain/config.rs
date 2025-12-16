@@ -73,6 +73,9 @@ pub struct ProcessConfig {
     pub hsv_range: HsvRangeConfig,
     /// 最小検出面積（ピクセル）
     pub min_detection_area: u32,
+    /// 座標変換設定
+    #[serde(default)]
+    pub coordinate_transform: CoordinateTransformConfig,
 }
 
 impl Default for ProcessConfig {
@@ -82,6 +85,7 @@ impl Default for ProcessConfig {
             roi: RoiConfig::default(),
             hsv_range: HsvRangeConfig::default(),
             min_detection_area: 100,
+            coordinate_transform: CoordinateTransformConfig::default(),
         }
     }
 }
@@ -148,6 +152,33 @@ impl From<HsvRangeConfig> for HsvRange {
             config.v_min,
             config.v_max,
         )
+    }
+}
+
+/// 座標変換設定
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoordinateTransformConfig {
+    /// X軸の感度（倍率）
+    pub x_sensitivity: f32,
+    /// Y軸の感度（倍率）
+    pub y_sensitivity: f32,
+    /// X軸のクリッピング限界値（±この値でクリップ、ピクセル）
+    pub x_clip_limit: f32,
+    /// Y軸のクリッピング限界値（±この値でクリップ、ピクセル）
+    pub y_clip_limit: f32,
+    /// デッドゾーン（中心からの距離、ピクセル）
+    pub dead_zone: f32,
+}
+
+impl Default for CoordinateTransformConfig {
+    fn default() -> Self {
+        Self {
+            x_sensitivity: 1.0,
+            y_sensitivity: 1.0,
+            x_clip_limit: f32::MAX,  // クリッピングなし
+            y_clip_limit: f32::MAX,  // クリッピングなし
+            dead_zone: 0.0,          // デッドゾーンなし
+        }
     }
 }
 
@@ -268,6 +299,24 @@ impl AppConfig {
         if self.capture.timeout_ms == 0 {
             return Err(DomainError::Configuration(
                 "Capture timeout must be greater than 0".to_string(),
+            ));
+        }
+
+        // 座標変換設定の検証
+        let transform = &self.process.coordinate_transform;
+        if transform.x_sensitivity <= 0.0 || transform.y_sensitivity <= 0.0 {
+            return Err(DomainError::Configuration(
+                "Sensitivity values must be greater than 0".to_string(),
+            ));
+        }
+        if transform.x_clip_limit < 0.0 || transform.y_clip_limit < 0.0 {
+            return Err(DomainError::Configuration(
+                "Clip limit values must be non-negative".to_string(),
+            ));
+        }
+        if transform.dead_zone < 0.0 {
+            return Err(DomainError::Configuration(
+                "Dead zone must be non-negative".to_string(),
             ));
         }
 

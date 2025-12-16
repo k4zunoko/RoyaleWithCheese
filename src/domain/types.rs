@@ -174,6 +174,29 @@ impl DetectionResult {
     }
 }
 
+/// 変換後の座標（感度・クリッピング・デッドゾーン適用済み）
+/// 
+/// ROI中心からの相対座標（Δx, Δy）を表します。
+/// HIDデバイスへの相対移動量として使用されます。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TransformedCoordinates {
+    /// ROI中心からの相対X座標（ピクセル、±値）
+    pub x: f32,
+    /// ROI中心からの相対Y座標（ピクセル、±値）
+    pub y: f32,
+    /// 検出フラグ
+    pub detected: bool,
+}
+
+impl TransformedCoordinates {
+    /// 新しい変換座標を作成
+    #[allow(dead_code)]
+    pub fn new(x: f32, y: f32, detected: bool) -> Self {
+        Self { x, y, detected }
+    }
+}
+
 /// 処理バックエンドの種類
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

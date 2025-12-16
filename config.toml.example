@@ -43,17 +43,30 @@ s_max = 255
 v_min = 80
 v_max = 255
 
+[process.coordinate_transform]
+# X軸の感度（倍率）
+x_sensitivity = 1.0
+
+# Y軸の感度（倍率）
+y_sensitivity = 1.0
+
+# X軸のクリッピング限界値（ピクセル）
+x_clip_limit = 10000.0
+
+# Y軸のクリッピング限界値（ピクセル）
+y_clip_limit = 10000.0
+
+# デッドゾーン（ピクセル）
+dead_zone = 0.0
+
 [communication]
 # HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）
-# 実際のデバイスを接続する場合は適切な値に変更してください
-# 例: Arduino Leonardoの場合 vendor_id = 0x2341, product_id = 0x8036
 vendor_id = 0x0000
 
 # HIDデバイスのProduct ID
 product_id = 0x0000
 
 # デバイスのシリアル番号（オプション）
-# VID/PIDだけで複数デバイスがマッチする場合に指定
 # 例: serial_number = "12345ABCDE"
 # serial_number = ""
 
@@ -63,9 +76,11 @@ product_id = 0x0000
 # 例 (Linux):   device_path = "/dev/hidraw0"
 # device_path = ""
 
-# レポート送信のタイムアウト（ミリ秒）
-# 注: 現在は未使用（将来的にHIDデバイスのwrite timeoutとして使用予定）
-send_timeout_ms = 10
+# HIDレポート送信間隔（ミリ秒）
+# HIDスレッドで新しい検出結果を待つタイムアウト時間であり、HIDパケットの送信頻度を決定します
+# 新しい検出結果がない場合でも、この間隔で直前の値を送信し続けます
+# 例: 8ms = 約125Hz、7ms = 約143Hz、16ms = 約62Hz
+hid_send_interval_ms = 8
 
 [pipeline]
 # DirtyRect最適化を有効にするか

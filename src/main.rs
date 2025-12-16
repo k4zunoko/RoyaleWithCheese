@@ -106,6 +106,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ROIとHSVレンジの変換
     let roi = config.process.roi.into();
     let hsv_range = config.process.hsv_range.into();
+    let coordinate_transform = config.process.coordinate_transform.clone();
+
+    tracing::info!("Coordinate transform: sensitivity=({:.2}, {:.2}), clip_limit=({:.1}, {:.1}), dead_zone={:.1}",
+        coordinate_transform.x_sensitivity,
+        coordinate_transform.y_sensitivity,
+        coordinate_transform.x_clip_limit,
+        coordinate_transform.y_clip_limit,
+        coordinate_transform.dead_zone
+    );
 
     tracing::info!("Starting pipeline with 4-thread architecture...");
     tracing::info!("Threads: Capture -> Process -> HID -> Stats/UI");
@@ -133,6 +142,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         recovery,
         roi,
         hsv_range,
+        coordinate_transform,
     );
     runner.run()?;
 
