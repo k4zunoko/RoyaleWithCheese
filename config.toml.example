@@ -22,15 +22,15 @@ monitor_index = 0
 mode = "fast-color"
 
 # 最小検出面積（ピクセル数、これ未満は無視）
-min_detection_area = 100
+min_detection_area = 0
 
 [process.roi]
 # ROI（Region of Interest）の設定（ピクセル座標）
 # 1920x1080 の画面中心 960x540 の例
-x = 480
-y = 270
-width = 960
-height = 540
+x = 930
+y = 520
+width = 60
+height = 40
 
 [process.hsv_range]
 # HSV色空間のレンジ（fast-colorモードのみ使用）
@@ -79,7 +79,7 @@ product_id = 0x0000
 # HIDスレッドで新しい検出結果を待つタイムアウト時間であり、HIDパケットの送信頻度を決定します
 # 新しい検出結果がない場合でも、この間隔で直前の値を送信し続けます
 # 例: 8ms = 約125Hz、7ms = 約143Hz、16ms = 約62Hz
-hid_send_interval_ms = 8
+hid_send_interval_ms = 4
 
 [pipeline]
 # DirtyRect最適化を有効にするか（未実装）

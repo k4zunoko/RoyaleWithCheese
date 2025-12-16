@@ -553,6 +553,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     struct FailingCapture;
     impl CapturePort for FailingCapture {
         fn capture_frame_with_roi(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
