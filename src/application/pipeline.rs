@@ -18,6 +18,9 @@ use crossbeam_channel::{bounded, unbounded, Sender, Receiver, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "opencv-debug-display")]
+use opencv::{highgui, imgproc, core::{Mat, Point, Scalar}};
+
 /// パイプライン設定
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -467,11 +470,20 @@ where
         stats_rx: Receiver<StatData>,
         stats: &mut StatsCollector,
         _recovery: &mut RecoveryState,
-        runtime_state: &RuntimeState,        input: &dyn InputPort,    ) {
+        runtime_state: &RuntimeState,
+        input: &dyn InputPort,
+    ) {
         tracing::info!("Stats/UI thread started");
         
         let mut insert_detector = KeyPressDetector::new();
         let poll_interval = Duration::from_millis(10); // 入力ポーリング間隔: 10ms (100Hz)
+        
+        #[cfg(feature = "opencv-debug-display")]
+        {
+            // デバッグウィンドウを初期化
+            let _ = highgui::named_window("Debug: Runtime State", highgui::WINDOW_AUTOSIZE);
+            tracing::info!("Debug: Runtime State window initialized");
+        }
         
         loop {
             // 非ブロッキング受信でタイムアウト付き
@@ -512,7 +524,132 @@ where
             // マウスボタン状態を更新（毎ポーリング）
             let input_state = input.poll_input_state();
             runtime_state.set_mouse_buttons(input_state.mouse_left, input_state.mouse_right);
+            
+            // デバッグウィンドウを更新（opencv-debug-display featureが有効な場合のみ）
+            #[cfg(feature = "opencv-debug-display")]
+            {
+                if let Err(e) = Self::update_runtime_state_window(runtime_state) {
+                    tracing::warn!("Failed to update runtime state window: {:?}", e);
+                }
+            }
         }
+        
+        #[cfg(feature = "opencv-debug-display")]
+        {
+            // スレッド終了時にウィンドウを破棄
+            let _ = highgui::destroy_window("Debug: Runtime State");
+            tracing::info!("Debug: Runtime State window closed");
+        }
+    }
+
+    /// RuntimeState情報を表示するデバッグウィンドウを更新
+    /// 
+    /// opencv-debug-display featureが有効な場合のみコンパイルされます。
+    /// システムの有効/無効状態とマウスボタンの押下状態をリアルタイムで表示します。
+    #[cfg(feature = "opencv-debug-display")]
+    fn update_runtime_state_window(runtime_state: &RuntimeState) -> DomainResult<()> {
+        use crate::domain::error::DomainError;
+        
+        // 固定サイズのウィンドウ
+        let window_width = 350;
+        let window_height = 200;
+        
+        // 黒背景のMatを作成
+        let mut info_img = Mat::new_rows_cols_with_default(
+            window_height,
+            window_width,
+            opencv::core::CV_8UC3,
+            Scalar::new(0.0, 0.0, 0.0, 0.0),
+        ).map_err(|e| DomainError::Process(format!("Failed to create runtime state window: {:?}", e)))?;
+
+        let font_scale = 0.7;
+        let thickness = 2;
+        let white = Scalar::new(255.0, 255.0, 255.0, 0.0);
+        let green = Scalar::new(0.0, 255.0, 0.0, 0.0);
+        let red = Scalar::new(0.0, 0.0, 255.0, 0.0);
+        let yellow = Scalar::new(0.0, 255.0, 255.0, 0.0);
+        
+        let mut y = 40;
+        let line_height = 35;
+
+        // タイトル
+        imgproc::put_text(
+            &mut info_img,
+            "=== Runtime State ===",
+            Point::new(20, y),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            white,
+            thickness,
+            imgproc::LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        
+        y += line_height;
+
+        // システム有効/無効状態
+        let enabled = runtime_state.is_enabled();
+        let status_text = if enabled { "ENABLED" } else { "DISABLED" };
+        let status_color = if enabled { green } else { red };
+        
+        imgproc::put_text(
+            &mut info_img,
+            &format!("System: {}", status_text),
+            Point::new(20, y),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            status_color,
+            thickness,
+            imgproc::LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        
+        y += line_height;
+
+        // マウス左ボタン状態
+        let mouse_left = runtime_state.is_mouse_left_pressed();
+        let left_text = if mouse_left { "PRESSED" } else { "Released" };
+        let left_color = if mouse_left { yellow } else { white };
+        
+        imgproc::put_text(
+            &mut info_img,
+            &format!("Mouse L: {}", left_text),
+            Point::new(20, y),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            left_color,
+            thickness,
+            imgproc::LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+        
+        y += line_height;
+
+        // マウス右ボタン状態
+        let mouse_right = runtime_state.is_mouse_right_pressed();
+        let right_text = if mouse_right { "PRESSED" } else { "Released" };
+        let right_color = if mouse_right { yellow } else { white };
+        
+        imgproc::put_text(
+            &mut info_img,
+            &format!("Mouse R: {}", right_text),
+            Point::new(20, y),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            right_color,
+            thickness,
+            imgproc::LINE_8,
+            false,
+        ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+
+        // ウィンドウに表示
+        highgui::imshow("Debug: Runtime State", &info_img)
+            .map_err(|e| DomainError::Process(format!("Failed to show runtime state window: {:?}", e)))?;
+        
+        // キー入力を待つ（1ms、ノンブロッキング）
+        let _ = highgui::wait_key(1);
+
+        Ok(())
     }
 
     /// 最新のみ上書きポリシーで送信
