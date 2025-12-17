@@ -155,8 +155,8 @@ pub fn apply_coordinate_transform(
     }
     
     // 感度適用
-    let scaled_x = relative_x * transform.x_sensitivity;
-    let scaled_y = relative_y * transform.y_sensitivity;
+    let scaled_x = relative_x * transform.sensitivity;
+    let scaled_y = relative_y * transform.sensitivity;
     
     // クリッピング（対称: ±clip_limit）
     let clipped_x = scaled_x.clamp(-transform.x_clip_limit, transform.x_clip_limit);
@@ -166,6 +166,19 @@ pub fn apply_coordinate_transform(
     TransformedCoordinates::new(clipped_x, clipped_y, true)
 }
 
+/// 浮動小数点座標を符号付きバイトペアにエンコード
+/// 
+/// HIDデバイス固有のフォーマット: (符号バイト, 絶対値バイト)
+/// - 正の値: (0x00, 絶対値)  例: +100 -> (0x00, 100)
+/// - 負の値: (0xFF, 2の補数的値) 例: -100 -> (0xFF, 156)
+/// - ゼロ: (0x00, 0x00)
+/// 
+/// # 範囲制限
+/// - 入力値は整数部分のみ使用（小数点以下切り捨て）
+/// - ±255の範囲に制限（デバイス仕様による）
+/// 
+/// # 戻り値
+/// (符号バイト, 値バイト) のタプル
 #[inline]
 fn encode_hid_delta(value: f32) -> (u8, u8) {
     let v = value.trunc() as i32;
@@ -183,34 +196,33 @@ fn encode_hid_delta(value: f32) -> (u8, u8) {
 
 /// 変換座標をHIDレポートに変換
 /// 
-/// 中心からの相対座標（Δx, Δy）を符号付き16ビット整数に変換し、
-/// HIDレポートとして送信します。
+/// 中心からの相対座標（Δx, Δy）をデバイス固有のフォーマットに変換します。
 /// 
 /// # レポート構造（8バイト）
 /// - [0]: ReportID (固定 0x01)
 /// - [1-2]: Reserved (0x00)
-/// - [3-4]: Δx (i16, ビッグエンディアン, -32768 ~ 32767)
-/// - [5-6]: Δy (i16, ビッグエンディアン, -32768 ~ 32767)
+/// - [3-4]: Δx (符号付きバイトペア: [値バイト, 符号バイト], 範囲: -255 ~ 255)
+///   - 符号バイト: 正=0x00, 負=0xFF, ゼロ=0x00
+///   - 値バイト: 絶対値（正の場合）または2の補数的値（負の場合）
+/// - [5-6]: Δy (同上)
 /// - [7]: Reserved (0xFF)
 /// 
-/// # C++実装との互換性
-/// ```cpp
-/// report[3] = xBytes.second; // 上位バイト
-/// report[4] = xBytes.first;  // 下位バイト
-/// ```
+/// # 注意
+/// このフォーマットは標準的な2の補数表現ではなく、特定のHIDデバイス向けの
+/// カスタムエンコーディングです。
 #[inline]
 pub fn coordinates_to_hid_report(coords: &TransformedCoordinates) -> Vec<u8> {
     let mut report = vec![0x00; 8];
-    let (x_first, x_second) = encode_hid_delta(coords.x);
-    let (y_first, y_second) = encode_hid_delta(coords.y);
+    let (x_sign, x_value) = encode_hid_delta(coords.x);
+    let (y_sign, y_value) = encode_hid_delta(coords.y);
 
     report[0] = 0x01;
     report[1] = 0x00;
     report[2] = 0x00;
-    report[3] = x_second;
-    report[4] = x_first;
-    report[5] = y_second;
-    report[6] = y_first;
+    report[3] = x_value;
+    report[4] = x_sign;
+    report[5] = y_value;
+    report[6] = y_sign;
     report[7] = 0xFF;
 
     report
@@ -324,8 +336,7 @@ mod tests {
         let result = DetectionResult::some(60.0, 70.0, 100); // 中心(50,50)から(+10, +20)
         let roi = Roi::new(0, 0, 100, 100);
         let transform = CoordinateTransformConfig {
-            x_sensitivity: 1.0,
-            y_sensitivity: 1.0,
+            sensitivity: 1.0,
             x_clip_limit: f32::MAX,
             y_clip_limit: f32::MAX,
             dead_zone: 0.0,
@@ -344,8 +355,7 @@ mod tests {
         let result = DetectionResult::some(60.0, 70.0, 100); // 中心(50,50)から(+10, +20)
         let roi = Roi::new(0, 0, 100, 100);
         let transform = CoordinateTransformConfig {
-            x_sensitivity: 2.0,
-            y_sensitivity: 2.0,
+            sensitivity: 2.0,
             x_clip_limit: f32::MAX,
             y_clip_limit: f32::MAX,
             dead_zone: 0.0,
@@ -365,8 +375,7 @@ mod tests {
         let result = DetectionResult::some(80.0, 90.0, 100); // 中心(50,50)から(+30, +40)
         let roi = Roi::new(0, 0, 100, 100);
         let transform = CoordinateTransformConfig {
-            x_sensitivity: 1.0,
-            y_sensitivity: 1.0,
+            sensitivity: 1.0,
             x_clip_limit: 15.0,
             y_clip_limit: 15.0,
             dead_zone: 0.0,
@@ -386,8 +395,7 @@ mod tests {
         let result = DetectionResult::some(52.0, 53.0, 100); // 中心(50,50)から(+2, +3)、距離3.6
         let roi = Roi::new(0, 0, 100, 100);
         let transform = CoordinateTransformConfig {
-            x_sensitivity: 1.0,
-            y_sensitivity: 1.0,
+            sensitivity: 1.0,
             x_clip_limit: f32::MAX,
             y_clip_limit: f32::MAX,
             dead_zone: 5.0,
@@ -406,8 +414,7 @@ mod tests {
         let result = DetectionResult::some(65.0, 60.0, 100); // 中心(50,50)から(+15, +10)
         let roi = Roi::new(0, 0, 100, 100);
         let transform = CoordinateTransformConfig {
-            x_sensitivity: 2.0,
-            y_sensitivity: 2.0,
+            sensitivity: 2.0,
             x_clip_limit: 20.0,
             y_clip_limit: 20.0,
             dead_zone: 3.0,
@@ -432,10 +439,13 @@ mod tests {
         assert_eq!(report.len(), 8);
         assert_eq!(report[0], 0x01);
         
-        let dx = i16::from_be_bytes([report[3], report[4]]);
-        let dy = i16::from_be_bytes([report[5], report[6]]);
-        assert_eq!(dx, 123);
-        assert_eq!(dy, 456);
+        // カスタムフォーマット: [値バイト, 符号バイト]
+        // 正の値: 符号=0x00
+        assert_eq!(report[3], 123);  // X値バイト
+        assert_eq!(report[4], 0x00); // X符号バイト（正）
+        // 456は255を超えるので255にクリップされる
+        assert_eq!(report[5], 255);  // Y値バイト（クリップ）
+        assert_eq!(report[6], 0x00); // Y符号バイト（正）
         assert_eq!(report[7], 0xFF);
     }
 
@@ -448,10 +458,12 @@ mod tests {
         assert_eq!(report.len(), 8);
         assert_eq!(report[0], 0x01);
         
-        let dx = i16::from_be_bytes([report[3], report[4]]);
-        let dy = i16::from_be_bytes([report[5], report[6]]);
-        assert_eq!(dx, -50);
-        assert_eq!(dy, -100);
+        // カスタムフォーマット: [値バイト, 符号バイト]
+        // 負の値: 符号=0xFF, 値=2の補数的値
+        assert_eq!(report[3], (256 - 50) as u8);  // X値バイト（2の補数的）
+        assert_eq!(report[4], 0xFF);              // X符号バイト（負）
+        assert_eq!(report[5], (256 - 100) as u8); // Y値バイト（2の補数的）
+        assert_eq!(report[6], 0xFF);              // Y符号バイト（負）
         assert_eq!(report[7], 0xFF);
     }
 

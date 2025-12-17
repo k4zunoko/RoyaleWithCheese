@@ -107,9 +107,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let hsv_range = config.process.hsv_range.into();
     let coordinate_transform = config.process.coordinate_transform.clone();
 
-    tracing::info!("Coordinate transform: sensitivity=({:.2}, {:.2}), clip_limit=({:.1}, {:.1}), dead_zone={:.1}",
-        coordinate_transform.x_sensitivity,
-        coordinate_transform.y_sensitivity,
+    tracing::info!("Coordinate transform: sensitivity={:.2}, clip_limit=({:.1}, {:.1}), dead_zone={:.1}",
+        coordinate_transform.sensitivity,
         coordinate_transform.x_clip_limit,
         coordinate_transform.y_clip_limit,
         coordinate_transform.dead_zone
@@ -125,7 +124,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         config.communication.product_id,
         config.communication.serial_number.clone(),
         config.communication.device_path.clone(),
-        config.communication.send_timeout_ms,
     )?;
     tracing::info!("HID adapter initialized: VID=0x{:04X}, PID=0x{:04X}", 
         config.communication.vendor_id,

@@ -44,14 +44,11 @@ v_min = 250
 v_max = 255
 
 [process.coordinate_transform]
-# X軸の感度（倍率）
-x_sensitivity = 0.6
-
-# Y軸の感度（倍率）
-y_sensitivity = 0.001
+# 感度（倍率、X/Y軸共通）
+sensitivity = 1.0
 
 # X軸のクリッピング限界値（ピクセル）
-x_clip_limit = 2.0
+x_clip_limit = 10000.0
 
 # Y軸のクリッピング限界値（ピクセル）
 y_clip_limit = 10000.0
@@ -76,14 +73,11 @@ product_id = 0x0000
 # TOML では \\ は 1 つの \ に解釈されるため、\\\\?\ と書くと \\?\ になります
 device_path = "\\\\?\\HID#VID_258A&PID_1007&MI_02#8&7c5162e&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"
 
-# レポート送信のタイムアウト（ミリ秒）
-send_timeout_ms = 10
-
 # HIDレポート送信間隔（ミリ秒）
 # HIDスレッドで新しい検出結果を待つタイムアウト時間であり、HIDパケットの送信頻度を決定します
 # 新しい検出結果がない場合でも、この間隔で直前の値を送信し続けます
 # 例: 8ms = 約125Hz、7ms = 約143Hz、16ms = 約62Hz
-hid_send_interval_ms = 1
+hid_send_interval_ms = 4
 
 [pipeline]
 # DirtyRect最適化を有効にするか（未実装）

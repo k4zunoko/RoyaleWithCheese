@@ -6,7 +6,6 @@
 use crate::domain::{CommPort, DomainError, DomainResult};
 use hidapi::{HidApi, HidDevice};
 use std::sync::Mutex;
-use std::time::Duration;
 
 /// HID通信アダプタ
 /// 
@@ -25,9 +24,6 @@ pub struct HidCommAdapter {
     serial_number: Option<String>,
     /// デバイスパス（オプション）
     device_path: Option<String>,
-    /// 送信タイムアウト
-    #[allow(dead_code)]
-    send_timeout: Duration,
 }
 
 impl HidCommAdapter {
@@ -38,7 +34,6 @@ impl HidCommAdapter {
     /// - `product_id`: HIDデバイスのProduct ID
     /// - `serial_number`: デバイスのシリアル番号（オプション）
     /// - `device_path`: デバイスパス（オプション、最優先）
-    /// - `send_timeout_ms`: 送信タイムアウト（ミリ秒）、現在は未使用
     /// 
     /// # Returns
     /// HidCommAdapterインスタンス
@@ -56,12 +51,9 @@ impl HidCommAdapter {
         product_id: u16,
         serial_number: Option<String>,
         device_path: Option<String>,
-        send_timeout_ms: u64,
     ) -> DomainResult<Self> {
         let api = HidApi::new()
             .map_err(|e| DomainError::Communication(format!("Failed to initialize HIDAPI: {:?}", e)))?;
-        
-        let send_timeout = Duration::from_millis(send_timeout_ms);
         
         // デバイスのオープンを試行（優先順位: device_path > serial_number > vid/pid）
         let device = if let Some(ref path) = device_path {
@@ -129,7 +121,6 @@ impl HidCommAdapter {
             product_id,
             serial_number,
             device_path,
-            send_timeout,
         })
     }
     
@@ -279,11 +270,12 @@ impl CommPort for HidCommAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     
     #[test]
     fn test_adapter_creation() {
         // ダミーのVID/PIDで作成（実デバイスなしでも成功する設計）
-        let adapter = HidCommAdapter::new(0x0000, 0x0000, None, None, 10);
+        let adapter = HidCommAdapter::new(0x0000, 0x0000, None, None);
         assert!(adapter.is_ok());
         
         let adapter = adapter.unwrap();
@@ -293,7 +285,7 @@ mod tests {
     
     #[test]
     fn test_send_without_device() {
-        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None, 10).unwrap();
+        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None).unwrap();
         
         // デバイス未接続の状態で送信
         let data = vec![0x01, 0x02, 0x03];
@@ -305,7 +297,7 @@ mod tests {
     
     #[test]
     fn test_send_empty_data() {
-        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None, 10).unwrap();
+        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None).unwrap();
         
         // 空データを送信
         let data = vec![];
@@ -317,7 +309,7 @@ mod tests {
     
     #[test]
     fn test_reconnect_without_device() {
-        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None, 10).unwrap();
+        let mut adapter = HidCommAdapter::new(0x0000, 0x0000, None, None).unwrap();
         
         // デバイスが存在しないので再接続は失敗する
         let result = adapter.reconnect();
@@ -361,7 +353,6 @@ mod tests {
             0x0000, // PID（パスで開くため不使用）
             None,   // シリアル番号（不使用）
             Some(DEVICE_PATH.to_string()),
-            10,     // タイムアウト（ms）
         ) {
             Ok(adapter) => adapter,
             Err(e) => {

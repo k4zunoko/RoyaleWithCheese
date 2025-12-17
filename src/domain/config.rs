@@ -158,10 +158,8 @@ impl From<HsvRangeConfig> for HsvRange {
 /// 座標変換設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoordinateTransformConfig {
-    /// X軸の感度（倍率）
-    pub x_sensitivity: f32,
-    /// Y軸の感度（倍率）
-    pub y_sensitivity: f32,
+    /// 感度（倍率、X/Y軸共通）
+    pub sensitivity: f32,
     /// X軸のクリッピング限界値（±この値でクリップ、ピクセル）
     pub x_clip_limit: f32,
     /// Y軸のクリッピング限界値（±この値でクリップ、ピクセル）
@@ -173,8 +171,7 @@ pub struct CoordinateTransformConfig {
 impl Default for CoordinateTransformConfig {
     fn default() -> Self {
         Self {
-            x_sensitivity: 1.0,
-            y_sensitivity: 1.0,
+            sensitivity: 1.0,
             x_clip_limit: f32::MAX,  // クリッピングなし
             y_clip_limit: f32::MAX,  // クリッピングなし
             dead_zone: 0.0,          // デッドゾーンなし
@@ -196,9 +193,6 @@ pub struct CommunicationConfig {
     /// 例: "\\\\?\\hid#vid_2341&pid_8036#..." (Windows)
     #[serde(default)]
     pub device_path: Option<String>,
-    /// レポート送信のタイムアウト（ミリ秒）
-    /// 注: 現在は未使用、将来的にHIDデバイスのwrite timeoutとして使用予定
-    pub send_timeout_ms: u64,
     /// HIDレポート送信間隔（ミリ秒）
     /// 新しい検出結果がない場合でも、この間隔で直前の値を送信し続ける
     pub hid_send_interval_ms: u64,
@@ -211,7 +205,6 @@ impl Default for CommunicationConfig {
             product_id: 0x0000,
             serial_number: None,
             device_path: None,
-            send_timeout_ms: 10,
             hid_send_interval_ms: 8,  // 約144Hz（8ms間隔）
         }
     }
@@ -304,9 +297,9 @@ impl AppConfig {
 
         // 座標変換設定の検証
         let transform = &self.process.coordinate_transform;
-        if transform.x_sensitivity <= 0.0 || transform.y_sensitivity <= 0.0 {
+        if transform.sensitivity <= 0.0 {
             return Err(DomainError::Configuration(
-                "Sensitivity values must be greater than 0".to_string(),
+                "Sensitivity value must be positive".to_string(),
             ));
         }
         if transform.x_clip_limit < 0.0 || transform.y_clip_limit < 0.0 {

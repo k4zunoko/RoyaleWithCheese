@@ -50,11 +50,6 @@ cargo run --features opencv-debug-display
 
 **opencv-debug-display**: config.tomlの設定が正しく適用されているかを視覚的に確認
 
-```powershell
-# デバッグ表示を有効化して実行
-cargo run --features opencv-debug-display
-```
-
 このFeatureを有効にすると、以下の3つのウィンドウが表示されます：
 
 1. **Debug: BGR Capture**: キャプチャされた元画像（等倍表示）
