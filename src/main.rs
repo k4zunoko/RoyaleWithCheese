@@ -10,6 +10,7 @@ use crate::domain::ports::CapturePort; // traitメソッド使用のため
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
 use crate::infrastructure::color_process::ColorProcessAdapter;
 use crate::infrastructure::hid_comm::HidCommAdapter;
+use crate::infrastructure::input::WindowsInputAdapter;
 use crate::infrastructure::process_selector::ProcessSelector;
 use crate::application::pipeline::{PipelineRunner, PipelineConfig};
 use crate::application::recovery::{RecoveryState, RecoveryStrategy};
@@ -148,11 +149,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         config.communication.product_id
     );
 
+    // 入力アダプタの初期化（Insertキー検知とマウスボタン状態）
+    tracing::info!("Initializing input adapter...");
+    let input = WindowsInputAdapter::new();
+
     // パイプラインの起動（ブロッキング）
     let runner = PipelineRunner::new(
         capture,
         process,
         hid_comm,
+        input,
         pipeline_config,
         recovery,
         roi,

@@ -484,3 +484,55 @@ mod tests {
         assert_eq!(report[7], 0xFF);
     }
 }
+
+/// 仮想キーコード（Windows VK_* 定数に対応）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirtualKey {
+    Insert,
+    LeftButton,
+    RightButton,
+}
+
+impl VirtualKey {
+    /// Windows VK_*定数へ変換
+    pub fn to_vk_code(self) -> i32 {
+        match self {
+            VirtualKey::Insert => 0x2D,      // VK_INSERT
+            VirtualKey::LeftButton => 0x01,  // VK_LBUTTON
+            VirtualKey::RightButton => 0x02, // VK_RBUTTON
+        }
+    }
+}
+
+/// 入力状態（キーボードとマウス）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InputState {
+    pub mouse_left: bool,
+    pub mouse_right: bool,
+}
+
+/// 入力ポート: キーボードとマウスの状態取得を抽象化
+/// 
+/// Windows APIや将来的に他のOS対応を抽象化するtrait。
+/// Infrastructure層が実装し、Application層がDIで注入します。
+pub trait InputPort: Send + Sync {
+    /// 指定したキーが現在押下されているかを確認
+    /// 
+    /// # Arguments
+    /// * `key` - 仮想キーコード
+    /// 
+    /// # Returns
+    /// キーが現在押下されていればtrue
+    fn is_key_pressed(&self, key: VirtualKey) -> bool;
+    
+    /// 現在の入力状態を一括取得
+    /// 
+    /// # Returns
+    /// マウスボタンの状態を含むInputState
+    fn poll_input_state(&self) -> InputState {
+        InputState {
+            mouse_left: self.is_key_pressed(VirtualKey::LeftButton),
+            mouse_right: self.is_key_pressed(VirtualKey::RightButton),
+        }
+    }
+}

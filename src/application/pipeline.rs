@@ -5,10 +5,15 @@
 
 use crate::domain::{
     error::DomainResult,
-    ports::{CapturePort, CommPort, ProcessPort},
+    ports::{CapturePort, CommPort, InputPort, ProcessPort, VirtualKey},
     types::{DetectionResult, Frame, Roi, HsvRange},
 };
-use crate::application::{recovery::RecoveryState, stats::{StatKind, StatsCollector}};
+use crate::application::{
+    recovery::RecoveryState, 
+    stats::{StatKind, StatsCollector},
+    runtime_state::RuntimeState,
+    input_detector::KeyPressDetector,
+};
 use crossbeam_channel::{bounded, unbounded, Sender, Receiver, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -63,18 +68,21 @@ pub struct StatData {
 
 /// パイプライン実行コンテキスト
 #[allow(dead_code)]
-pub struct PipelineRunner<C, P, H>
+pub struct PipelineRunner<C, P, H, I>
 where
     C: CapturePort,
     P: ProcessPort,
     H: CommPort,
+    I: InputPort,
 {
     capture: Arc<Mutex<C>>,
     process: Arc<Mutex<P>>,
     comm: Arc<Mutex<H>>,
+    input: Arc<I>,
     config: PipelineConfig,
     recovery: RecoveryState,
     stats: StatsCollector,
+    runtime_state: RuntimeState,
     
     roi: Roi,
     hsv_range: HsvRange,
@@ -82,17 +90,19 @@ where
 }
 
 #[allow(dead_code)]
-impl<C, P, H> PipelineRunner<C, P, H>
+impl<C, P, H, I> PipelineRunner<C, P, H, I>
 where
     C: CapturePort + Send + Sync + 'static,
     P: ProcessPort + Send + Sync + 'static,
     H: CommPort + Send + Sync + 'static,
+    I: InputPort + Send + Sync + 'static,
 {
     /// 新しいPipelineRunnerを作成
     pub fn new(
         capture: C,
         process: P,
         comm: H,
+        input: I,
         config: PipelineConfig,
         recovery: RecoveryState,
         roi: Roi,
@@ -103,13 +113,21 @@ where
             capture: Arc::new(Mutex::new(capture)),
             process: Arc::new(Mutex::new(process)),
             comm: Arc::new(Mutex::new(comm)),
+            input: Arc::new(input),
             stats: StatsCollector::new(config.stats_interval),
+            runtime_state: RuntimeState::new(),
             config,
             recovery,
             roi,
             hsv_range,
             coordinate_transform,
         }
+    }
+    
+    /// RuntimeStateを取得（テスト用）
+    #[cfg(test)]
+    pub fn runtime_state(&self) -> &RuntimeState {
+        &self.runtime_state
     }
 
     /// パイプラインを起動（ブロッキング）
@@ -152,8 +170,9 @@ where
             let coordinate_transform = self.coordinate_transform.clone();
             let stats_tx = stats_tx.clone();
             let hid_send_interval = self.config.hid_send_interval;
+            let runtime_state = self.runtime_state.clone();
             std::thread::spawn(move || {
-                Self::hid_thread(comm, rx, roi, coordinate_transform, stats_tx, hid_send_interval);
+                Self::hid_thread(comm, rx, roi, coordinate_transform, stats_tx, hid_send_interval, runtime_state);
             })
         };
 
@@ -162,6 +181,8 @@ where
             stats_rx,
             &mut self.stats,
             &mut self.recovery,
+            &self.runtime_state,
+            &*self.input,
         );
 
         // スレッドの終了を待つ
@@ -294,8 +315,7 @@ where
         roi: Roi,
         coordinate_transform: crate::domain::CoordinateTransformConfig,
         stats_tx: Sender<StatData>,
-        hid_send_interval: Duration,
-    ) {
+        hid_send_interval: Duration,        runtime_state: RuntimeState,    ) {
         tracing::info!("HID thread started with send interval: {:?}", hid_send_interval);
         
         let mut consecutive_errors = 0u32;
@@ -335,20 +355,38 @@ where
             };
             
             if let Some(detection) = detection {
-                // HID送信（低レイテンシ最優先）
-                // 2段階変換: DetectionResult → TransformedCoordinates → HIDレポート
-                let transformed = crate::domain::ports::apply_coordinate_transform(
-                    &detection.result,
-                    &roi,
-                    &coordinate_transform,
-                );
-                let hid_report = crate::domain::ports::coordinates_to_hid_report(&transformed);
-                let send_result = {
-                    let mut guard = comm.lock().unwrap();
-                    guard.send(&hid_report)
-                };
+                let hid_sent_at: Instant;
+                
+                // システム有効状態チェック（ロックフリー、数CPUサイクル）
+                if !runtime_state.is_enabled() {
+                    // 無効時はHID送信をスキップ（統計は記録）
+                    hid_sent_at = Instant::now();
+                    
+                    #[cfg(debug_assertions)]
+                    {
+                        static mut LAST_LOG: Option<Instant> = None;
+                        unsafe {
+                            if LAST_LOG.map_or(true, |t| t.elapsed() > Duration::from_secs(5)) {
+                                tracing::debug!("System disabled - skipping HID transmission");
+                                LAST_LOG = Some(Instant::now());
+                            }
+                        }
+                    }
+                } else {
+                    // HID送信（低レイテンシ最優先）
+                    // 2段階変換: DetectionResult → TransformedCoordinates → HIDレポート
+                    let transformed = crate::domain::ports::apply_coordinate_transform(
+                        &detection.result,
+                        &roi,
+                        &coordinate_transform,
+                    );
+                    let hid_report = crate::domain::ports::coordinates_to_hid_report(&transformed);
+                    let send_result = {
+                        let mut guard = comm.lock().unwrap();
+                        guard.send(&hid_report)
+                    };
 
-                    let hid_sent_at = Instant::now();
+                    hid_sent_at = Instant::now();
 
                     match send_result {
                         Ok(_) => {
@@ -416,8 +454,10 @@ where
                             }
                         }
                     }
+                }
 
                 // 統計データをStats/UIスレッドに送信（非ブロッキング）
+                // 無効時も統計は記録する（パフォーマンスモニタリングのため）
                 let stat_data = StatData {
                     captured_at: detection.captured_at,
                     processed_at: detection.processed_at,
@@ -433,10 +473,15 @@ where
         stats_rx: Receiver<StatData>,
         stats: &mut StatsCollector,
         _recovery: &mut RecoveryState,
-    ) {
+        runtime_state: &RuntimeState,        input: &dyn InputPort,    ) {
         tracing::info!("Stats/UI thread started");
+        
+        let mut insert_detector = KeyPressDetector::new();
+        let poll_interval = Duration::from_millis(10); // 入力ポーリング間隔: 10ms
+        
         loop {
-            match stats_rx.recv() {
+            // 非ブロッキング受信でタイムアウト付き
+            match stats_rx.recv_timeout(poll_interval) {
                 Ok(stat_data) => {
                     // 統計記録
                     stats.record_frame();
@@ -454,11 +499,25 @@ where
                         stats.report_and_reset();
                     }
                 }
-                Err(_) => {
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                    // タイムアウト - 入力チェックを続行
+                }
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                     // Channel closed
                     break;
                 }
             }
+            
+            // Insertキーの押下検知（エッジ検出）
+            if insert_detector.is_key_just_pressed(input, VirtualKey::Insert) {
+                let new_state = runtime_state.toggle_enabled();
+                #[cfg(debug_assertions)]
+                tracing::info!("System {}", if new_state { "ENABLED" } else { "DISABLED" });
+            }
+            
+            // マウスボタン状態を更新（毎ポーリング）
+            let input_state = input.poll_input_state();
+            runtime_state.set_mouse_buttons(input_state.mouse_left, input_state.mouse_right);
         }
     }
 
@@ -553,6 +612,20 @@ mod tests {
         }
     }
 
+    struct MockInput;
+    impl InputPort for MockInput {
+        fn is_key_pressed(&self, _key: VirtualKey) -> bool {
+            false
+        }
+
+        fn poll_input_state(&self) -> crate::domain::ports::InputState {
+            crate::domain::ports::InputState {
+                mouse_left: false,
+                mouse_right: false,
+            }
+        }
+    }
+
     #[allow(dead_code)]
     struct FailingCapture;
     impl CapturePort for FailingCapture {
@@ -607,14 +680,14 @@ mod tests {
         let (tx, rx) = bounded::<i32>(1);
 
         // 最初の送信は成功
-        PipelineRunner::<MockCapture, MockProcess, MockComm>::send_latest_only(&tx, 1);
+        PipelineRunner::<MockCapture, MockProcess, MockComm, MockInput>::send_latest_only(&tx, 1);
         assert_eq!(rx.try_recv().unwrap(), 1);
 
         // キューを満たす
         tx.try_send(2).unwrap();
 
         // キューが満杯の状態で新しい値を送信（満杯なので無視される）
-        PipelineRunner::<MockCapture, MockProcess, MockComm>::send_latest_only(&tx, 3);
+        PipelineRunner::<MockCapture, MockProcess, MockComm, MockInput>::send_latest_only(&tx, 3);
 
         // キューには古い値（2）が残っている
         let value = rx.try_recv().unwrap();

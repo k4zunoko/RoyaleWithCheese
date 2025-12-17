@@ -6,3 +6,4 @@ pub mod capture;
 pub mod color_process;
 pub mod hid_comm;
 pub mod process_selector;
+pub mod input;

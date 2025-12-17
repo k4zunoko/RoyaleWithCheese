@@ -57,23 +57,6 @@ cv::Mat ImageProcessor::createMask(const cv::Mat& image) {
     return mask;
 }
 
-std::vector<cv::Point2f> ImageProcessor::detectByContour(const cv::Mat& mask) {
-    std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-    std::vector<cv::Point2f> centers;
-    for (const auto& c : contours) {
-        double area = cv::contourArea(c);
-        if (area < 50) continue;
-        cv::Moments m = cv::moments(c);
-        if (m.m00 != 0) {
-            centers.emplace_back(static_cast<float>(m.m10 / m.m00),
-                static_cast<float>(m.m01 / m.m00));
-        }
-    }
-    return centers;
-}
-
 std::vector<cv::Point2f> ImageProcessor::detectByMoments(const cv::Mat& mask) {
     std::vector<cv::Point2f> centers;
     cv::Moments m = cv::moments(mask, true);
@@ -94,14 +77,6 @@ bool ImageProcessor::findNearestOffset(const cv::Mat& image,
 
     // centers が空の場合の処理
     if (centers.empty()) {
-        if (debug) {
-            cv::Mat debugImg = image.clone();
-            // 近傍点が無いので circle は描かず中心マーカーのみ
-            cv::drawMarker(debugImg, imgCenter, cv::Scalar(255, 0, 0),
-                cv::MARKER_CROSS, 20, 2);
-            cv::imshow("Debug Nearest Target", debugImg);
-            cv::waitKey(1);
-        }
         return false;
     }
 
@@ -120,15 +95,6 @@ bool ImageProcessor::findNearestOffset(const cv::Mat& image,
 
     nearest = bestPt;
     offset = cv::Point2f(bestPt.x - imgCenter.x, bestPt.y - imgCenter.y);
-
-    if (debug) {
-        cv::Mat debugImg = image.clone();
-        cv::circle(debugImg, nearest, 4, cv::Scalar(0, 255, 0), -1);
-        cv::drawMarker(debugImg, imgCenter, cv::Scalar(255, 0, 0),
-            cv::MARKER_CROSS, 20, 2);
-        cv::imshow("Debug Nearest Target", debugImg);
-        cv::waitKey(1);
-    }
 
     return true;
 }

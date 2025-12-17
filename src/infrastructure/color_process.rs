@@ -507,7 +507,7 @@ impl ColorProcessAdapter {
 
     /// モーメント計算から重心と面積を取得
     fn calculate_moments(&self, mask: &Mat) -> DomainResult<DetectionResult> {
-        let moments = imgproc::moments(mask, false)
+        let moments = imgproc::moments(mask, true)
             .map_err(|e| DomainError::Process(format!("Failed to calculate moments: {:?}", e)))?;
         
         Ok(self.calculate_detection_from_moments(&moments))
