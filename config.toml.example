@@ -18,7 +18,9 @@ reinit_max_delay_ms = 5000
 monitor_index = 0
 
 [process]
-# 処理モード: "fast-color" または "yolo-ort"（将来実装）
+# 処理モード（実行時に切り替え可能、ビルド不要）:
+#   "fast-color" - HSV色検知による高速処理（デフォルト）
+#   "yolo-ort"   - YOLO + ONNX Runtime による物体検出（将来実装）
 mode = "fast-color"
 
 # 最小検出面積（ピクセル数、これ未満は無視）
@@ -36,11 +38,11 @@ height = 40
 # HSV色空間のレンジ（fast-colorモードのみ使用）
 # OpenCV準拠: H [0-180], S [0-255], V [0-255]
 # デフォルト: 黄色系の検出
-h_min = 145
-h_max = 150
-s_min = 50
-s_max = 205
-v_min = 250
+h_min = 25
+h_max = 45
+s_min = 80
+s_max = 255
+v_min = 80
 v_max = 255
 
 [process.coordinate_transform]
@@ -48,10 +50,10 @@ v_max = 255
 sensitivity = 1.0
 
 # X軸のクリッピング限界値（ピクセル）
-x_clip_limit = 10000.0
+x_clip_limit = 10.0
 
 # Y軸のクリッピング限界値（ピクセル）
-y_clip_limit = 10000.0
+y_clip_limit = 10.0
 
 # デッドゾーン（ピクセル）
 dead_zone = 0.0
@@ -69,9 +71,8 @@ product_id = 0x0000
 # serial_number = ""
 
 # デバイスパス（オプション、最も確実な識別方法）
-# Windows例: 最初に \\\\ (4つのバックスラッシュ) で始まり、その後 ?\hid#... となります
-# TOML では \\ は 1 つの \ に解釈されるため、\\\\?\ と書くと \\?\ になります
-device_path = "\\\\?\\HID#VID_258A&PID_1007&MI_02#8&7c5162e&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}"
+# 例 (Windows): device_path = "\\\\?\\hid#vid_2341&pid_8036#..."
+# device_path = ""
 
 # HIDレポート送信間隔（ミリ秒）
 # HIDスレッドで新しい検出結果を待つタイムアウト時間であり、HIDパケットの送信頻度を決定します

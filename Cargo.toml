@@ -4,11 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["fast-color"]
-fast-color = []
-yolo-ort = []
+default = []
 performance-timing = []  # パフォーマンス測定用のタイミングログを有効化
 opencv-debug-display = []  # デバッグ用：OpenCVで画像処理中の画像を表示
+# 注: 処理方式の選択（fast-color/yolo-ort）は config.toml の process.mode で実行時に切り替え可能
 
 [dependencies]
 # エラー処理

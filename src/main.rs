@@ -10,6 +10,7 @@ use crate::domain::ports::CapturePort; // traitメソッド使用のため
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
 use crate::infrastructure::color_process::ColorProcessAdapter;
 use crate::infrastructure::hid_comm::HidCommAdapter;
+use crate::infrastructure::process_selector::ProcessSelector;
 use crate::application::pipeline::{PipelineRunner, PipelineConfig};
 use crate::application::recovery::{RecoveryState, RecoveryStrategy};
 use crate::logging::init_logging;
@@ -84,9 +85,24 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         device_info.name
     );
 
-    // 色検知処理アダプタの初期化
-    tracing::info!("Initializing color process adapter...");
-    let process = ColorProcessAdapter::new(config.process.min_detection_area)?;
+    // 処理アダプタの初期化（config.process.modeに基づく）
+    tracing::info!("Initializing process adapter with mode: {}", config.process.mode);
+    let process = match config.process.mode.as_str() {
+        "fast-color" => {
+            tracing::info!("Using fast-color (HSV color detection) mode");
+            let adapter = ColorProcessAdapter::new(config.process.min_detection_area)?;
+            ProcessSelector::FastColor(adapter)
+        }
+        "yolo-ort" => {
+            // 将来の実装: YOLO + ONNX Runtime
+            // let adapter = YoloProcessAdapter::new(...)?;
+            // ProcessSelector::YoloOrt(adapter)
+            return Err(format!("Process mode '{}' is not yet implemented. Currently only 'fast-color' is supported.", config.process.mode).into());
+        }
+        _ => {
+            return Err(format!("Unknown process mode: '{}'. Supported modes: 'fast-color', 'yolo-ort'", config.process.mode).into());
+        }
+    };
 
     // 再初期化戦略の設定
     let recovery_strategy = RecoveryStrategy {
