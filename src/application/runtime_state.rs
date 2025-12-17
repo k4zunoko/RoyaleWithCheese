@@ -4,7 +4,8 @@
 //! `Arc<AtomicBool>`を使用したロックフリー設計により、
 //! 読み取り側スレッド（Capture/Process/HID）は数CPUサイクルで状態を確認できます。
 
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
+use std::sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc};
+use std::time::Instant;
 
 /// ランタイム状態（スレッド間で共有、ロックフリー）
 /// 
@@ -24,6 +25,10 @@ pub struct RuntimeState {
     mouse_left: Arc<AtomicBool>,
     /// マウス右ボタン押下状態
     mouse_right: Arc<AtomicBool>,
+    /// 最後に無効状態ログを出力した時刻（ミリ秒単位のUnix時刻）
+    last_disabled_log_ms: Arc<AtomicU64>,
+    /// プログラム開始時刻（レートリミット計算用）
+    start_time: Instant,
 }
 
 impl RuntimeState {
@@ -33,6 +38,8 @@ impl RuntimeState {
             enabled: Arc::new(AtomicBool::new(true)),
             mouse_left: Arc::new(AtomicBool::new(false)),
             mouse_right: Arc::new(AtomicBool::new(false)),
+            last_disabled_log_ms: Arc::new(AtomicU64::new(0)),
+            start_time: Instant::now(),
         }
     }
     
@@ -72,6 +79,34 @@ impl RuntimeState {
     pub fn set_mouse_buttons(&self, left: bool, right: bool) {
         self.mouse_left.store(left, Ordering::Relaxed);
         self.mouse_right.store(right, Ordering::Relaxed);
+    }
+    
+    /// 無効状態のログを出力すべきかを判定（5秒に1回のレートリミット）
+    /// 
+    /// HIDスレッドでシステム無効時のログレートリミットに使用します。
+    /// ロックフリーのAtomic操作のみで実装されており、数CPUサイクルで完了します。
+    /// 
+    /// # Returns
+    /// - `true`: ログを出力すべき（5秒以上経過または初回）
+    /// - `false`: ログをスキップすべき（5秒未満）
+    #[inline]
+    pub fn should_log_disabled_status(&self) -> bool {
+        let now_ms = self.start_time.elapsed().as_millis() as u64;
+        let last_ms = self.last_disabled_log_ms.load(Ordering::Relaxed);
+        
+        // 初回または5秒以上経過した場合
+        if last_ms == 0 || now_ms.saturating_sub(last_ms) >= 5000 {
+            // Atomic CAS（Compare-And-Swap）で更新
+            // 複数スレッドが同時に呼び出しても、1つのスレッドのみが成功する
+            self.last_disabled_log_ms.compare_exchange(
+                last_ms,
+                now_ms,
+                Ordering::Relaxed,
+                Ordering::Relaxed
+            ).is_ok()
+        } else {
+            false
+        }
     }
 }
 

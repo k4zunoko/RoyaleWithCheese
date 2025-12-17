@@ -363,14 +363,8 @@ where
                     hid_sent_at = Instant::now();
                     
                     #[cfg(debug_assertions)]
-                    {
-                        static mut LAST_LOG: Option<Instant> = None;
-                        unsafe {
-                            if LAST_LOG.map_or(true, |t| t.elapsed() > Duration::from_secs(5)) {
-                                tracing::debug!("System disabled - skipping HID transmission");
-                                LAST_LOG = Some(Instant::now());
-                            }
-                        }
+                    if runtime_state.should_log_disabled_status() {
+                        tracing::debug!("System disabled - skipping HID transmission");
                     }
                 } else {
                     // HID送信（低レイテンシ最優先）
@@ -477,7 +471,7 @@ where
         tracing::info!("Stats/UI thread started");
         
         let mut insert_detector = KeyPressDetector::new();
-        let poll_interval = Duration::from_millis(10); // 入力ポーリング間隔: 10ms
+        let poll_interval = Duration::from_millis(10); // 入力ポーリング間隔: 10ms (100Hz)
         
         loop {
             // 非ブロッキング受信でタイムアウト付き
