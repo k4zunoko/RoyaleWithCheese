@@ -29,9 +29,6 @@ cargo test test_enumerate_hid_devices -- --nocapture
 # HID通信確認テスト（実デバイス必須、要デバイスパス設定）
 cargo test test_hid_communication -- --ignored --nocapture
 
-# 実行（通常）
-cargo run --release
-
 # 実行（パフォーマンス測定ログ付き）
 cargo run --features performance-timing
 
