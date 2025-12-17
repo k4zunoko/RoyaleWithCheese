@@ -147,9 +147,10 @@ pub fn apply_coordinate_transform(
     let relative_x = result.center_x - center_x;
     let relative_y = result.center_y - center_y;
     
-    // デッドゾーン判定
-    let distance = (relative_x * relative_x + relative_y * relative_y).sqrt();
-    if distance < transform.dead_zone {
+    // デッドゾーン判定（二乗比較）
+    let distance_sq = relative_x * relative_x + relative_y * relative_y;
+    let dead_zone_sq = transform.dead_zone * transform.dead_zone;
+    if distance_sq < dead_zone_sq {
         // デッドゾーン内: 移動なし (Δx=0, Δy=0)
         return TransformedCoordinates::new(0.0, 0.0, true);
     }

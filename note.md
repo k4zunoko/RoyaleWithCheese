@@ -17,11 +17,6 @@ dda.rs 237行目のコメントアウトを外すと、VSync待機が有効に�
 レイテンシ最優先なら “YOLO11n（不十分なら s）+ TensorRT FP16” が第一候補。
 
 # 以下確認
-
-- # レポート送信のタイムアウト（ミリ秒）
-  - send_timeout_ms = 10
-- sensitivity = 0.0 が許容されていない。
-
 findNearestOffsetからエントリー
 DetectionMethodはMomentを使用
 
