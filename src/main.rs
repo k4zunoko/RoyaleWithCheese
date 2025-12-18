@@ -159,6 +159,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Initializing input adapter...");
     let input = WindowsInputAdapter::new();
 
+    // アクティベーション条件の設定
+    use crate::application::pipeline::ActivationConditions;
+    let activation_conditions = ActivationConditions::new(
+        config.activation.max_distance_from_center,
+        config.activation.active_window(),
+    );
+    tracing::info!(
+        "Activation: max_distance={:.1}px, active_window={}ms",
+        config.activation.max_distance_from_center,
+        config.activation.active_window_ms
+    );
+
     // パイプラインの起動（ブロッキング）
     let runner = PipelineRunner::new(
         capture,
@@ -170,6 +182,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         roi,
         hsv_range,
         coordinate_transform,
+        activation_conditions,
     );
     runner.run()?;
 

@@ -26,6 +26,7 @@ pub struct AppConfig {
     pub process: ProcessConfig,
     pub communication: CommunicationConfig,
     pub pipeline: PipelineConfig,
+    pub activation: ActivationConfig,
 }
 
 /// キャプチャ設定
@@ -216,6 +217,18 @@ pub struct CommunicationConfig {
     pub hid_send_interval_ms: u64,
 }
 
+/// HIDアクティベーション設定
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActivationConfig {
+    /// HID送信を実行するための最大距離（ROI中心からのピクセル距離）
+    /// 検出対象がROI中心からこの距離以内にある、またはマウス左クリックが押されている場合、
+    /// アクティブ状態として記録される
+    pub max_distance_from_center: f32,
+    /// アクティブウィンドウの持続時間（ミリ秒）
+    /// 最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する
+    pub active_window_ms: u64,
+}
+
 impl Default for CommunicationConfig {
     fn default() -> Self {
         Self {
@@ -225,6 +238,22 @@ impl Default for CommunicationConfig {
             device_path: None,
             hid_send_interval_ms: 8,  // 約144Hz（8ms間隔）
         }
+    }
+}
+
+impl Default for ActivationConfig {
+    fn default() -> Self {
+        Self {
+            max_distance_from_center: 50.0,  // ROI中心から50ピクセル
+            active_window_ms: 500,  // 500ms = 0.5秒
+        }
+    }
+}
+
+impl ActivationConfig {
+    /// アクティブウィンドウの持続時間をDurationとして取得
+    pub fn active_window(&self) -> Duration {
+        Duration::from_millis(self.active_window_ms)
     }
 }
 
@@ -253,6 +282,7 @@ impl Default for AppConfig {
             process: ProcessConfig::default(),
             communication: CommunicationConfig::default(),
             pipeline: PipelineConfig::default(),
+            activation: ActivationConfig::default(),
         }
     }
 }

@@ -93,3 +93,14 @@ enable_dirty_rect_optimization = false
 
 # 統計情報の出力間隔（秒）
 stats_interval_sec = 10
+
+[activation]
+# HID送信アクティベーション条件
+
+# ROI中心からの最大距離（ピクセル）
+# 検出対象がROI中心からこの距離以内にある場合、アクティブ状態として記録される
+max_distance_from_center = 5.0
+
+# アクティブウィンドウの持続時間（ミリ秒）
+# 最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する
+active_window_ms = 500

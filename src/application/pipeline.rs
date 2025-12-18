@@ -21,6 +21,92 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "opencv-debug-display")]
 use opencv::{highgui, imgproc, core::{Mat, Point, Scalar}};
 
+/// HIDアクティベーション条件（HIDスレッド内で状態管理）
+#[derive(Debug, Clone)]
+pub struct ActivationConditions {
+    /// ROI中心からの最大距離（ピクセル、2乗で比較するため平方根計算を避ける）
+    max_distance_squared: f32,
+    /// アクティブウィンドウの持続時間（この時間内であればHID送信を許可）
+    active_window_duration: Duration,
+}
+
+impl ActivationConditions {
+    pub fn new(
+        max_distance: f32,
+        active_window_duration: Duration,
+    ) -> Self {
+        Self {
+            max_distance_squared: max_distance * max_distance, // 平方根計算を避けるため2乗で保持
+            active_window_duration,
+        }
+    }
+}
+
+/// HIDアクティベーション状態（HIDスレッド内で管理）
+#[derive(Debug)]
+struct ActivationState {
+    /// 最後にアクティブ条件を満たした時刻
+    last_activation_time: Option<Instant>,
+}
+
+impl ActivationState {
+    fn new() -> Self {
+        Self {
+            last_activation_time: None,
+        }
+    }
+    
+    /// HID送信が許可されるか判定（低レイテンシ最優先）
+    /// 
+    /// # アクティベーションロジック
+    /// 1. システム無効または検出なしの場合は即座にFalse
+    /// 2. マウス左クリック押下 OR ROI中心からの距離が閾値以下の場合、アクティブ時刻を更新
+    /// 3. 最後にアクティブになってから0.5秒以内であればTrue
+    #[inline]
+    fn should_activate(
+        &mut self,
+        runtime_state: &RuntimeState,
+        detection: &DetectionResult,
+        roi: &Roi,
+        conditions: &ActivationConditions,
+    ) -> bool {
+        // 1. システムが有効か（最も頻繁に失敗する条件を先に評価）
+        if !runtime_state.is_enabled() {
+            return false;
+        }
+        
+        // 2. 検出されているか
+        if !detection.detected {
+            return false;
+        }
+        
+        // 3. アクティブ条件のチェックと時刻更新
+        let mouse_left_pressed = runtime_state.is_mouse_left_pressed();
+        
+        // ROI中心からの距離を計算（平方根計算を避けるため2乗で比較）
+        let roi_center_x = roi.width as f32 / 2.0;
+        let roi_center_y = roi.height as f32 / 2.0;
+        let dx = detection.center_x - roi_center_x;
+        let dy = detection.center_y - roi_center_y;
+        let distance_squared = dx * dx + dy * dy;
+        let within_distance = distance_squared <= conditions.max_distance_squared;
+        
+        // マウス左クリック押下 OR 距離条件を満たす場合、アクティブ時刻を更新
+        if mouse_left_pressed || within_distance {
+            self.last_activation_time = Some(Instant::now());
+        }
+        
+        // 4. アクティブウィンドウ内かチェック
+        if let Some(last_time) = self.last_activation_time {
+            if last_time.elapsed() < conditions.active_window_duration {
+                return true;
+            }
+        }
+        
+        false
+    }
+}
+
 /// パイプライン設定
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -86,6 +172,7 @@ where
     recovery: RecoveryState,
     stats: StatsCollector,
     runtime_state: RuntimeState,
+    activation_conditions: ActivationConditions,
     
     roi: Roi,
     hsv_range: HsvRange,
@@ -111,6 +198,7 @@ where
         roi: Roi,
         hsv_range: HsvRange,
         coordinate_transform: crate::domain::CoordinateTransformConfig,
+        activation_conditions: ActivationConditions,
     ) -> Self {
         Self {
             capture: Arc::new(Mutex::new(capture)),
@@ -119,6 +207,7 @@ where
             input: Arc::new(input),
             stats: StatsCollector::new(config.stats_interval),
             runtime_state: RuntimeState::new(),
+            activation_conditions,
             config,
             recovery,
             roi,
@@ -174,8 +263,9 @@ where
             let stats_tx = stats_tx.clone();
             let hid_send_interval = self.config.hid_send_interval;
             let runtime_state = self.runtime_state.clone();
+            let activation_conditions = self.activation_conditions.clone();
             std::thread::spawn(move || {
-                Self::hid_thread(comm, rx, roi, coordinate_transform, stats_tx, hid_send_interval, runtime_state);
+                Self::hid_thread(comm, rx, roi, coordinate_transform, stats_tx, hid_send_interval, runtime_state, activation_conditions);
             })
         };
 
@@ -305,8 +395,13 @@ where
     /// HIDスレッド（低レイテンシ送信専用）
     /// 
     /// # 送信戦略
-    /// - 新しい検出結果を受信したら即座に送信
+    /// - 新しい検出結果を受信したら、アクティベーション条件を満たす場合に送信
     /// - 新しい値がない場合は、hid_send_interval間隔で直前の値を送信し続ける
+    /// 
+    /// # アクティベーション条件
+    /// - システムが有効（runtime_state.is_enabled()）
+    /// - マウス左クリック押下 OR ROI中心から指定距離以内に検出対象が存在
+    /// - 上記条件を満たしてからactive_window_duration（0.5秒）以内
     /// 
     /// # 再接続戦略
     /// - 送信エラー時、指数バックオフで再接続を試みる
@@ -318,14 +413,25 @@ where
         roi: Roi,
         coordinate_transform: crate::domain::CoordinateTransformConfig,
         stats_tx: Sender<StatData>,
-        hid_send_interval: Duration,        runtime_state: RuntimeState,    ) {
+        hid_send_interval: Duration,
+        runtime_state: RuntimeState,
+        activation_conditions: ActivationConditions,
+    ) {
         tracing::info!("HID thread started with send interval: {:?}", hid_send_interval);
+        tracing::info!(
+            "Activation conditions: max_distance={:.1}px, active_window={:?}",
+            activation_conditions.max_distance_squared.sqrt(),
+            activation_conditions.active_window_duration
+        );
         
         let mut consecutive_errors = 0u32;
         let mut last_reconnect_attempt = None::<Instant>;
         const MAX_RETRY: u32 = 10;
         const INITIAL_BACKOFF_MS: u64 = 100;
         const MAX_BACKOFF_MS: u64 = 10_000;
+        
+        // アクティベーション状態管理
+        let mut activation_state = ActivationState::new();
         
         // 直前の検出結果を保持（初期値: 検出なし）
         let mut last_detection: Option<DetectionResult> = None;
@@ -360,17 +466,28 @@ where
             if let Some(detection) = detection {
                 let hid_sent_at: Instant;
                 
-                // システム有効状態チェック（ロックフリー、数CPUサイクル）
-                if !runtime_state.is_enabled() {
-                    // 無効時はHID送信をスキップ（統計は記録）
+                // アクティベーション条件チェック（低レイテンシ最優先）
+                let should_send = activation_state.should_activate(
+                    &runtime_state,
+                    &detection.result,
+                // 注意: should_activateは&mut selfを取るため、状態を更新する
+                    &roi,
+                    &activation_conditions,
+                );
+                
+                if !should_send {
+                    // アクティベーション条件を満たさない場合はHID送信をスキップ（統計は記録）
                     hid_sent_at = Instant::now();
                     
                     #[cfg(debug_assertions)]
-                    if runtime_state.should_log_disabled_status() {
-                        tracing::debug!("System disabled - skipping HID transmission");
+                    {
+                        // システム無効の場合のみログ出力（レートリミット付き）
+                        if !runtime_state.is_enabled() && runtime_state.should_log_disabled_status() {
+                            tracing::debug!("System disabled - skipping HID transmission");
+                        }
                     }
                 } else {
-                    // HID送信（低レイテンシ最優先）
+                    // アクティベーション条件を満たした場合にHID送信を実行
                     // 2段階変換: DetectionResult → TransformedCoordinates → HIDレポート
                     let transformed = crate::domain::ports::apply_coordinate_transform(
                         &detection.result,
@@ -387,7 +504,7 @@ where
 
                     match send_result {
                         Ok(_) => {
-                            // 送信成功: エラーカウントをリセット
+                            // エラーカウントをリセット
                             if consecutive_errors > 0 {
                                 tracing::info!("HID communication recovered");
                                 consecutive_errors = 0;
