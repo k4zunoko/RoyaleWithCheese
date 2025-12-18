@@ -626,6 +626,7 @@ impl ColorProcessAdapter {
     /// # レイテンシ特性
     /// - momentsに比べて計算が単純（重心計算なし）
     /// - findContoursはOpenCVの並列処理を活用
+    /// - すべての輪郭を包含する矩形を計算（メモリコピーなし、min/max比較のみ）
     fn calculate_bounding_box(&self, mask: &Mat) -> DomainResult<DetectionResult> {
         use opencv::core::Vector;
 
@@ -645,40 +646,48 @@ impl ColorProcessAdapter {
             return Ok(DetectionResult::none());
         }
 
-        // 最大面積の輪郭を探す
-        let mut max_area = 0.0;
-        let mut max_contour_idx = 0;
+        // すべての輪郭を包含する矩形を計算
+        let mut min_x = i32::MAX;
+        let mut min_y = i32::MAX;
+        let mut max_x = i32::MIN;
+        let mut max_y = i32::MIN;
+        let mut total_area = 0.0;
+
         for i in 0..contours.len() {
+            // 各輪郭の面積を合計
             let area = imgproc::contour_area(&contours.get(i).unwrap(), false)
                 .map_err(|e| DomainError::Process(format!("Failed to calculate contour area: {:?}", e)))?;
-            if area > max_area {
-                max_area = area;
-                max_contour_idx = i;
-            }
+            total_area += area;
+            
+            // 各輪郭のバウンディングボックスを計算
+            let rect = imgproc::bounding_rect(&contours.get(i).unwrap())
+                .map_err(|e| DomainError::Process(format!("Failed to calculate bounding rect: {:?}", e)))?;
+            
+            // 全体を包含する矩形の範囲を更新
+            min_x = min_x.min(rect.x);
+            min_y = min_y.min(rect.y);
+            max_x = max_x.max(rect.x + rect.width);
+            max_y = max_y.max(rect.y + rect.height);
         }
 
-        let coverage = max_area as u32;
+        let coverage = total_area as u32;
 
         // 最小検出面積チェック
         if coverage <= self.min_detection_area {
             return Ok(DetectionResult::none());
         }
 
-        // バウンディングボックスを計算
-        let rect = imgproc::bounding_rect(&contours.get(max_contour_idx).unwrap())
-            .map_err(|e| DomainError::Process(format!("Failed to calculate bounding rect: {:?}", e)))?;
+        // 統合されたバウンディングボックスを作成
+        let bbox = BoundingBox::new(
+            min_x as f32,
+            min_y as f32,
+            (max_x - min_x) as f32,
+            (max_y - min_y) as f32,
+        );
 
         // 中心座標を計算
-        let center_x = rect.x as f32 + rect.width as f32 / 2.0;
-        let center_y = rect.y as f32 + rect.height as f32 / 2.0;
-
-        // BoundingBox情報を作成
-        let bbox = BoundingBox::new(
-            rect.x as f32,
-            rect.y as f32,
-            rect.width as f32,
-            rect.height as f32,
-        );
+        let center_x = min_x as f32 + (max_x - min_x) as f32 / 2.0;
+        let center_y = min_y as f32 + (max_y - min_y) as f32 / 2.0;
 
         Ok(DetectionResult::with_bounding_box(
             center_x,
