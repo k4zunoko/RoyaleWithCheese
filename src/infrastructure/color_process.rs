@@ -3,7 +3,8 @@
 /// OpenCVを使用したHSV色空間での物体検出実装。
 
 use crate::domain::{
-    DetectionResult, DomainError, DomainResult, Frame, HsvRange, ProcessPort, ProcessorBackend, Roi,
+    config::DetectionMethod, DetectionResult, DomainError, DomainResult, Frame, HsvRange,
+    ProcessPort, ProcessorBackend, Roi,
 };
 use opencv::{
     core::{self, Mat, Scalar},
@@ -17,6 +18,7 @@ use std::time::Instant;
 /// 色検知処理アダプタ
 pub struct ColorProcessAdapter {
     min_detection_area: u32,
+    detection_method: DetectionMethod,
 }
 
 impl ColorProcessAdapter {
@@ -24,10 +26,11 @@ impl ColorProcessAdapter {
     /// 
     /// # Arguments
     /// - `min_detection_area`: 最小検出面積（ピクセル）
+    /// - `detection_method`: 検出方法（moments/boundingbox）
     /// 
     /// # Returns
     /// ColorProcessAdapterインスタンス
-    pub fn new(min_detection_area: u32) -> DomainResult<Self> {
+    pub fn new(min_detection_area: u32, detection_method: DetectionMethod) -> DomainResult<Self> {
         // OpenCVのスレッド数を設定（0 = 自動、全コア使用）
         // cvtColor、moments等の一部関数で並列化が有効
         let _ = opencv::core::set_num_threads(0);
@@ -43,6 +46,7 @@ impl ColorProcessAdapter {
 
         Ok(Self {
             min_detection_area,
+            detection_method,
         })
     }
 
@@ -123,28 +127,31 @@ impl ColorProcessAdapter {
         #[cfg(feature = "performance-timing")]
         let mask_time = hsv_time.elapsed();
 
+        // 検出方法に応じて処理を分岐
+        let result = match self.detection_method {
+            DetectionMethod::Moments => self.calculate_moments(&mask)?,
+            DetectionMethod::BoundingBox => self.calculate_bounding_box(&mask)?,
+        };
+
         // デバッグ表示：画像処理の中間結果を表示
         #[cfg(feature = "opencv-debug-display")]
         {
-            // 検出結果を計算してからオーバーレイ表示
-            let moments = imgproc::moments(&mask, false)
-                .map_err(|e| DomainError::Process(format!("Failed to calculate moments for debug: {:?}", e)))?;
-            let detection = self.calculate_detection_from_moments(&moments);
-            self.display_debug_images(bgr, &hsv, &mask, hsv_range, &detection)?;
+            self.display_debug_images(bgr, &hsv, &mask, hsv_range, &result)?;
         }
-
-        // モーメント計算
-        let result = self.calculate_moments(&mask)?;
         
         #[cfg(feature = "performance-timing")]
         {
-            let moment_time = mask_time.elapsed();
+            let detection_time = mask_time.elapsed();
             let total_time = start.elapsed();
             tracing::debug!(
-                "Color process breakdown - HSV: {:.2}ms | Mask: {:.2}ms | Moment: {:.2}ms | Total: {:.2}ms",
+                "Color process breakdown - HSV: {:.2}ms | Mask: {:.2}ms | Detection ({}): {:.2}ms | Total: {:.2}ms",
                 hsv_time.as_secs_f64() * 1000.0,
                 mask_time.as_secs_f64() * 1000.0,
-                moment_time.as_secs_f64() * 1000.0,
+                match self.detection_method {
+                    DetectionMethod::Moments => "moments",
+                    DetectionMethod::BoundingBox => "bbox",
+                },
+                detection_time.as_secs_f64() * 1000.0,
                 total_time.as_secs_f64() * 1000.0
             );
         }
@@ -512,6 +519,66 @@ impl ColorProcessAdapter {
         
         Ok(self.calculate_detection_from_moments(&moments))
     }
+
+    /// バウンディングボックス計算から中心と面積を取得
+    /// 
+    /// # レイテンシ特性
+    /// - momentsに比べて計算が単純（重心計算なし）
+    /// - findContoursはOpenCVの並列処理を活用
+    fn calculate_bounding_box(&self, mask: &Mat) -> DomainResult<DetectionResult> {
+        use opencv::core::Vector;
+
+        // 輪郭検出
+        let mut contours: Vector<Vector<opencv::core::Point>> = Vector::new();
+        imgproc::find_contours(
+            mask,
+            &mut contours,
+            imgproc::RETR_EXTERNAL,
+            imgproc::CHAIN_APPROX_SIMPLE,
+            opencv::core::Point::new(0, 0),
+        )
+        .map_err(|e| DomainError::Process(format!("Failed to find contours: {:?}", e)))?;
+
+        // 輪郭がない場合
+        if contours.is_empty() {
+            return Ok(DetectionResult::none());
+        }
+
+        // 最大面積の輪郭を探す
+        let mut max_area = 0.0;
+        let mut max_contour_idx = 0;
+        for i in 0..contours.len() {
+            let area = imgproc::contour_area(&contours.get(i).unwrap(), false)
+                .map_err(|e| DomainError::Process(format!("Failed to calculate contour area: {:?}", e)))?;
+            if area > max_area {
+                max_area = area;
+                max_contour_idx = i;
+            }
+        }
+
+        let coverage = max_area as u32;
+
+        // 最小検出面積チェック
+        if coverage <= self.min_detection_area {
+            return Ok(DetectionResult::none());
+        }
+
+        // バウンディングボックスを計算
+        let rect = imgproc::bounding_rect(&contours.get(max_contour_idx).unwrap())
+            .map_err(|e| DomainError::Process(format!("Failed to calculate bounding rect: {:?}", e)))?;
+
+        // 中心座標を計算
+        let center_x = rect.x as f32 + rect.width as f32 / 2.0;
+        let center_y = rect.y as f32 + rect.height as f32 / 2.0;
+
+        Ok(DetectionResult {
+            timestamp: Instant::now(),
+            detected: true,
+            center_x,
+            center_y,
+            coverage,
+        })
+    }
 }
 
 impl ProcessPort for ColorProcessAdapter {
@@ -597,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_adapter_creation() {
-        let adapter = ColorProcessAdapter::new(100);
+        let adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments);
         assert!(adapter.is_ok());
         let adapter = adapter.unwrap();
         assert_eq!(adapter.min_detection_area, 100);
@@ -605,13 +672,13 @@ mod tests {
 
     #[test]
     fn test_backend() {
-        let adapter = ColorProcessAdapter::new(100).unwrap();
+        let adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments).unwrap();
         assert_eq!(adapter.backend(), ProcessorBackend::Cpu);
     }
 
     #[test]
     fn test_process_frame_with_detection() {
-        let mut adapter = ColorProcessAdapter::new(100).unwrap();
+        let mut adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments).unwrap();
         let frame = create_test_frame(640, 480);
         let roi = Roi::new(0, 0, 640, 480);
         
@@ -645,7 +712,7 @@ mod tests {
 
     #[test]
     fn test_process_frame_no_detection() {
-        let mut adapter = ColorProcessAdapter::new(100).unwrap();
+        let mut adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments).unwrap();
         
         // 黒いフレーム（検出なし）
         let frame = Frame {
@@ -679,7 +746,7 @@ mod tests {
     #[test]
     fn test_process_frame_small_area() {
         // 検出はされるが、カバレッジが記録されることを確認
-        let mut adapter = ColorProcessAdapter::new(100).unwrap(); // 低い閾値で検出
+        let mut adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments).unwrap(); // 低い閾値で検出
         let frame = create_test_frame(640, 480);
         let roi = Roi::new(0, 0, 640, 480);
         
@@ -705,7 +772,7 @@ mod tests {
 
     #[test]
     fn test_frame_to_mat_conversion() {
-        let adapter = ColorProcessAdapter::new(100).unwrap();
+        let adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments).unwrap();
         let frame = create_test_frame(320, 240);
         
         let result = adapter.frame_to_mat(&frame);
@@ -721,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_calculate_moments_empty_mask() {
-        let adapter = ColorProcessAdapter::new(100).unwrap();
+        let adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments).unwrap();
         
         // 空のマスク（全て0）
         let mask = Mat::zeros(100, 100, opencv::core::CV_8UC1)
@@ -737,5 +804,58 @@ mod tests {
         assert_eq!(detection.coverage, 0);
         assert_eq!(detection.center_x, 0.0);
         assert_eq!(detection.center_y, 0.0);
+    }
+
+    #[test]
+    fn test_bounding_box_detection() {
+        // BoundingBox検出メソッドのテスト
+        let mut adapter = ColorProcessAdapter::new(100, DetectionMethod::BoundingBox).unwrap();
+        let frame = create_test_frame(640, 480);
+        let roi = Roi::new(0, 0, 640, 480);
+        
+        // 黄色を検出するHSV範囲
+        let hsv_range = HsvRange {
+            h_min: 20,
+            h_max: 40,
+            s_min: 100,
+            s_max: 255,
+            v_min: 100,
+            v_max: 255,
+        };
+
+        let result = adapter.process_frame(&frame, &roi, &hsv_range);
+        assert!(result.is_ok());
+        
+        let detection = result.unwrap();
+        assert!(detection.detected, "Should detect yellow color with BoundingBox method");
+        assert!(detection.coverage > 0, "Coverage should be greater than 0");
+        
+        // バウンディングボックスの中心はフレームの中心付近であるべき
+        let center_x = frame.width as f32 / 2.0;
+        let center_y = frame.height as f32 / 2.0;
+        assert!((detection.center_x - center_x).abs() < 100.0,
+            "Center X should be near frame center with BoundingBox: expected {}, got {}",
+            center_x, detection.center_x);
+        assert!((detection.center_y - center_y).abs() < 100.0,
+            "Center Y should be near frame center with BoundingBox: expected {}, got {}",
+            center_y, detection.center_y);
+    }
+
+    #[test]
+    fn test_bounding_box_empty_mask() {
+        // BoundingBoxで空のマスクをテスト
+        let adapter = ColorProcessAdapter::new(100, DetectionMethod::BoundingBox).unwrap();
+        
+        // 空のマスク（全て0）
+        let mask = Mat::zeros(100, 100, opencv::core::CV_8UC1)
+            .unwrap()
+            .to_mat()
+            .unwrap();
+        
+        let result = adapter.calculate_bounding_box(&mask);
+        assert!(result.is_ok());
+        
+        let detection = result.unwrap();
+        assert!(!detection.detected);
     }
 }

@@ -90,8 +90,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Initializing process adapter with mode: {}", config.process.mode);
     let process = match config.process.mode.as_str() {
         "fast-color" => {
-            tracing::info!("Using fast-color (HSV color detection) mode");
-            let adapter = ColorProcessAdapter::new(config.process.min_detection_area)?;
+            tracing::info!(
+                "Using fast-color (HSV color detection) mode with {:?} detection method",
+                config.process.detection_method
+            );
+            let adapter = ColorProcessAdapter::new(
+                config.process.min_detection_area,
+                config.process.detection_method,
+            )?;
             ProcessSelector::FastColor(adapter)
         }
         "yolo-ort" => {

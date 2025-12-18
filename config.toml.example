@@ -26,6 +26,11 @@ mode = "fast-color"
 # 最小検出面積（ピクセル数、これ未満は無視）
 min_detection_area = 0
 
+# 検出方法（fast-colorモードのみ使用）:
+#   "moments"     - モーメントによる重心計算（デフォルト、高精度）
+#   "boundingbox" - バウンディングボックスの中心（高速）
+detection_method = "moments"
+
 [process.roi]
 # ROI（Region of Interest）の設定（ピクセル座標）
 # 1920x1080 の画面中心 960x540 の例

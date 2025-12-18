@@ -8,6 +8,16 @@ use std::time::Duration;
 
 use crate::domain::{DomainError, DomainResult, HsvRange, Roi};
 
+/// 検出方法
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DetectionMethod {
+    /// モーメントによる重心計算（デフォルト）
+    Moments,
+    /// バウンディングボックスの中心計算
+    BoundingBox,
+}
+
 /// アプリケーション設定のルート構造
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,9 +83,16 @@ pub struct ProcessConfig {
     pub hsv_range: HsvRangeConfig,
     /// 最小検出面積（ピクセル）
     pub min_detection_area: u32,
+    /// 検出方法（moments/boundingbox）
+    #[serde(default = "default_detection_method")]
+    pub detection_method: DetectionMethod,
     /// 座標変換設定
     #[serde(default)]
     pub coordinate_transform: CoordinateTransformConfig,
+}
+
+fn default_detection_method() -> DetectionMethod {
+    DetectionMethod::Moments
 }
 
 impl Default for ProcessConfig {
@@ -85,6 +102,7 @@ impl Default for ProcessConfig {
             roi: RoiConfig::default(),
             hsv_range: HsvRangeConfig::default(),
             min_detection_area: 100,
+            detection_method: DetectionMethod::Moments,
             coordinate_transform: CoordinateTransformConfig::default(),
         }
     }
