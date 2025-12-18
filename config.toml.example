@@ -29,15 +29,15 @@ min_detection_area = 0
 # 検出方法（fast-colorモードのみ使用）:
 #   "moments"     - モーメントによる重心計算（デフォルト、高精度）
 #   "boundingbox" - バウンディングボックスの中心（高速）
-detection_method = "moments"
+detection_method = "boundingbox"
 
 [process.roi]
 # ROI（Region of Interest）の設定（ピクセル座標）
 # 1920x1080 の画面中心 960x540 の例
-x = 930
-y = 520
-width = 60
-height = 40
+x = 730
+y = 420
+width = 460
+height = 240
 
 [process.hsv_range]
 # HSV色空間のレンジ（fast-colorモードのみ使用）
