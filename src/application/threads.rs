@@ -66,7 +66,7 @@ impl ActivationState {
     /// # アクティベーションロジック
     /// 1. システム無効または検出なしの場合は即座にFalse
     /// 2. マウス左クリック押下 OR ROI中心からの距離が閾値以下の場合、アクティブ時刻を更新
-    /// 3. 最後にアクティブになってから0.5秒以内であればTrue
+    /// 3. 最後にアクティブになってから0.5秒未満であればTrue
     #[inline]
     pub(crate) fn should_activate(
         &mut self,
