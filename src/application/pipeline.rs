@@ -720,6 +720,7 @@ mod tests {
                 center_x: 960.0,
                 center_y: 540.0,
                 coverage: 1000,
+                bounding_box: None,
             })
         }
 

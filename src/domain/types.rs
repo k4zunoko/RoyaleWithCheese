@@ -132,6 +132,43 @@ impl Frame {
     }
 }
 
+/// バウンディングボックス（外接矩形）
+/// 
+/// BoundingBox検出メソッド使用時に検出対象の矩形情報を保持します。
+/// 座標はROI内の相対座標です。
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoundingBox {
+    /// 矩形の左上隅X座標
+    pub x: f32,
+    /// 矩形の左上隅Y座標
+    pub y: f32,
+    /// 矩形の幅
+    pub width: f32,
+    /// 矩形の高さ
+    pub height: f32,
+}
+
+impl BoundingBox {
+    /// 新しいバウンディングボックスを作成
+    #[allow(dead_code)]
+    pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self { x, y, width, height }
+    }
+
+    /// 矩形の中心座標を取得
+    #[allow(dead_code)]
+    pub fn center(&self) -> (f32, f32) {
+        (self.x + self.width / 2.0, self.y + self.height / 2.0)
+    }
+
+    /// 矩形の面積を取得
+    #[allow(dead_code)]
+    pub fn area(&self) -> f32 {
+        self.width * self.height
+    }
+}
+
 /// 色検知の結果
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -146,6 +183,8 @@ pub struct DetectionResult {
     pub coverage: u32,
     /// 検出フラグ（true: 検出あり, false: 検出なし）
     pub detected: bool,
+    /// バウンディングボックス情報（BoundingBox検出メソッド使用時のみ有効）
+    pub bounding_box: Option<BoundingBox>,
 }
 
 impl DetectionResult {
@@ -158,6 +197,7 @@ impl DetectionResult {
             center_y: 0.0,
             coverage: 0,
             detected: false,
+            bounding_box: None,
         }
     }
 
@@ -170,6 +210,20 @@ impl DetectionResult {
             center_y,
             coverage,
             detected: true,
+            bounding_box: None,
+        }
+    }
+
+    /// 検出ありの結果をバウンディングボックス付きで作成
+    #[allow(dead_code)]
+    pub fn with_bounding_box(center_x: f32, center_y: f32, coverage: u32, bbox: BoundingBox) -> Self {
+        Self {
+            timestamp: Instant::now(),
+            center_x,
+            center_y,
+            coverage,
+            detected: true,
+            bounding_box: Some(bbox),
         }
     }
 }

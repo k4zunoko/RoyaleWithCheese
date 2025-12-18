@@ -3,8 +3,8 @@
 /// OpenCVを使用したHSV色空間での物体検出実装。
 
 use crate::domain::{
-    config::DetectionMethod, DetectionResult, DomainError, DomainResult, Frame, HsvRange,
-    ProcessPort, ProcessorBackend, Roi,
+    config::DetectionMethod, BoundingBox, DetectionResult, DomainError, DomainResult, Frame,
+    HsvRange, ProcessPort, ProcessorBackend, Roi,
 };
 use opencv::{
     core::{self, Mat, Scalar},
@@ -230,7 +230,7 @@ impl ColorProcessAdapter {
 
         // 固定サイズのウィンドウ（幅400px、高さは内容に応じて調整）
         let window_width = 400;
-        let window_height = 300;
+        let window_height = 350; // BoundingBox情報追加のため高さを増やす
         
         // 黒背景のMatを作成
         let mut info_img = Mat::new_rows_cols_with_default(
@@ -384,7 +384,28 @@ impl ColorProcessAdapter {
         ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
         y += line_height + 5;
 
-        // 重心座標
+        // 検出方法
+        if detection.detected {
+            let method_text = if detection.bounding_box.is_some() {
+                "Method: BoundingBox"
+            } else {
+                "Method: Moments"
+            };
+            imgproc::put_text(
+                &mut info_img,
+                method_text,
+                Point::new(20, y),
+                FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                yellow,
+                thickness,
+                LINE_8,
+                false,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+            y += line_height;
+        }
+
+        // 中心座標
         if detection.detected {
             let center_text = format!("Center: ({:.1}, {:.1})", 
                 detection.center_x, 
@@ -392,6 +413,37 @@ impl ColorProcessAdapter {
             imgproc::put_text(
                 &mut info_img,
                 &center_text,
+                Point::new(20, y),
+                FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                white,
+                thickness,
+                LINE_8,
+                false,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+            y += line_height;
+        }
+
+        // BoundingBox情報
+        if let Some(bbox) = &detection.bounding_box {
+            let bbox_text = format!("BBox: ({:.1}, {:.1})", bbox.x, bbox.y);
+            imgproc::put_text(
+                &mut info_img,
+                &bbox_text,
+                Point::new(20, y),
+                FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                white,
+                thickness,
+                LINE_8,
+                false,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw text: {:?}", e)))?;
+            y += line_height;
+
+            let size_text = format!("Size: {:.1} x {:.1}", bbox.width, bbox.height);
+            imgproc::put_text(
+                &mut info_img,
+                &size_text,
                 Point::new(20, y),
                 FONT_HERSHEY_SIMPLEX,
                 font_scale,
@@ -421,7 +473,10 @@ impl ColorProcessAdapter {
         Ok(info_img)
     }
 
-    /// 検出マーカー（十字と円）を描画
+    /// 検出マーカーを描画
+    /// 
+    /// - Moments検出時: 重心に十字と円を描画（緑色）
+    /// - BoundingBox検出時: 矩形と中心に十字を描画（青色の矩形、緑色の十字）
     #[cfg(feature = "opencv-debug-display")]
     fn draw_detection_markers(
         &self,
@@ -429,51 +484,96 @@ impl ColorProcessAdapter {
         detection: &DetectionResult,
     ) -> DomainResult<()> {
         use opencv::imgproc::{self, LINE_8};
-        use opencv::core::{Point, Scalar};
+        use opencv::core::{Point, Rect, Scalar};
 
         if !detection.detected {
             return Ok(());
         }
 
         let green = Scalar::new(0.0, 255.0, 0.0, 0.0);
+        let blue = Scalar::new(255.0, 0.0, 0.0, 0.0);
         let center_point = Point::new(
             detection.center_x as i32,
             detection.center_y as i32,
         );
-        let marker_size = 10;
-        
-        // 縦線
-        imgproc::line(
-            img,
-            Point::new(center_point.x, center_point.y - marker_size),
-            Point::new(center_point.x, center_point.y + marker_size),
-            green,
-            2,
-            LINE_8,
-            0,
-        ).map_err(|e| DomainError::Process(format!("Failed to draw line: {:?}", e)))?;
-        
-        // 横線
-        imgproc::line(
-            img,
-            Point::new(center_point.x - marker_size, center_point.y),
-            Point::new(center_point.x + marker_size, center_point.y),
-            green,
-            2,
-            LINE_8,
-            0,
-        ).map_err(|e| DomainError::Process(format!("Failed to draw line: {:?}", e)))?;
 
-        // 重心周りに円を描画
-        imgproc::circle(
-            img,
-            center_point,
-            5,
-            green,
-            2,
-            LINE_8,
-            0,
-        ).map_err(|e| DomainError::Process(format!("Failed to draw circle: {:?}", e)))?;
+        // BoundingBox情報がある場合は矩形を描画
+        if let Some(bbox) = &detection.bounding_box {
+            // 矩形を描画（青色、太線）
+            let rect = Rect::new(
+                bbox.x as i32,
+                bbox.y as i32,
+                bbox.width as i32,
+                bbox.height as i32,
+            );
+            imgproc::rectangle(
+                img,
+                rect,
+                blue,
+                2,
+                LINE_8,
+                0,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw rectangle: {:?}", e)))?;
+
+            // 中心に十字マーカーを描画（緑色）
+            let marker_size = 8;
+            // 縦線
+            imgproc::line(
+                img,
+                Point::new(center_point.x, center_point.y - marker_size),
+                Point::new(center_point.x, center_point.y + marker_size),
+                green,
+                2,
+                LINE_8,
+                0,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw line: {:?}", e)))?;
+            // 横線
+            imgproc::line(
+                img,
+                Point::new(center_point.x - marker_size, center_point.y),
+                Point::new(center_point.x + marker_size, center_point.y),
+                green,
+                2,
+                LINE_8,
+                0,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw line: {:?}", e)))?;
+        } else {
+            // Moments検出時: 重心に十字と円を描画（緑色）
+            let marker_size = 10;
+            
+            // 縦線
+            imgproc::line(
+                img,
+                Point::new(center_point.x, center_point.y - marker_size),
+                Point::new(center_point.x, center_point.y + marker_size),
+                green,
+                2,
+                LINE_8,
+                0,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw line: {:?}", e)))?;
+            
+            // 横線
+            imgproc::line(
+                img,
+                Point::new(center_point.x - marker_size, center_point.y),
+                Point::new(center_point.x + marker_size, center_point.y),
+                green,
+                2,
+                LINE_8,
+                0,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw line: {:?}", e)))?;
+
+            // 重心周りに円を描画
+            imgproc::circle(
+                img,
+                center_point,
+                5,
+                green,
+                2,
+                LINE_8,
+                0,
+            ).map_err(|e| DomainError::Process(format!("Failed to draw circle: {:?}", e)))?;
+        }
 
         Ok(())
     }
@@ -509,6 +609,7 @@ impl ColorProcessAdapter {
             center_x,
             center_y,
             coverage,
+            bounding_box: None,
         }
     }
 
@@ -571,13 +672,20 @@ impl ColorProcessAdapter {
         let center_x = rect.x as f32 + rect.width as f32 / 2.0;
         let center_y = rect.y as f32 + rect.height as f32 / 2.0;
 
-        Ok(DetectionResult {
-            timestamp: Instant::now(),
-            detected: true,
+        // BoundingBox情報を作成
+        let bbox = BoundingBox::new(
+            rect.x as f32,
+            rect.y as f32,
+            rect.width as f32,
+            rect.height as f32,
+        );
+
+        Ok(DetectionResult::with_bounding_box(
             center_x,
             center_y,
             coverage,
-        })
+            bbox,
+        ))
     }
 }
 

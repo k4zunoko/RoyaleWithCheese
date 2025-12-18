@@ -281,6 +281,7 @@ mod tests {
             center_y: 456.7,
             coverage: 9999,
             detected: true,
+            bounding_box: None,
         };
 
         let report = detection_to_hid_report(&result);
