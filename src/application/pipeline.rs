@@ -130,6 +130,7 @@ where
     
     /// RuntimeStateを取得（テスト用）
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn runtime_state(&self) -> &crate::application::runtime_state::RuntimeState {
         &self.runtime_state
     }
@@ -238,6 +239,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     struct MockProcess;
     impl ProcessPort for MockProcess {
         fn process_frame(
@@ -261,6 +263,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     struct MockComm;
     impl CommPort for MockComm {
         fn send(&mut self, _data: &[u8]) -> DomainResult<()> {
@@ -276,6 +279,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     struct MockInput;
     impl InputPort for MockInput {
         fn is_key_pressed(&self, _key: VirtualKey) -> bool {
