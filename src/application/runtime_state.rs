@@ -7,16 +7,19 @@
 use std::sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc};
 use std::time::Instant;
 
-/// ランタイム状態（スレッド間で共有、ロックフリー）
+/// ランタイム状態（スレッド間共有、ロックフリー設計）
 /// 
-/// Insertキーによる有効/無効切り替えやマウスボタン状態を管理します。
-/// `Arc<AtomicBool>`を使用したロックフリー設計により、
-/// 読み取り側スレッド（Capture/Process/HID）は数CPUサイクルで状態を確認できます。
+/// Insertキーによるシステム有効/無効切り替えやマウスボタン状態を管理します。
 /// 
-/// # パフォーマンス特性
-/// - 読み取り: `Ordering::Relaxed` - 数CPUサイクル、ロック不要
-/// - 書き込み: stats_threadのみが実行（低頻度）
-/// - メモリオーダー: Relaxed - 厳密な順序保証は不要（少し古い値でも無害）
+/// # 低レイテンシ設計
+/// `Arc<AtomicBool>`を使用したロックフリー実装により、以下の特性を実現：
+/// - **読み取り**: `Ordering::Relaxed` - 数CPUサイクル、Mutexロック不要
+/// - **書き込み**: stats_threadのみが実行（低頻度）
+/// - **メモリオーダー**: Relaxed - 厳密な順序保証不要（若干の遅延は許容）
+/// 
+/// # 使用スレッド
+/// - **書き込み**: Stats/UIスレッドのみ（入力ポーリング）
+/// - **読み取り**: Capture/Process/HIDスレッド（高頻度）
 #[derive(Clone)]
 pub struct RuntimeState {
     /// プロジェクト全体の有効/無効（Insertキーで切り替え）

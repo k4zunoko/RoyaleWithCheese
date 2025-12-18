@@ -1,6 +1,11 @@
 /// エラー型定義
 /// 
-/// Domain層のエラー型。thiserrorを使用して統一的なエラー処理を提供。
+/// Domain層の統一エラー型。thiserrorを使用して型安全なエラー処理を提供します。
+/// 
+/// # 設計方針
+/// - unwrap()の使用を禁止し、明示的なエラーハンドリングを強制
+/// - Result型でエラー伝播を明示化
+/// - 回復可能性をエラー型で表現（DeviceNotAvailable vs ReInitializationRequired）
 
 use thiserror::Error;
 

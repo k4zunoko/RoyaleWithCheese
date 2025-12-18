@@ -24,18 +24,21 @@ impl Roi {
 
     /// ROIの中心座標を取得
     #[allow(dead_code)]
+    #[inline]
     pub fn center(&self) -> (u32, u32) {
         (self.x + self.width / 2, self.y + self.height / 2)
     }
 
     /// ROIの面積を取得
     #[allow(dead_code)]
+    #[inline]
     pub fn area(&self) -> u32 {
         self.width * self.height
     }
 
     /// 指定された矩形との交差判定
     #[allow(dead_code)]
+    #[inline]
     pub fn intersects(&self, other: &Roi) -> bool {
         let self_x2 = self.x + self.width;
         let self_y2 = self.y + self.height;
@@ -74,12 +77,14 @@ impl HsvRange {
 
     /// OpenCVのScalar形式で下限を取得 [H, S, V]
     #[allow(dead_code)]
+    #[inline]
     pub fn lower_bound(&self) -> [u8; 3] {
         [self.h_min, self.s_min, self.v_min]
     }
 
     /// OpenCVのScalar形式で上限を取得 [H, S, V]
     #[allow(dead_code)]
+    #[inline]
     pub fn upper_bound(&self) -> [u8; 3] {
         [self.h_max, self.s_max, self.v_max]
     }
@@ -123,6 +128,7 @@ impl Frame {
 
     /// 指定されたROIとDirtyRectsが交差するか判定
     #[allow(dead_code)]
+    #[inline]
     pub fn roi_is_dirty(&self, roi: &Roi) -> bool {
         if self.dirty_rects.is_empty() {
             // DirtyRect情報がない場合は常に更新されたと見なす
@@ -158,12 +164,14 @@ impl BoundingBox {
 
     /// 矩形の中心座標を取得
     #[allow(dead_code)]
+    #[inline]
     pub fn center(&self) -> (f32, f32) {
         (self.x + self.width / 2.0, self.y + self.height / 2.0)
     }
 
     /// 矩形の面積を取得
     #[allow(dead_code)]
+    #[inline]
     pub fn area(&self) -> f32 {
         self.width * self.height
     }

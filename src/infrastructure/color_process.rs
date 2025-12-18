@@ -30,10 +30,13 @@ impl ColorProcessAdapter {
     /// 
     /// # Returns
     /// ColorProcessAdapterインスタンス
+    /// OpenCVスレッド数（0 = 自動検出、全コア使用）
+    const OPENCV_NUM_THREADS: i32 = 0;
+    
     pub fn new(min_detection_area: u32, detection_method: DetectionMethod) -> DomainResult<Self> {
-        // OpenCVのスレッド数を設定（0 = 自動、全コア使用）
+        // OpenCVのスレッド数を設定
         // cvtColor、moments等の一部関数で並列化が有効
-        let _ = opencv::core::set_num_threads(0);
+        let _ = opencv::core::set_num_threads(Self::OPENCV_NUM_THREADS);
         
         #[cfg(debug_assertions)]
         {
@@ -200,12 +203,15 @@ impl ColorProcessAdapter {
         highgui::imshow("Debug: Info", &info_window)
             .map_err(|e| DomainError::Process(format!("Failed to show Info window: {:?}", e)))?;
 
-        // キー入力を待つ（30ms待機 = 約33fps、ユーザーが画像を確認しやすい速度）
-        // ESCキー(27)、'q'(113)で終了
-        let key = highgui::wait_key(30)
+        const DEBUG_DISPLAY_WAIT_MS: i32 = 30; // 約33fps
+        const KEY_ESC: i32 = 27;
+        const KEY_Q: i32 = 113;
+        
+        // キー入力を待つ（ユーザーが画像を確認しやすい速度）
+        let key = highgui::wait_key(DEBUG_DISPLAY_WAIT_MS)
             .map_err(|e| DomainError::Process(format!("Failed to wait for key: {:?}", e)))?;
         
-        if key == 27 || key == 113 { // ESC or 'q'
+        if key == KEY_ESC || key == KEY_Q {
             tracing::info!("Debug display: User requested exit (ESC or 'q' pressed)");
             // ウィンドウを破棄
             let _ = highgui::destroy_all_windows();

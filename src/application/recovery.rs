@@ -5,16 +5,19 @@
 use std::time::{Duration, Instant};
 
 /// 再初期化戦略
+/// 
+/// DDAキャプチャのタイムアウトやエラー発生時の再初期化ポリシーを定義。
+/// 指数バックオフを使用して、再初期化間隔を段階的に延長します。
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct RecoveryStrategy {
-    /// 連続タイムアウト閾値（この回数を超えたら再初期化）
+    /// 連続タイムアウト閉値（この回数を超えたら再初期化）
     pub consecutive_timeout_threshold: u32,
-    /// 初期バックオフ時間
+    /// 初期バックオフ時間（最初の再試行間隔）
     pub initial_backoff: Duration,
-    /// 最大バックオフ時間
+    /// 最大バックオフ時間（再試行間隔の上限）
     pub max_backoff: Duration,
-    /// 累積失敗時間の上限（これを超えたら致命的エラー）
+    /// 累積失敗時間の上限（これを超えたら致命的エラーと判断）
     pub max_cumulative_failure: Duration,
 }
 

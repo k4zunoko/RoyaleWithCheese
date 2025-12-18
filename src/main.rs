@@ -104,10 +104,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // 将来の実装: YOLO + ONNX Runtime
             // let adapter = YoloProcessAdapter::new(...)?;
             // ProcessSelector::YoloOrt(adapter)
-            return Err(format!("Process mode '{}' is not yet implemented. Currently only 'fast-color' is supported.", config.process.mode).into());
+            return Err(format!(
+                "Process mode '{}' is not yet implemented. Currently only 'fast-color' is supported. \
+                Please set process.mode = \"fast-color\" in config.toml.",
+                config.process.mode
+            ).into());
         }
         _ => {
-            return Err(format!("Unknown process mode: '{}'. Supported modes: 'fast-color', 'yolo-ort'", config.process.mode).into());
+            return Err(format!(
+                "Unknown process mode: '{}'. Supported modes are 'fast-color' or 'yolo-ort' (not yet implemented). \
+                Please check process.mode in config.toml.",
+                config.process.mode
+            ).into());
         }
     };
 

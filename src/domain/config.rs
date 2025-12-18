@@ -44,13 +44,24 @@ pub struct CaptureConfig {
     pub monitor_index: u32,
 }
 
+impl CaptureConfig {
+    /// デフォルトのキャプチャタイムアウト（ミリ秒）
+    pub const DEFAULT_TIMEOUT_MS: u64 = 8;
+    /// デフォルトの連続タイムアウト閉値（約1秒 @ 8ms）
+    pub const DEFAULT_MAX_CONSECUTIVE_TIMEOUTS: u32 = 120;
+    /// デフォルトの再初期化初期遅延（ミリ秒）
+    pub const DEFAULT_REINIT_INITIAL_DELAY_MS: u64 = 100;
+    /// デフォルトの再初期化最大遅延（ミリ秒）
+    pub const DEFAULT_REINIT_MAX_DELAY_MS: u64 = 5000;
+}
+
 impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
-            timeout_ms: 8,
-            max_consecutive_timeouts: 120,
-            reinit_initial_delay_ms: 100,
-            reinit_max_delay_ms: 5000,
+            timeout_ms: Self::DEFAULT_TIMEOUT_MS,
+            max_consecutive_timeouts: Self::DEFAULT_MAX_CONSECUTIVE_TIMEOUTS,
+            reinit_initial_delay_ms: Self::DEFAULT_REINIT_INITIAL_DELAY_MS,
+            reinit_max_delay_ms: Self::DEFAULT_REINIT_MAX_DELAY_MS,
             monitor_index: 0,
         }
     }
@@ -96,13 +107,20 @@ fn default_detection_method() -> DetectionMethod {
     DetectionMethod::Moments
 }
 
+impl ProcessConfig {
+    /// デフォルトの処理モード
+    pub const DEFAULT_MODE: &'static str = "fast-color";
+    /// デフォルトの最小検出面積（ピクセル）
+    pub const DEFAULT_MIN_DETECTION_AREA: u32 = 100;
+}
+
 impl Default for ProcessConfig {
     fn default() -> Self {
         Self {
-            mode: "fast-color".to_string(),
+            mode: Self::DEFAULT_MODE.to_string(),
             roi: RoiConfig::default(),
             hsv_range: HsvRangeConfig::default(),
-            min_detection_area: 100,
+            min_detection_area: Self::DEFAULT_MIN_DETECTION_AREA,
             detection_method: DetectionMethod::Moments,
             coordinate_transform: CoordinateTransformConfig::default(),
         }
@@ -118,14 +136,21 @@ pub struct RoiConfig {
     pub height: u32,
 }
 
+impl RoiConfig {
+    /// デフォルトROI: 1920x1080中心の960x540
+    pub const DEFAULT_WIDTH: u32 = 960;
+    pub const DEFAULT_HEIGHT: u32 = 540;
+    pub const DEFAULT_X: u32 = 480;  // (1920 - 960) / 2
+    pub const DEFAULT_Y: u32 = 270;  // (1080 - 540) / 2
+}
+
 impl Default for RoiConfig {
     fn default() -> Self {
-        // 1920x1080の中心960x540
         Self {
-            x: 480,
-            y: 270,
-            width: 960,
-            height: 540,
+            x: Self::DEFAULT_X,
+            y: Self::DEFAULT_Y,
+            width: Self::DEFAULT_WIDTH,
+            height: Self::DEFAULT_HEIGHT,
         }
     }
 }

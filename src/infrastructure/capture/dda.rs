@@ -173,7 +173,9 @@ impl DdaCaptureAdapter {
     
     /// ステージングテクスチャを確保または再利用
     /// 
-    /// ROIサイズが変わった場合のみ再作成、同じサイズなら再利用してパフォーマンスを向上。
+    /// # パフォーマンス最適化
+    /// - ROIサイズが同じであれば既存のテクスチャを再利用
+    /// - サイズ変更時のみ再作成し、GPUリソースの再割り当てを最小化
     fn ensure_staging_texture(&mut self, width: u32, height: u32) -> DomainResult<ID3D11Texture2D> {
         // サイズが同じで既にテクスチャがあれば再利用
         if let Some(ref tex) = self.staging_tex {

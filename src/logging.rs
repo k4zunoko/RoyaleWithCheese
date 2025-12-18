@@ -1,8 +1,13 @@
 /// ログ・トレーシング基盤
 /// 
 /// tracingを使用した統一的なログ出力と区間計測。
-/// **Release ビルドでは完全にコンパイルアウト**（ゼロランタイムオーバーヘッド）
-/// **Debug ビルドでは非同期ログで軽量実行**（メインロジックに影響なし）
+/// 
+/// # ビルドモードとパフォーマンス
+/// - **Release ビルド**: ログ関連コードが完全にコンパイルアウトされ、ゼロランタイムオーバーヘッドを実現
+/// - **Debug ビルド**: 非同期ログ（tracing-appender）でメインロジックへの影響を最小化
+/// 
+/// # 設計意図
+/// 低レイテンシを最優先し、ログ出力がHot Pathのパフォーマンスに影響しないように実装しています。
 
 #[cfg(debug_assertions)] 
 use std::path::PathBuf;
@@ -11,20 +16,23 @@ use tracing::info;
 #[cfg(debug_assertions)] 
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-/// ログシステムを初期化（Release時は何もしない）
+/// ログシステムを初期化
 /// 
-/// # 特徴
-/// - **Release ビルド**: `debug-logging` feature が無効のため、この関数は空実装にコンパイル最適化される
-/// - **Debug ビルド**: 非同期ログで別スレッドバッファリング
+/// # ビルドモード別の動作
+/// - **Release ビルド**: この関数自体が空関数にコンパイル最適化され、ゼロオーバーヘッド
+/// - **Debug ビルド**: tracing-appenderで非同期ファイル出力（メインスレッドはメモリコピーのみ）
 /// 
 /// # Arguments
-/// - `log_level`: ログレベル（例: "info", "debug", "trace"）
+/// - `log_level`: ログレベル（"info", "debug", "trace"等）
 /// - `json_format`: JSON形式で出力するか
-/// - `log_dir`: ログファイル出力先ディレクトリ（Noneの場合は標準出力）
+/// - `log_dir`: ログファイル出力先（None = 標準出力）
 /// 
 /// # Returns
-/// - Debug: `Option<WorkerGuard>`（プログラム終了まで保持必須）
-/// - Release: `None`（ランタイムオーバーヘッドなし）
+/// - Debug: `Some(WorkerGuard)` - プログラム終了まで保持必須（Drop時にログスレッド終了）
+/// - Release: `None` - オーバーヘッドなし
+/// 
+/// # 重要
+/// Debugビルドでは戻り値の`WorkerGuard`をmain関数終了まで保持する必要があります。
 #[cfg(debug_assertions)] 
 pub fn init_logging(
     log_level: &str,

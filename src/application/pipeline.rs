@@ -235,7 +235,7 @@ where
         let capture_handle = {
             let capture = Arc::clone(&self.capture);
             let tx = capture_tx.clone();
-            let roi = self.roi.clone();
+            let roi = self.roi; // RoiはCopy traitを実装しているためclone不要
             std::thread::spawn(move || {
                 Self::capture_thread(capture, tx, roi);
             })
@@ -244,8 +244,8 @@ where
         // Process Thread
         let process_handle = {
             let process = Arc::clone(&self.process);
-            let roi = self.roi.clone();
-            let hsv_range = self.hsv_range.clone();
+            let roi = self.roi; // Copy trait
+            let hsv_range = self.hsv_range; // Copy trait
             let rx = capture_rx;
             let tx = process_tx;
             let stats_tx = stats_tx.clone();
@@ -258,7 +258,7 @@ where
         let hid_handle = {
             let comm = Arc::clone(&self.comm);
             let rx = process_rx;
-            let roi = self.roi.clone();
+            let roi = self.roi; // Copy trait
             let coordinate_transform = self.coordinate_transform.clone();
             let stats_tx = stats_tx.clone();
             let hid_send_interval = self.config.hid_send_interval;

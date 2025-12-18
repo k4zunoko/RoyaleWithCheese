@@ -38,32 +38,5 @@ cargo run --features opencv-debug-display
 
 ### ビルドオプション
 
-- **`--features fast-color`** (デフォルト): OpenCVベースの色検出処理を使用
 - **`--features performance-timing`**: 各処理の詳細なタイミングログを出力（パフォーマンス解析用）
 - **`--features opencv-debug-display`**: OpenCVで画像処理の中間結果を表示（デバッグ用）
-- **`--features yolo-ort`**: YOLO + ONNX Runtimeベースの物体検出（未実装）
-
-### 動作テスト機能
-
-**opencv-debug-display**: config.tomlの設定が正しく適用されているかを視覚的に確認
-
-このFeatureを有効にすると、以下の3つのウィンドウが表示されます：
-
-1. **Debug: BGR Capture**: キャプチャされた元画像（等倍表示）
-   - 検出時は重心位置に緑色の十字マークと円を表示
-
-2. **Debug: Mask**: HSV範囲でフィルタリングされたマスク画像（等倍表示、白=検出、黒=非検出）
-
-3. **Debug: Info**: デバッグ情報専用ウィンドウ（固定サイズ）
-   - ROIサイズ、HSV範囲設定値、検出状態、検出面積、重心座標を表示
-
-**操作**: ESCキーまたは'q'キーで終了（約30fps表示）
-
-**確認項目**:
-- ROI設定が期待通りか
-- HSV範囲が適切に設定されているか
-- 検出したい色が正しく検出されているか
-- 重心が期待した位置にあるか
-
-**注意**: 画像表示により処理速度が大幅に低下するため、デバッグ・動作確認目的でのみ使用してください。
-

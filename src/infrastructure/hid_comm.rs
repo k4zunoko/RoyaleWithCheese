@@ -169,7 +169,7 @@ impl CommPort for HidCommAdapter {
     ///   （再接続は明示的なreconnect()呼び出しで実行）
     fn send(&mut self, data: &[u8]) -> DomainResult<()> {
         if data.is_empty() {
-            return Err(DomainError::Communication("Empty data".to_string()));
+            return Err(DomainError::Communication("Cannot send empty HID report".to_string()));
         }
         
         let mut device_guard = self.device.lock().unwrap();

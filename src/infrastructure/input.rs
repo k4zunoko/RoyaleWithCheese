@@ -1,6 +1,11 @@
 //! Windows 入力監視実装（Infrastructure層）
 //!
-//! GetAsyncKeyState APIを使用してInputPort traitを実装します。
+//! Win32 APIのGetAsyncKeyStateを使用してInputPort traitを実装します。
+//! 
+//! # 低レイテンシ設計
+//! - ポーリング方式（イベントドリブンより高速）
+//! - 直接Windows API呼び出し（中間レイヤーなし）
+//! - unsafeブロックはInfrastructure層に限定
 
 use crate::domain::ports::{InputPort, InputState, VirtualKey};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;

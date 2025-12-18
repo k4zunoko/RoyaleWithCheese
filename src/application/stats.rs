@@ -66,14 +66,18 @@ impl StatsCollector {
         }
     }
 
+    /// FPS計算の時間範囲（1秒間のフレーム数を計測）
+    const FPS_WINDOW_SECS: u64 = 1;
+    
     /// フレーム受信を記録（FPS計測用）
     pub fn record_frame(&mut self) {
         let now = Instant::now();
         self.frame_times.push_back(now);
 
-        // 1秒より古いタイムスタンプを削除
+        // 指定秒数より古いタイムスタンプを削除
+        let window = Duration::from_secs(Self::FPS_WINDOW_SECS);
         while let Some(&front) = self.frame_times.front() {
-            if now.duration_since(front) > Duration::from_secs(1) {
+            if now.duration_since(front) > window {
                 self.frame_times.pop_front();
             } else {
                 break;
@@ -81,6 +85,9 @@ impl StatsCollector {
         }
     }
 
+    /// 最大サンプル保持数（パーセンタイル計算用）
+    const MAX_DURATION_SAMPLES: usize = 1000;
+    
     /// 処理時間を記録
     ///
     /// # Arguments
@@ -90,8 +97,8 @@ impl StatsCollector {
         let queue = self.durations.entry(kind).or_insert_with(VecDeque::new);
         queue.push_back(duration);
 
-        // 最大1000サンプルまで保持
-        if queue.len() > 1000 {
+        // 最大サンプル数を超えたら古いデータを破棄
+        if queue.len() > Self::MAX_DURATION_SAMPLES {
             queue.pop_front();
         }
     }

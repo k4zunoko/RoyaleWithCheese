@@ -1,6 +1,9 @@
 //! 入力検出ユーティリティ（Application層）
 //!
-//! キー押下のエッジ検出など、Application層で使用する入力関連のユーティリティです。
+//! キー押下のエッジ検出（立ち上がり/立ち下がり）を提供します。
+//! 
+//! # 使用例
+//! Insertキーのトグル検出（押し続けではなく、押した瞬間のみ検出）。
 
 use crate::domain::ports::{InputPort, VirtualKey};
 
@@ -36,6 +39,7 @@ impl KeyPressDetector {
     }
 
     /// 現在の状態をリセット
+    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.previous_state = false;
     }
