@@ -417,6 +417,7 @@ pub(crate) fn stats_thread(
     _recovery: &mut RecoveryState,
     runtime_state: &RuntimeState,
     input: &dyn InputPort,
+    audio_feedback: Option<&crate::infrastructure::audio_feedback::WindowsAudioFeedback>,
 ) {
     tracing::info!("Stats/UI thread started");
     
@@ -462,6 +463,12 @@ pub(crate) fn stats_thread(
         // Insertキーの押下検知（エッジ検出）
         if insert_detector.is_key_just_pressed(input, VirtualKey::Insert) {
             let new_state = runtime_state.toggle_enabled();
+            
+            // 音声フィードバック再生（非同期、数マイクロ秒で復帰）
+            if let Some(audio) = audio_feedback {
+                audio.play_toggle_sound(new_state);
+            }
+            
             #[cfg(debug_assertions)]
             tracing::info!("System {}", if new_state { "ENABLED" } else { "DISABLED" });
         }

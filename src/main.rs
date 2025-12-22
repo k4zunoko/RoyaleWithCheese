@@ -12,6 +12,7 @@ use crate::infrastructure::color_process::ColorProcessAdapter;
 use crate::infrastructure::hid_comm::HidCommAdapter;
 use crate::infrastructure::input::WindowsInputAdapter;
 use crate::infrastructure::process_selector::ProcessSelector;
+use crate::infrastructure::audio_feedback::WindowsAudioFeedback;
 use crate::application::pipeline::{PipelineRunner, PipelineConfig};
 use crate::application::recovery::{RecoveryState, RecoveryStrategy};
 use crate::logging::init_logging;
@@ -179,6 +180,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         config.activation.active_window_ms
     );
 
+    // 音声フィードバックの初期化
+    let audio_feedback = if config.audio_feedback.enabled {
+        tracing::info!("Audio feedback enabled");
+        tracing::info!("  On sound: {}", config.audio_feedback.on_sound);
+        tracing::info!("  Off sound: {}", config.audio_feedback.off_sound);
+        Some(WindowsAudioFeedback::new(config.audio_feedback.clone()))
+    } else {
+        tracing::info!("Audio feedback disabled");
+        None
+    };
+
     // パイプラインの起動（ブロッキング）
     let runner = PipelineRunner::new(
         capture,
@@ -191,6 +203,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         hsv_range,
         coordinate_transform,
         activation_conditions,
+        audio_feedback,
     );
     runner.run()?;
 

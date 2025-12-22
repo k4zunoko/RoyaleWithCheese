@@ -7,6 +7,7 @@ pub mod color_process;
 pub mod hid_comm;
 pub mod process_selector;
 pub mod input;
+pub mod audio_feedback;
 
 // デバッグ表示モジュール（opencv-debug-display feature有効時のみ）
 #[cfg(feature = "opencv-debug-display")]

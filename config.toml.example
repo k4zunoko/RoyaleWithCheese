@@ -104,3 +104,16 @@ max_distance_from_center = 5.0
 # アクティブウィンドウの持続時間（ミリ秒）
 # 最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する
 active_window_ms = 500
+
+[audio_feedback]
+# Insertキー押下時の音声フィードバックを有効にする
+enabled = true
+
+# 有効化時の音声ファイルパス（Windowsシステム音を使用）
+on_sound = "C:\\Windows\\Media\\Speech On.wav"
+
+# 無効化時の音声ファイルパス
+off_sound = "C:\\Windows\\Media\\Speech Off.wav"
+
+# 音声ファイルが見つからない場合は静かに失敗する（ログのみ）
+fallback_to_silent = true

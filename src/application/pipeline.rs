@@ -86,6 +86,7 @@ where
     stats: StatsCollector,
     runtime_state: crate::application::runtime_state::RuntimeState,
     activation_conditions: ActivationConditions,
+    audio_feedback: Option<crate::infrastructure::audio_feedback::WindowsAudioFeedback>,
     
     roi: Roi,
     hsv_range: HsvRange,
@@ -111,6 +112,7 @@ where
         hsv_range: HsvRange,
         coordinate_transform: crate::domain::CoordinateTransformConfig,
         activation_conditions: ActivationConditions,
+        audio_feedback: Option<crate::infrastructure::audio_feedback::WindowsAudioFeedback>,
     ) -> Self {
         Self {
             capture: Arc::new(Mutex::new(capture)),
@@ -120,6 +122,7 @@ where
             stats: StatsCollector::new(config.stats_interval),
             runtime_state: crate::application::runtime_state::RuntimeState::new(),
             activation_conditions,
+            audio_feedback,
             config,
             recovery,
             roi,
@@ -189,6 +192,7 @@ where
             &mut self.recovery,
             &self.runtime_state,
             &*self.input,
+            self.audio_feedback.as_ref(),
         );
 
         // スレッドの終了を待つ

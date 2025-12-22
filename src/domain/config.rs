@@ -27,6 +27,7 @@ pub struct AppConfig {
     pub communication: CommunicationConfig,
     pub pipeline: PipelineConfig,
     pub activation: ActivationConfig,
+    pub audio_feedback: AudioFeedbackConfig,
 }
 
 /// キャプチャ設定
@@ -291,6 +292,30 @@ pub struct PipelineConfig {
     pub stats_interval_sec: u64,
 }
 
+/// 音声フィードバック設定
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioFeedbackConfig {
+    /// 音声フィードバックを有効にするか
+    pub enabled: bool,
+    /// 有効化時の音声ファイルパス
+    pub on_sound: String,
+    /// 無効化時の音声ファイルパス
+    pub off_sound: String,
+    /// 音声ファイルが見つからない場合は静かに失敗する
+    pub fallback_to_silent: bool,
+}
+
+impl Default for AudioFeedbackConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            on_sound: "C:\\Windows\\Media\\Speech On.wav".to_string(),
+            off_sound: "C:\\Windows\\Media\\Speech Off.wav".to_string(),
+            fallback_to_silent: true,
+        }
+    }
+}
+
 impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
@@ -308,6 +333,7 @@ impl Default for AppConfig {
             communication: CommunicationConfig::default(),
             pipeline: PipelineConfig::default(),
             activation: ActivationConfig::default(),
+            audio_feedback: AudioFeedbackConfig::default(),
         }
     }
 }
@@ -400,6 +426,15 @@ mod tests {
         assert_eq!(config.capture.timeout_ms, 8);
         assert_eq!(config.process.mode, "fast-color");
         assert_eq!(config.process.roi.width, 960);
+    }
+
+    #[test]
+    fn test_audio_feedback_config_default() {
+        let config = AudioFeedbackConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.on_sound, "C:\\Windows\\Media\\Speech On.wav");
+        assert_eq!(config.off_sound, "C:\\Windows\\Media\\Speech Off.wav");
+        assert!(config.fallback_to_silent);
     }
 
     #[test]
