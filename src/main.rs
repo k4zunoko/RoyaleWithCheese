@@ -63,13 +63,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         config.capture.timeout_ms, 
         config.capture.monitor_index
     );
-    tracing::info!("Process: mode={}, ROI={}x{} at ({},{})", 
-        config.process.mode,
-        config.process.roi.width,
-        config.process.roi.height,
-        config.process.roi.x,
-        config.process.roi.y
-    );
 
     // DDAキャプチャアダプタの初期化
     tracing::info!("Initializing DDA capture adapter...");
@@ -85,6 +78,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         device_info.height,
         device_info.refresh_rate,
         device_info.name
+    );
+
+    // ROIを画面中心に配置（画面解像度から自動計算）
+    let roi = config.process.roi.to_roi_centered(device_info.width, device_info.height)?;
+    tracing::info!("Process: mode={}, ROI={}x{} centered at ({},{})", 
+        config.process.mode,
+        roi.width,
+        roi.height,
+        roi.x,
+        roi.y
     );
 
     // 処理アダプタの初期化（config.process.modeに基づく）
@@ -136,8 +139,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         hid_send_interval: Duration::from_millis(config.communication.hid_send_interval_ms),
     };
 
-    // ROIとHSVレンジの変換
-    let roi = config.process.roi.into();
+    // HSVレンジと座標変換の設定
     let hsv_range = config.process.hsv_range.into();
     let coordinate_transform = config.process.coordinate_transform.clone();
 

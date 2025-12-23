@@ -32,10 +32,10 @@ min_detection_area = 0
 detection_method = "boundingbox"
 
 [process.roi]
-# ROI（Region of Interest）の設定（ピクセル座標）
-# 1920x1080 の画面中心 960x540 の例
-x = 730
-y = 420
+# ROI（Region of Interest）の設定
+# 画面中心を基準として、指定したサイズの領域をキャプチャします
+# x, y座標は実行時に画面解像度から自動計算されます
+# 注意: width/heightが画面解像度を超える場合は起動時にエラーになります
 width = 460
 height = 240
 

@@ -128,37 +128,66 @@ impl Default for ProcessConfig {
     }
 }
 
-/// ROI設定（ピクセル座標）
+/// ROI設定（サイズのみ、位置は画面中心に自動配置）
+/// 
+/// x, y座標は実行時に画面解像度から自動計算される。
+/// プロジェクトの設計方針として、ROIは常に画面中心に配置される。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoiConfig {
-    pub x: u32,
-    pub y: u32,
     pub width: u32,
     pub height: u32,
 }
 
 impl RoiConfig {
-    /// デフォルトROI: 1920x1080中心の960x540
+    /// デフォルトROI: 1920x1080中心の960x540を想定したサイズ
     pub const DEFAULT_WIDTH: u32 = 960;
     pub const DEFAULT_HEIGHT: u32 = 540;
-    pub const DEFAULT_X: u32 = 480;  // (1920 - 960) / 2
-    pub const DEFAULT_Y: u32 = 270;  // (1080 - 540) / 2
+    
+    /// 画面中心にROIを配置
+    /// 
+    /// # Arguments
+    /// - `screen_width`: 画面幅（ピクセル）
+    /// - `screen_height`: 画面高さ（ピクセル）
+    /// 
+    /// # Returns
+    /// - `Ok(Roi)`: 画面中心に配置されたROI
+    /// - `Err(DomainError)`: ROIサイズが画面サイズを超える場合
+    /// 
+    /// # Example
+    /// ```ignore
+    /// let roi_config = RoiConfig { width: 960, height: 540 };
+    /// let roi = roi_config.to_roi_centered(1920, 1080)?;
+    /// // roi.x = 480, roi.y = 270
+    /// ```
+    pub fn to_roi_centered(&self, screen_width: u32, screen_height: u32) -> DomainResult<Roi> {
+        // width/heightが画面サイズを超える場合はエラー
+        if self.width > screen_width {
+            return Err(DomainError::Configuration(format!(
+                "ROI width {} exceeds screen width {}",
+                self.width, screen_width
+            )));
+        }
+        if self.height > screen_height {
+            return Err(DomainError::Configuration(format!(
+                "ROI height {} exceeds screen height {}",
+                self.height, screen_height
+            )));
+        }
+        
+        // 中心座標を計算
+        let x = (screen_width - self.width) / 2;
+        let y = (screen_height - self.height) / 2;
+        
+        Ok(Roi::new(x, y, self.width, self.height))
+    }
 }
 
 impl Default for RoiConfig {
     fn default() -> Self {
         Self {
-            x: Self::DEFAULT_X,
-            y: Self::DEFAULT_Y,
             width: Self::DEFAULT_WIDTH,
             height: Self::DEFAULT_HEIGHT,
         }
-    }
-}
-
-impl From<RoiConfig> for Roi {
-    fn from(config: RoiConfig) -> Self {
-        Roi::new(config.x, config.y, config.width, config.height)
     }
 }
 
@@ -454,18 +483,69 @@ mod tests {
     }
 
     #[test]
-    fn test_roi_conversion() {
+    fn test_roi_centered_normal() {
+        // 正常系: 1920x1080画面の中心に960x540のROI
         let roi_config = RoiConfig {
-            x: 100,
-            y: 200,
-            width: 300,
-            height: 400,
+            width: 960,
+            height: 540,
         };
-        let roi: Roi = roi_config.into();
-        assert_eq!(roi.x, 100);
-        assert_eq!(roi.y, 200);
-        assert_eq!(roi.width, 300);
-        assert_eq!(roi.height, 400);
+        let roi = roi_config.to_roi_centered(1920, 1080).unwrap();
+        assert_eq!(roi.x, 480);  // (1920 - 960) / 2
+        assert_eq!(roi.y, 270);  // (1080 - 540) / 2
+        assert_eq!(roi.width, 960);
+        assert_eq!(roi.height, 540);
+    }
+
+    #[test]
+    fn test_roi_centered_width_exceeds() {
+        // 異常系: ROI幅が画面幅を超える
+        let roi_config = RoiConfig {
+            width: 2000,
+            height: 540,
+        };
+        let result = roi_config.to_roi_centered(1920, 1080);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), DomainError::Configuration(_)));
+    }
+
+    #[test]
+    fn test_roi_centered_height_exceeds() {
+        // 異常系: ROI高さが画面高さを超える
+        let roi_config = RoiConfig {
+            width: 960,
+            height: 1200,
+        };
+        let result = roi_config.to_roi_centered(1920, 1080);
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), DomainError::Configuration(_)));
+    }
+
+    #[test]
+    fn test_roi_centered_exact_size() {
+        // 境界値: ROIが画面と同じサイズ
+        let roi_config = RoiConfig {
+            width: 1920,
+            height: 1080,
+        };
+        let roi = roi_config.to_roi_centered(1920, 1080).unwrap();
+        assert_eq!(roi.x, 0);
+        assert_eq!(roi.y, 0);
+        assert_eq!(roi.width, 1920);
+        assert_eq!(roi.height, 1080);
+    }
+
+    #[test]
+    fn test_roi_centered_small_screen() {
+        // 異なる解像度: 2560x1440画面
+        let roi_config = RoiConfig {
+            width: 1280,
+            height: 720,
+        };
+        let roi = roi_config.to_roi_centered(2560, 1440).unwrap();
+        assert_eq!(roi.x, 640);   // (2560 - 1280) / 2
+        assert_eq!(roi.y, 360);   // (1440 - 720) / 2
+        assert_eq!(roi.width, 1280);
+        assert_eq!(roi.height, 720);
     }
 
     #[test]
