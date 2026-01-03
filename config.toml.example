@@ -29,7 +29,7 @@ min_detection_area = 0
 # 検出方法（fast-colorモードのみ使用）:
 #   "moments"     - モーメントによる重心計算（デフォルト、高精度）
 #   "boundingbox" - バウンディングボックスの中心（高速）
-detection_method = "boundingbox"
+detection_method = "moments"
 
 [process.roi]
 # ROI（Region of Interest）の設定
