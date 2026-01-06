@@ -11,4 +11,5 @@
 
 ## OBS Studio と Spoutプラグイン
 [OBS Studio 31.1.2](https://github.com/obsproject/obs-studio/releases/tag/31.1.2)
+
 [Spout2 Plugin for OBS](https://github.com/Off-World-Live/obs-spout2-plugin/releases/tag/1.10.0)
