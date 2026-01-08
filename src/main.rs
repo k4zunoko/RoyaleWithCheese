@@ -6,8 +6,10 @@ mod application;
 mod infrastructure;
 
 use crate::domain::config::AppConfig;
+use crate::domain::config::CaptureSource;
 use crate::domain::ports::CapturePort; // traitメソッド使用のため
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
+use crate::infrastructure::capture::spout::SpoutCaptureAdapter;
 use crate::infrastructure::color_process::ColorProcessAdapter;
 use crate::infrastructure::hid_comm::HidCommAdapter;
 use crate::infrastructure::input::WindowsInputAdapter;
@@ -59,21 +61,46 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     config.validate()?;
 
     tracing::info!("Configuration validated successfully");
-    tracing::info!("Capture: timeout={}ms, monitor={}", 
+    tracing::info!("Capture: source={:?}, timeout={}ms, monitor={}", 
+        config.capture.source,
         config.capture.timeout_ms, 
         config.capture.monitor_index
     );
 
-    // DDAキャプチャアダプタの初期化
-    tracing::info!("Initializing DDA capture adapter...");
-    let capture = DdaCaptureAdapter::new(
-        0, // adapter_idx
-        config.capture.monitor_index as usize,
-        config.capture.timeout_ms as u32,
-    )?;
-    
+    // キャプチャアダプタの初期化（設定に基づく選択）
+    tracing::info!("Initializing capture adapter: {:?}", config.capture.source);
+    match config.capture.source {
+        CaptureSource::Dda => {
+            tracing::info!("Using Desktop Duplication API (DDA)");
+            let capture = DdaCaptureAdapter::new(
+                0, // adapter_idx
+                config.capture.monitor_index as usize,
+                config.capture.timeout_ms as u32,
+            )?;
+            run_with_capture(capture, config)
+        }
+        CaptureSource::Spout => {
+            tracing::info!("Using Spout DX11 texture receiver");
+            if let Some(ref sender_name) = config.capture.spout_sender_name {
+                tracing::info!("  Sender name: {}", sender_name);
+            } else {
+                tracing::info!("  Sender name: auto (first active sender)");
+            }
+            let capture = SpoutCaptureAdapter::new(
+                config.capture.spout_sender_name.clone(),
+            )?;
+            run_with_capture(capture, config)
+        }
+    }
+}
+
+/// 共通のパイプライン起動ロジック（ジェネリック版）
+fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
+    capture: C,
+    config: AppConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
     let device_info = capture.device_info();
-    tracing::info!("DDA initialized: {}x{} @ {}Hz - {}",
+    tracing::info!("Capture initialized: {}x{} @ {}Hz - {}",
         device_info.width,
         device_info.height,
         device_info.refresh_rate,
@@ -81,7 +108,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // ROIを画面中心に配置（画面解像度から自動計算）
-    let roi = config.process.roi.to_roi_centered(device_info.width, device_info.height)?;
+    // 注意: Spoutの場合、送信者接続前はwidth/heightが0の可能性がある
+    let roi = if device_info.width > 0 && device_info.height > 0 {
+        config.process.roi.to_roi_centered(device_info.width, device_info.height)?
+    } else {
+        // Spout未接続時は仮のROI（送信者接続時に再計算される）
+        tracing::warn!("Capture device size unknown (width={}, height={}), using default ROI", 
+            device_info.width, device_info.height);
+        config.process.roi.to_roi_centered(1920, 1080)?
+    };
     tracing::info!("Process: mode={}, ROI={}x{} centered at ({},{})", 
         config.process.mode,
         roi.width,
@@ -211,3 +246,4 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+

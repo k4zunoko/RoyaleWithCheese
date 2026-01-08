@@ -18,6 +18,22 @@ pub enum DetectionMethod {
     BoundingBox,
 }
 
+/// キャプチャソース
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaptureSource {
+    /// Desktop Duplication API
+    Dda,
+    /// Spout DX11テクスチャ受信
+    Spout,
+}
+
+impl Default for CaptureSource {
+    fn default() -> Self {
+        CaptureSource::Dda
+    }
+}
+
 /// アプリケーション設定のルート構造
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +49,12 @@ pub struct AppConfig {
 /// キャプチャ設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CaptureConfig {
+    /// キャプチャソース（"dda" または "spout"）
+    #[serde(default)]
+    pub source: CaptureSource,
+    /// Spout送信者名（source = "spout" の場合、Noneで自動選択）
+    #[serde(default)]
+    pub spout_sender_name: Option<String>,
     /// タイムアウト時間（ミリ秒）
     pub timeout_ms: u64,
     /// 連続タイムアウト許容回数
@@ -41,7 +63,7 @@ pub struct CaptureConfig {
     pub reinit_initial_delay_ms: u64,
     /// 再初期化時の最大待機時間（ミリ秒）
     pub reinit_max_delay_ms: u64,
-    /// メインモニタのインデックス（通常0）
+    /// メインモニタのインデックス（通常0、DDAのみ有効）
     pub monitor_index: u32,
 }
 
@@ -59,6 +81,8 @@ impl CaptureConfig {
 impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
+            source: CaptureSource::default(),
+            spout_sender_name: None,
             timeout_ms: Self::DEFAULT_TIMEOUT_MS,
             max_consecutive_timeouts: Self::DEFAULT_MAX_CONSECUTIVE_TIMEOUTS,
             reinit_initial_delay_ms: Self::DEFAULT_REINIT_INITIAL_DELAY_MS,

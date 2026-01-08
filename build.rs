@@ -32,7 +32,18 @@ fn main() {
     // OpenCV DLLファイルをコピー
     copy_opencv_dlls(&opencv_bin_dir, target_dir);
 
+    // Spout DLLをコピー
+    copy_spout_dlls(&manifest_dir, target_dir);
+
+    // Spoutリンカー設定
+    let spout_lib_dir = Path::new(&manifest_dir)
+        .join("third_party")
+        .join("spoutdx-ffi")
+        .join("lib");
+    println!("cargo:rustc-link-search=native={}", spout_lib_dir.display());
+
     println!("cargo:rerun-if-changed=third_party/opencv/build/x64/vc16/bin");
+    println!("cargo:rerun-if-changed=third_party/spoutdx-ffi");
 }
 
 fn copy_opencv_dlls(src_dir: &Path, dst_dir: &Path) {
@@ -81,5 +92,43 @@ fn copy_opencv_dlls(src_dir: &Path, dst_dir: &Path) {
 
     if copied_count > 0 {
         println!("cargo:warning=Copied {} OpenCV DLLs", copied_count);
+    }
+}
+
+fn copy_spout_dlls(manifest_dir: &str, target_dir: &Path) {
+    let spout_bin_dir = Path::new(manifest_dir)
+        .join("third_party")
+        .join("spoutdx-ffi")
+        .join("bin");
+    
+    if !spout_bin_dir.exists() {
+        println!("cargo:warning=Spout DLL directory not found: {}", spout_bin_dir.display());
+        return;
+    }
+    
+    // spoutdx_ffi.dll をコピー
+    let dll_path = spout_bin_dir.join("spoutdx_ffi.dll");
+    if dll_path.exists() {
+        let dst_path = target_dir.join("spoutdx_ffi.dll");
+        
+        // すでに同じサイズのファイルが存在する場合はスキップ
+        if dst_path.exists() {
+            if let (Ok(src_meta), Ok(dst_meta)) = (fs::metadata(&dll_path), fs::metadata(&dst_path)) {
+                if src_meta.len() == dst_meta.len() {
+                    return;
+                }
+            }
+        }
+        
+        match fs::copy(&dll_path, &dst_path) {
+            Ok(_) => {
+                println!("cargo:warning=Copied: spoutdx_ffi.dll -> {}", dst_path.display());
+            }
+            Err(e) => {
+                println!("cargo:warning=Failed to copy Spout DLL: {}", e);
+            }
+        }
+    } else {
+        println!("cargo:warning=spoutdx_ffi.dll not found in {}", spout_bin_dir.display());
     }
 }

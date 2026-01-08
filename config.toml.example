@@ -2,6 +2,16 @@
 # このファイルをコピーして config.toml として使用してください
 
 [capture]
+# キャプチャソース:
+#   "dda"   - Desktop Duplication API（デフォルト、画面全体をキャプチャ）
+#   "spout" - Spout DX11テクスチャ受信（送信側アプリケーションが必要）
+source = "dda"
+
+# Spout送信者名（source = "spout" の場合のみ有効）
+# 空文字列または省略で最初のアクティブ送信者に自動接続
+# 例: spout_sender_name = "MyGame"
+# spout_sender_name = ""
+
 # キャプチャタイムアウト（ミリ秒）
 timeout_ms = 8
 
@@ -14,7 +24,7 @@ reinit_initial_delay_ms = 100
 # 再初期化時の最大待機時間（ミリ秒、指数バックオフの上限）
 reinit_max_delay_ms = 5000
 
-# メインモニタのインデックス（通常は0）
+# メインモニタのインデックス（通常は0、DDAのみ有効）
 monitor_index = 0
 
 [process]

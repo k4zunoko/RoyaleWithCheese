@@ -54,6 +54,7 @@ pub struct PipelineConfig {
     /// 統計出力間隔
     pub stats_interval: Duration,
     /// DirtyRect最適化を有効化（未実装）
+    #[allow(dead_code)]  // 将来の実装用
     pub enable_dirty_rect_optimization: bool,
     /// HID送信間隔（新しい値がない場合も直前の値を送信）
     pub hid_send_interval: Duration,
