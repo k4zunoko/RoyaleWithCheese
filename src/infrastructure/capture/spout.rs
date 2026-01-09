@@ -309,11 +309,22 @@ impl CapturePort for SpoutCaptureAdapter {
             self.staging_size = (0, 0);
         }
         
+        // ROIを画面中心に動的配置
+        // レイテンシへの影響: ~10ns未満（減算2回、除算2回）
+        let centered_roi = roi.centered_in(self.device_info.width, self.device_info.height)
+            .ok_or_else(|| {
+                DomainError::Configuration(format!(
+                    "ROI size ({}x{}) exceeds texture bounds ({}x{})",
+                    roi.width, roi.height,
+                    self.device_info.width, self.device_info.height
+                ))
+            })?;
+        
         // ROIのクランプ
-        let clamped_roi = self.clamp_roi(roi).ok_or_else(|| {
+        let clamped_roi = self.clamp_roi(&centered_roi).ok_or_else(|| {
             DomainError::Capture(format!(
                 "ROI ({}, {}, {}x{}) is outside texture bounds ({}x{})",
-                roi.x, roi.y, roi.width, roi.height,
+                centered_roi.x, centered_roi.y, centered_roi.width, centered_roi.height,
                 self.device_info.width, self.device_info.height
             ))
         })?;

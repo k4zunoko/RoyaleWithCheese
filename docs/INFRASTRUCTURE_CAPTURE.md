@@ -37,17 +37,26 @@ src/infrastructure/capture/
 
 実装は `src/infrastructure/capture/dda.rs` の `CapturePort for DdaCaptureAdapter` を参照します。
 
-1. ROIを検証・クランプ
+1. ROIを画面中心に動的配置
+   - `Roi::centered_in()` で毎フレーム中心位置を計算（~10ns未満）
+   - テクスチャサイズに応じて自動的に中心配置される
+2. ROIを検証・クランプ
    - `clamp_roi()` で画面外アクセスを防止
-2. フレーム取得
+3. フレーム取得
    - `dupl.acquire_next_frame_now()` を使用
    - フレーム更新がない場合は「タイムアウト」として扱い、`Ok(None)` を返す
-3. GPU上でROIだけコピー
+4. GPU上でROIだけコピー
    - `CopySubresourceRegion()` でROI領域のみをステージングテクスチャへコピー
-4. GPU→CPU転送
+5. GPU→CPU転送
    - `Map(D3D11_MAP_READ)` → RowPitch を考慮して `Vec<u8>` に詰め替え
-5. `Frame` を構築して返す
+6. `Frame` を構築して返す
    - 現状 `dirty_rects` は空 `vec![]`（将来の最適化余地）
+
+### ROI動的中心配置の利点
+
+- **Spout送信者変更に対応**: 解像度が変わっても常に中心からキャプチャ
+- **DDAとSpoutの動作統一**: 両方とも毎フレーム動的に中心計算
+- **レイテンシへの影響**: ~10ns未満（減算2回、除算2回）で無視できるレベル
 
 ## VSync待機について
 

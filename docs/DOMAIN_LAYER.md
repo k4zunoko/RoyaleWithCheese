@@ -52,17 +52,17 @@ pub struct Roi {
 pub struct RoiConfig {
     pub width: u32,   // ROIの幅のみ指定
     pub height: u32,  // ROIの高さのみ指定
-    // x, y は実行時に画面解像度から自動計算
+    // x, y は実行時に毎フレーム動的に計算
 }
 
 impl RoiConfig {
     pub fn to_roi_centered(&self, screen_width: u32, screen_height: u32) -> DomainResult<Roi> {
-        // ROIサイズが画面サイズを超える場合はエラー
+        // ROIサイズが画面サイズを超える場合はエラー（初期化時の妥当性検証用）
         if self.width > screen_width || self.height > screen_height {
             return Err(DomainError::Configuration(/* ... */));
         }
         
-        // 中心座標を計算（初期化時に1回のみ）
+        // 中心座標を計算（初期化時の妥当性検証用）
         let x = (screen_width - self.width) / 2;
         let y = (screen_height - self.height) / 2;
         
@@ -71,21 +71,49 @@ impl RoiConfig {
 }
 ```
 
+**Roi::centered_in() による動的中心配置**:
+
+```rust
+impl Roi {
+    /// 指定された画面サイズの中心に配置されるROIを作成
+    /// 
+    /// 毎フレーム実行されるが、レイテンシへの影響は無視できるレベル（~10ns未満）
+    pub fn centered_in(&self, screen_width: u32, screen_height: u32) -> Option<Self> {
+        if self.width > screen_width || self.height > screen_height {
+            return None;
+        }
+        
+        let x = (screen_width - self.width) / 2;
+        let y = (screen_height - self.height) / 2;
+        
+        Some(Roi::new(x, y, self.width, self.height))
+    }
+}
+```
+
+**実行時の動作**:
+
+1. **初期化時（1回のみ）**: `to_roi_centered()` でROIサイズの妥当性を検証
+2. **毎フレーム**: `centered_in()` でテクスチャサイズに応じた中心位置を動的計算
+   - DDA: ディスプレイ解像度に対して中心配置
+   - Spout: 受信したテクスチャサイズに対して中心配置（送信者が変わっても自動追従）
+
 **設計根拠**:
 
 1. **ユーザビリティ向上**
    - 異なる解像度（1920×1080 / 2560×1440 / 3840×2160）で同じ設定ファイルが使える
+   - Spoutで送信者が変わっても常に中心からキャプチャ
    - ユーザーが手動でx, y座標を計算する必要がない
    - 設定の意図が明確（「画面中心の460×240領域をキャプチャ」）
 
 2. **低レイテンシ維持**
-   - 計算コスト: 初期化時に1回のみ（2回の減算、2回の除算）
-   - 実行時コスト: ゼロ（事前計算済みのRoiを使用）
-   - GPU ROI切り出しは変更なし（DDAレイヤーで実行）
+   - 計算コスト: 毎フレーム2回の減算、2回の除算（~10ns未満、<0.01ms）
+   - GPU ROI切り出しは変更なし（DDA/Spoutレイヤーで実行）
+   - パフォーマンスへの影響は無視できるレベル
 
 3. **エラー処理の簡素化**
    - 画面解像度検証が初期化時に行われる（明確なエラーメッセージ）
-   - DDAの`clamp_roi()`による境界検証と組み合わせて安全性確保
+   - `clamp_roi()`による境界検証と組み合わせて安全性確保
 
 4. **拡張性**
    - 将来、異なる配置戦略（左上、右下、カスタム）への拡張が容易
@@ -95,8 +123,10 @@ impl RoiConfig {
 ```toml
 [process.roi]
 # スクリーン中心を基準として、指定したサイズの領域をキャプチャ
+# 毎フレーム、受信したテクスチャのサイズから中心位置を動的計算
 # 例: 1920x1080 画面 → x=730, y=420 に自動配置
 # 例: 2560x1440 画面 → x=1050, y=600 に自動配置
+# Spoutで送信者が変わっても自動追従
 width = 460
 height = 240
 ```

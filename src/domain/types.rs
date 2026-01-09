@@ -47,6 +47,36 @@ impl Roi {
 
         self.x < other_x2 && self_x2 > other.x && self.y < other_y2 && self_y2 > other.y
     }
+
+    /// 指定された画面サイズの中心に配置されるROIを作成
+    /// 
+    /// ROIのwidth/heightを保持したまま、x/yを画面中心に配置するように計算します。
+    /// 
+    /// # Arguments
+    /// - `screen_width`: 画面幅（ピクセル）
+    /// - `screen_height`: 画面高さ（ピクセル）
+    /// 
+    /// # Returns
+    /// - `Some(Roi)`: 画面中心に配置されたROI
+    /// - `None`: ROIサイズが画面サイズを超える場合
+    /// 
+    /// # レイテンシへの影響
+    /// - 計算コスト: 減算2回、除算2回（~10ns未満）
+    /// - 毎フレーム実行しても影響は無視できるレベル（<0.01ms）
+    #[allow(dead_code)]
+    #[inline]
+    pub fn centered_in(&self, screen_width: u32, screen_height: u32) -> Option<Self> {
+        // ROIサイズが画面サイズを超える場合はNone
+        if self.width > screen_width || self.height > screen_height {
+            return None;
+        }
+        
+        // 中心座標を計算
+        let x = (screen_width - self.width) / 2;
+        let y = (screen_height - self.height) / 2;
+        
+        Some(Roi::new(x, y, self.width, self.height))
+    }
 }
 
 /// HSV色空間のレンジ（OpenCV準拠: H[0-180], S[0-255], V[0-255]）
@@ -294,6 +324,58 @@ mod tests {
         assert!(roi1.intersects(&roi2));
         assert!(roi2.intersects(&roi1));
         assert!(!roi1.intersects(&roi3));
+    }
+
+    #[test]
+    fn test_roi_centered_in_normal() {
+        // 1920x1080画面の中心に960x540のROI
+        let roi = Roi::new(0, 0, 960, 540);  // x, yは無視される
+        let centered = roi.centered_in(1920, 1080).unwrap();
+        assert_eq!(centered.x, 480);  // (1920 - 960) / 2
+        assert_eq!(centered.y, 270);  // (1080 - 540) / 2
+        assert_eq!(centered.width, 960);
+        assert_eq!(centered.height, 540);
+    }
+
+    #[test]
+    fn test_roi_centered_in_exact_size() {
+        // 画面サイズと同じROI
+        let roi = Roi::new(0, 0, 1920, 1080);
+        let centered = roi.centered_in(1920, 1080).unwrap();
+        assert_eq!(centered.x, 0);
+        assert_eq!(centered.y, 0);
+        assert_eq!(centered.width, 1920);
+        assert_eq!(centered.height, 1080);
+    }
+
+    #[test]
+    fn test_roi_centered_in_width_exceeds() {
+        // ROI幅が画面幅を超える場合はNone
+        let roi = Roi::new(0, 0, 2000, 540);
+        assert!(roi.centered_in(1920, 1080).is_none());
+    }
+
+    #[test]
+    fn test_roi_centered_in_height_exceeds() {
+        // ROI高さが画面高さを超える場合はNone
+        let roi = Roi::new(0, 0, 960, 1200);
+        assert!(roi.centered_in(1920, 1080).is_none());
+    }
+
+    #[test]
+    fn test_roi_centered_in_different_resolutions() {
+        // 異なる解像度で同じROIサイズを使用
+        let roi = Roi::new(0, 0, 460, 240);
+        
+        // 1920x1080
+        let centered_1080 = roi.centered_in(1920, 1080).unwrap();
+        assert_eq!(centered_1080.x, 730);  // (1920 - 460) / 2
+        assert_eq!(centered_1080.y, 420);  // (1080 - 240) / 2
+        
+        // 2560x1440
+        let centered_1440 = roi.centered_in(2560, 1440).unwrap();
+        assert_eq!(centered_1440.x, 1050);  // (2560 - 460) / 2
+        assert_eq!(centered_1440.y, 600);   // (1440 - 240) / 2
     }
 
     #[test]

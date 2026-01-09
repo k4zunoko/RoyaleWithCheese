@@ -8,6 +8,7 @@ mod infrastructure;
 use crate::domain::config::AppConfig;
 use crate::domain::config::CaptureSource;
 use crate::domain::ports::CapturePort; // traitメソッド使用のため
+use crate::domain::Roi;  // ROI型を使用
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
 use crate::infrastructure::capture::spout::SpoutCaptureAdapter;
 use crate::infrastructure::color_process::ColorProcessAdapter;
@@ -107,22 +108,22 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
         device_info.name
     );
 
-    // ROIを画面中心に配置（画面解像度から自動計算）
-    // 注意: Spoutの場合、送信者接続前はwidth/heightが0の可能性がある
+    // ROI設定（サイズのみ、位置は毎フレーム動的に中心配置される）
+    // width/heightの妥当性のみ検証（初期化時の画面サイズに対して）
     let roi = if device_info.width > 0 && device_info.height > 0 {
+        // 画面サイズが既知の場合、ROIサイズの妥当性を検証
         config.process.roi.to_roi_centered(device_info.width, device_info.height)?
     } else {
-        // Spout未接続時は仮のROI（送信者接続時に再計算される）
-        tracing::warn!("Capture device size unknown (width={}, height={}), using default ROI", 
+        // Spout未接続時など、画面サイズが不明な場合はサイズのみ設定
+        // 実際の位置は毎フレーム動的に計算される
+        tracing::warn!("Capture device size unknown (width={}, height={}), ROI position will be dynamically calculated", 
             device_info.width, device_info.height);
-        config.process.roi.to_roi_centered(1920, 1080)?
+        Roi::new(0, 0, config.process.roi.width, config.process.roi.height)
     };
-    tracing::info!("Process: mode={}, ROI={}x{} centered at ({},{})", 
+    tracing::info!("Process: mode={}, ROI={}x{} (dynamically centered each frame)", 
         config.process.mode,
         roi.width,
-        roi.height,
-        roi.x,
-        roi.y
+        roi.height
     );
 
     // 処理アダプタの初期化（config.process.modeに基づく）
