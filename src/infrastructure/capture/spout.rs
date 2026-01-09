@@ -16,17 +16,16 @@ use windows::core::Interface;
 /// Spoutキャプチャアダプタ
 /// 
 /// CapturePort traitを実装し、Spout送信されたDX11テクスチャを受信します。
+/// USAGE_DLL.mdに従い、内部テクスチャ受信方式（spoutdx_receiver_receive + get_received_texture）を使用。
 pub struct SpoutCaptureAdapter {
     // FFIハンドル（Send/Syncを実装するためのラッパー）
     receiver: SpoutDxReceiverHandle,
     
-    // DirectX 11 デバイス（自前で作成）
+    // DirectX 11 デバイス（自前で作成、アダプタ整合性のため）
+    #[allow(dead_code)]  // SpoutDXのコンテキストを使用するため未使用だが保持が必要
     device: ID3D11Device,
+    #[allow(dead_code)]
     context: ID3D11DeviceContext,
-    
-    // 受信用テクスチャ（送信者のサイズに合わせて再作成）
-    receive_tex: Option<ID3D11Texture2D>,
-    receive_tex_size: (u32, u32),
     
     // ROI切り出し用ステージングテクスチャ
     staging_tex: Option<ID3D11Texture2D>,
@@ -97,8 +96,6 @@ impl SpoutCaptureAdapter {
             receiver,
             device,
             context,
-            receive_tex: None,
-            receive_tex_size: (0, 0),
             staging_tex: None,
             staging_size: (0, 0),
             sender_name,
@@ -138,52 +135,21 @@ impl SpoutCaptureAdapter {
         Ok((device, context))
     }
     
-    /// 受信テクスチャのサイズを更新（送信者変更時）
-    fn update_receive_texture(&mut self, width: u32, height: u32, format: u32) -> DomainResult<()> {
-        if self.receive_tex_size == (width, height) {
-            return Ok(());  // サイズ変更なし
-        }
-        
-        #[cfg(debug_assertions)]
-        tracing::debug!("Updating receive texture: {}x{}, format={}", width, height, format);
-        
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: width,
-            Height: height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: DXGI_FORMAT(format as i32),
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            CPUAccessFlags: 0,
-            MiscFlags: D3D11_RESOURCE_MISC_SHARED.0 as u32,
-        };
-        
-        let mut tex: Option<ID3D11Texture2D> = None;
-        unsafe {
-            self.device.CreateTexture2D(&desc, None, Some(&mut tex))
-                .map_err(|e| DomainError::Capture(
-                    format!("Failed to create receive texture: {:?}", e)
-                ))?;
-        }
-        
-        self.receive_tex = tex;
-        self.receive_tex_size = (width, height);
-        
-        // デバイス情報を更新
-        self.device_info.width = width;
-        self.device_info.height = height;
-        
-        Ok(())
-    }
-    
     /// ステージングテクスチャを確保（ROIサイズ用）
     /// 
     /// # パフォーマンス最適化
     /// - ROIサイズが同じであれば既存のテクスチャを再利用
     /// - サイズ変更時のみ再作成し、GPUリソースの再割り当てを最小化
-    fn ensure_staging_texture(&mut self, width: u32, height: u32) -> DomainResult<ID3D11Texture2D> {
+    /// 
+    /// # 注意
+    /// USAGE_DLL.mdに従い、送信者のフォーマットに合わせたステージングテクスチャを作成
+    fn ensure_staging_texture(
+        &mut self, 
+        width: u32, 
+        height: u32, 
+        format: DXGI_FORMAT,
+        device: &ID3D11Device,
+    ) -> DomainResult<ID3D11Texture2D> {
         if let Some(ref tex) = self.staging_tex {
             if self.staging_size == (width, height) {
                 return Ok(tex.clone());
@@ -195,7 +161,7 @@ impl SpoutCaptureAdapter {
             Height: height,
             MipLevels: 1,
             ArraySize: 1,
-            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            Format: format,  // 送信者のフォーマットに合わせる
             SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
             Usage: D3D11_USAGE_STAGING,
             BindFlags: D3D11_BIND_FLAG(0).0 as u32,
@@ -205,7 +171,7 @@ impl SpoutCaptureAdapter {
         
         let mut tex: Option<ID3D11Texture2D> = None;
         unsafe {
-            self.device.CreateTexture2D(&desc, None, Some(&mut tex))
+            device.CreateTexture2D(&desc, None, Some(&mut tex))
                 .map_err(|e| DomainError::Capture(
                     format!("Failed to create staging texture: {:?}", e)
                 ))?;
@@ -253,11 +219,58 @@ impl SpoutCaptureAdapter {
 
 impl CapturePort for SpoutCaptureAdapter {
     fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
-        // 新しいフレームがあるかチェック（これが接続を試行する）
+        // 内部テクスチャへ受信（USAGE_DLL.md推奨方式）
+        let result = unsafe { spoutdx_receiver_receive(self.receiver) };
+        
+        if !SpoutDxResult::from_raw(result).is_ok() {
+            let err = SpoutDxResult::from_raw(result);
+            match err {
+                SpoutDxResult::ErrorNotConnected => return Ok(None),
+                SpoutDxResult::ErrorReceiveFailed => return Err(DomainError::DeviceNotAvailable),
+                SpoutDxResult::ErrorNullHandle | SpoutDxResult::ErrorNullDevice => {
+                    return Err(DomainError::ReInitializationRequired)
+                }
+                _ => return Err(DomainError::Capture(format!("Spout receive failed: {:?}", err)))
+            };
+        }
+        
+        // 新しいフレームがあるかチェック
         let is_new = unsafe { spoutdx_receiver_is_frame_new(self.receiver) };
         if is_new == 0 {
             return Ok(None);  // 更新なし
         }
+        
+        // 内部受信テクスチャを取得
+        let received_tex_ptr = unsafe { spoutdx_receiver_get_received_texture(self.receiver) };
+        if received_tex_ptr.is_null() {
+            #[cfg(debug_assertions)]
+            tracing::trace!("No received texture available");
+            return Ok(None);
+        }
+        
+        // ID3D11Texture2Dとして扱う
+        let received_tex: ID3D11Texture2D = unsafe {
+            ID3D11Texture2D::from_raw_borrowed(&received_tex_ptr)
+                .ok_or_else(|| DomainError::Capture("Failed to get received texture".to_string()))?
+                .clone()
+        };
+        
+        // SpoutDX側のD3D11コンテキストを取得（USAGE_DLL.md: 同一コンテキストでコピー）
+        let spout_context_ptr = unsafe { spoutdx_receiver_get_dx11_context(self.receiver) };
+        if spout_context_ptr.is_null() {
+            return Err(DomainError::Capture("Failed to get SpoutDX context".to_string()));
+        }
+        let spout_context: ID3D11DeviceContext = unsafe {
+            ID3D11DeviceContext::from_raw_borrowed(&spout_context_ptr)
+                .ok_or_else(|| DomainError::Capture("Failed to wrap SpoutDX context".to_string()))?
+                .clone()
+        };
+        
+        // テクスチャからデバイスを取得（ステージング作成用）
+        let tex_device: ID3D11Device = unsafe {
+            received_tex.GetDevice()
+                .map_err(|e| DomainError::Capture(format!("Failed to get device from texture: {:?}", e)))?
+        };
         
         // 送信者情報を取得
         let mut sender_info = SpoutDxSenderInfo::default();
@@ -265,120 +278,35 @@ impl CapturePort for SpoutCaptureAdapter {
             spoutdx_receiver_get_sender_info(self.receiver, &mut sender_info) 
         };
         
-        // 初回または送信者変更時: receive_textureを呼ぶことで接続確立
-        // sender_infoが0x0の場合は初回接続を試みる必要がある
-        let is_first_connection = sender_info.width == 0 || sender_info.height == 0;
-        
-        if is_first_connection {
+        if !SpoutDxResult::from_raw(result).is_ok() || sender_info.width == 0 || sender_info.height == 0 {
             #[cfg(debug_assertions)]
-            tracing::debug!("First Spout connection attempt, calling receive_texture...");
-            
-            // ダミーテクスチャを作成して接続を確立
-            if self.receive_tex.is_none() {
-                // デフォルトサイズのテクスチャを作成（接続後に正しいサイズで再作成される）
-                self.update_receive_texture(1920, 1080, 87)?;  // 87 = DXGI_FORMAT_B8G8R8A8_UNORM
-            }
-            
-            let receive_tex = self.receive_tex.as_ref()
-                .ok_or_else(|| DomainError::Capture("Receive texture not initialized".to_string()))?
-                .clone();
-            
-            let tex_ptr = receive_tex.as_raw() as *mut std::ffi::c_void;
-            let result = unsafe { spoutdx_receiver_receive_texture(self.receiver, tex_ptr) };
-            
-            if !SpoutDxResult::from_raw(result).is_ok() {
-                #[cfg(debug_assertions)]
-                tracing::trace!("Spout receive_texture failed (not connected yet): {:?}", SpoutDxResult::from_raw(result));
-                return Ok(None);
-            }
-            
-            // 接続成功後、sender infoを再取得
-            let result = unsafe { 
-                spoutdx_receiver_get_sender_info(self.receiver, &mut sender_info) 
-            };
-            
-            if !SpoutDxResult::from_raw(result).is_ok() {
-                #[cfg(debug_assertions)]
-                tracing::warn!("Failed to get sender info after connection");
-                return Ok(None);
-            }
-            
+            tracing::trace!("Spout sender info not available");
+            return Ok(None);
+        }
+        
+        // 送信者情報が変わったか確認
+        if sender_info.width != self.sender_info.width 
+           || sender_info.height != self.sender_info.height 
+        {
             #[cfg(debug_assertions)]
             tracing::info!(
-                "Spout connected: {} ({}x{})",
+                "Spout sender changed: {} ({}x{}) -> {} ({}x{})",
+                self.sender_info.name_as_string(),
+                self.sender_info.width,
+                self.sender_info.height,
                 sender_info.name_as_string(),
                 sender_info.width,
                 sender_info.height
             );
             
-            // 正しいサイズでテクスチャを再作成
-            self.update_receive_texture(
-                sender_info.width, 
-                sender_info.height, 
-                sender_info.format
-            )?;
-            self.sender_info = sender_info;
+            // デバイス情報を更新
+            self.device_info.width = sender_info.width;
+            self.device_info.height = sender_info.height;
+            self.sender_info = sender_info.clone();
             
-            // ステージングテクスチャもクリア（次回作成）
+            // ステージングテクスチャをクリア（次回作成）
             self.staging_tex = None;
             self.staging_size = (0, 0);
-        } else {
-            // 既存接続: sender infoチェック
-            if !SpoutDxResult::from_raw(result).is_ok() {
-                // 送信者未接続
-                #[cfg(debug_assertions)]
-                tracing::trace!("Spout sender not connected");
-                return Ok(None);
-            }
-            
-            // 送信者のサイズが変わったらテクスチャを再作成
-            if sender_info.width != self.sender_info.width 
-               || sender_info.height != self.sender_info.height 
-            {
-                #[cfg(debug_assertions)]
-                tracing::info!(
-                    "Spout sender changed: {} ({}x{}) -> {} ({}x{})",
-                    self.sender_info.name_as_string(),
-                    self.sender_info.width,
-                    self.sender_info.height,
-                    sender_info.name_as_string(),
-                    sender_info.width,
-                    sender_info.height
-                );
-                
-                self.update_receive_texture(
-                    sender_info.width, 
-                    sender_info.height, 
-                    sender_info.format
-                )?;
-                self.sender_info = sender_info;
-                
-                // ステージングテクスチャもクリア（次回作成）
-                self.staging_tex = None;
-                self.staging_size = (0, 0);
-            }
-        }
-        
-        // テクスチャを受信
-        let receive_tex = self.receive_tex.as_ref()
-            .ok_or_else(|| DomainError::Capture("Receive texture not initialized".to_string()))?
-            .clone();
-        
-        let tex_ptr = receive_tex.as_raw() as *mut std::ffi::c_void;
-        let result = unsafe { spoutdx_receiver_receive_texture(self.receiver, tex_ptr) };
-        
-        if !SpoutDxResult::from_raw(result).is_ok() {
-            let err = SpoutDxResult::from_raw(result);
-            
-            // エラー種別に応じてマッピング
-            return match err {
-                SpoutDxResult::ErrorNotConnected => Ok(None),
-                SpoutDxResult::ErrorReceiveFailed => Err(DomainError::DeviceNotAvailable),
-                SpoutDxResult::ErrorNullHandle | SpoutDxResult::ErrorNullDevice => {
-                    Err(DomainError::ReInitializationRequired)
-                }
-                _ => Err(DomainError::Capture(format!("Failed to receive texture: {:?}", err)))
-            };
         }
         
         // ROIのクランプ
@@ -390,9 +318,17 @@ impl CapturePort for SpoutCaptureAdapter {
             ))
         })?;
         
-        // ステージングテクスチャへROI領域をコピー
-        let staging_tex = self.ensure_staging_texture(clamped_roi.width, clamped_roi.height)?;
+        // ステージングテクスチャを確保（送信者のフォーマットに合わせる）
+        let tex_format = DXGI_FORMAT(sender_info.format as i32);
+        let staging_tex = self.ensure_staging_texture(
+            clamped_roi.width, 
+            clamped_roi.height, 
+            tex_format,
+            &tex_device,
+        )?;
         
+        // SpoutDX側のコンテキストを使ってROI領域をステージングへコピー
+        // USAGE_DLL.md: 受信テクスチャから staging への CopyResource は SpoutDX側のcontextを使う
         unsafe {
             let src_box = D3D11_BOX {
                 left: clamped_roi.x,
@@ -403,10 +339,10 @@ impl CapturePort for SpoutCaptureAdapter {
                 back: 1,
             };
             
-            let src_resource: ID3D11Resource = receive_tex.cast()
+            let src_resource: ID3D11Resource = received_tex.cast()
                 .map_err(|e| DomainError::Capture(format!("Cast error: {:?}", e)))?;
             
-            self.context.CopySubresourceRegion(
+            spout_context.CopySubresourceRegion(
                 &staging_tex,
                 0, 0, 0, 0,
                 &src_resource,
@@ -421,7 +357,7 @@ impl CapturePort for SpoutCaptureAdapter {
         
         unsafe {
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            self.context.Map(
+            spout_context.Map(
                 &staging_tex,
                 0,
                 D3D11_MAP_READ,
@@ -444,7 +380,7 @@ impl CapturePort for SpoutCaptureAdapter {
                 );
             }
             
-            self.context.Unmap(&staging_tex, 0);
+            spout_context.Unmap(&staging_tex, 0);
         }
         
         Ok(Some(Frame {
@@ -489,8 +425,6 @@ impl CapturePort for SpoutCaptureAdapter {
         }
         
         self.receiver = receiver;
-        self.receive_tex = None;
-        self.receive_tex_size = (0, 0);
         self.staging_tex = None;
         self.staging_size = (0, 0);
         

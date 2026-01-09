@@ -38,12 +38,12 @@ fn main() {
     // Spoutリンカー設定
     let spout_lib_dir = Path::new(&manifest_dir)
         .join("third_party")
-        .join("spoutdx-ffi")
+        .join("spoutdx_ffi")
         .join("lib");
     println!("cargo:rustc-link-search=native={}", spout_lib_dir.display());
 
     println!("cargo:rerun-if-changed=third_party/opencv/build/x64/vc16/bin");
-    println!("cargo:rerun-if-changed=third_party/spoutdx-ffi");
+    println!("cargo:rerun-if-changed=third_party/spoutdx_ffi");
 }
 
 fn copy_opencv_dlls(src_dir: &Path, dst_dir: &Path) {
@@ -98,7 +98,7 @@ fn copy_opencv_dlls(src_dir: &Path, dst_dir: &Path) {
 fn copy_spout_dlls(manifest_dir: &str, target_dir: &Path) {
     let spout_bin_dir = Path::new(manifest_dir)
         .join("third_party")
-        .join("spoutdx-ffi")
+        .join("spoutdx_ffi")
         .join("bin");
     
     if !spout_bin_dir.exists() {

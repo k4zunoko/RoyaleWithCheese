@@ -98,11 +98,23 @@ extern "C" {
         sender_name: *const c_char,
     ) -> c_int;
 
-    // テクスチャ受信
+    // テクスチャ受信（外部テクスチャへコピー）
+    #[allow(dead_code)]
     pub fn spoutdx_receiver_receive_texture(
         handle: SpoutDxReceiverHandle,
         dst_texture: *mut c_void,
     ) -> c_int;
+    
+    // 内部テクスチャへの受信（推奨方式）
+    pub fn spoutdx_receiver_receive(handle: SpoutDxReceiverHandle) -> c_int;
+    
+    // 内部受信テクスチャを取得（spoutdx_receiver_receive後に使用）
+    // 戻り値: ID3D11Texture2D* または NULL
+    pub fn spoutdx_receiver_get_received_texture(handle: SpoutDxReceiverHandle) -> *mut c_void;
+    
+    // SpoutDX側のD3D11コンテキストを取得（CopyResource等に使用）
+    // 戻り値: ID3D11DeviceContext* または NULL
+    pub fn spoutdx_receiver_get_dx11_context(handle: SpoutDxReceiverHandle) -> *mut c_void;
     
     #[allow(dead_code)]
     pub fn spoutdx_receiver_release(handle: SpoutDxReceiverHandle) -> c_int;

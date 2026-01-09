@@ -46,9 +46,9 @@ src/infrastructure/capture/
 └── spout_ffi.rs      # FFIバインディング（spoutdx-ffi）
 ```
 
-### FFI API（spoutdx-ffi）
+### FFI API（spoutdx_ffi）
 
-`third_party/spoutdx-ffi` を使用。主要なAPI：
+`third_party/spoutdx_ffi` を使用。主要なAPI：
 
 **ライフサイクル**:
 - `spoutdx_receiver_create()` / `destroy()`
@@ -57,19 +57,24 @@ src/infrastructure/capture/
 - `spoutdx_receiver_open_dx11(handle, ID3D11Device*)`
 - `spoutdx_receiver_set_sender_name(handle, name)` - 送信者指定（NULL=自動）
 
-**受信**:
-- `spoutdx_receiver_receive_texture(handle, ID3D11Texture2D*)`
+**受信（推奨: 内部テクスチャ方式）**:
+- `spoutdx_receiver_receive(handle)` - 内部テクスチャへ受信
+- `spoutdx_receiver_get_received_texture(handle)` - 内部テクスチャ取得（ID3D11Texture2D*）
+- `spoutdx_receiver_get_dx11_context(handle)` - SpoutDX側のD3D11コンテキスト取得
 - `spoutdx_receiver_get_sender_info(handle, SpoutDxSenderInfo*)` - サイズ/フォーマット取得
 - `spoutdx_receiver_is_frame_new(handle)` - 更新チェック
 
+**旧方式（非推奨）**:
+- `spoutdx_receiver_receive_texture(handle, ID3D11Texture2D*)` - 外部テクスチャへ直接受信
+
 ### SpoutCaptureAdapter の責務
 
-1. **D3D11デバイス管理**: 自前でデバイス・コンテキストを作成
-2. **テクスチャ管理**: 
-   - 受信用テクスチャ（送信者サイズに動的対応）
-   - ステージングテクスチャ（ROI切り出し用）
-3. **フレーム受信**: 新しいフレームをポーリング、ROI切り出し
-4. **再初期化**: レシーバー再作成でリカバリ
+1. **D3D11デバイス管理**: 自前でデバイス・コンテキストを作成（アダプタ整合性のため）
+2. **内部テクスチャ受信**: `spoutdx_receiver_receive` → `get_received_texture` で受信
+3. **SpoutDXコンテキスト使用**: ROIコピー時は `spoutdx_receiver_get_dx11_context` で取得したコンテキストを使用
+4. **ステージングテクスチャ管理**: 送信者のフォーマットに合わせたステージングテクスチャ（ROI切り出し用）
+5. **フレーム受信**: 新しいフレームをポーリング、ROI切り出し
+6. **再初期化**: レシーバー再作成でリカバリ
 
 ### 設定例（config.toml）
 
