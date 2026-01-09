@@ -102,6 +102,7 @@ where
     I: InputPort + Send + Sync + 'static,
 {
     /// 新しいPipelineRunnerを作成
+    #[allow(clippy::too_many_arguments)]  // パイプライン初期化には多くのコンポーネントが必要
     pub fn new(
         capture: C,
         process: P,

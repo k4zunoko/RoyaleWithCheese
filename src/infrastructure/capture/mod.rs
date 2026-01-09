@@ -1,10 +1,12 @@
-/// Capture実装: 画面キャプチャの具体実装
+//! Capture実装: 画面キャプチャの具体実装
 
 pub mod dda;
 pub mod spout;
 pub mod spout_ffi;
 
-#[allow(unused_imports)]  // main.rsで使用予定
+// main.rsで直接infrastructure::capture::dda::DdaCaptureAdapterを使用しているため、
+// このre-exportは主に外部APIとしての利便性のため
+#[allow(unused_imports)]
 pub use dda::DdaCaptureAdapter;
-#[allow(unused_imports)]  // main.rsで使用予定
+#[allow(unused_imports)]
 pub use spout::SpoutCaptureAdapter;

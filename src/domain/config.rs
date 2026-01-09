@@ -1,6 +1,6 @@
-/// 設定管理
-/// 
-/// TOML設定ファイルの読み込みとDomain型への変換。
+//! 設定管理
+//!
+//! TOML設定ファイルの読み込みとDomain型への変換。
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -19,24 +19,19 @@ pub enum DetectionMethod {
 }
 
 /// キャプチャソース
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CaptureSource {
     /// Desktop Duplication API
+    #[default]
     Dda,
     /// Spout DX11テクスチャ受信
     Spout,
 }
 
-impl Default for CaptureSource {
-    fn default() -> Self {
-        CaptureSource::Dda
-    }
-}
-
 /// アプリケーション設定のルート構造
 #[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub capture: CaptureConfig,
     pub process: ProcessConfig,
@@ -374,19 +369,6 @@ impl Default for PipelineConfig {
         Self {
             enable_dirty_rect_optimization: true,
             stats_interval_sec: 10,
-        }
-    }
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            capture: CaptureConfig::default(),
-            process: ProcessConfig::default(),
-            communication: CommunicationConfig::default(),
-            pipeline: PipelineConfig::default(),
-            activation: ActivationConfig::default(),
-            audio_feedback: AudioFeedbackConfig::default(),
         }
     }
 }

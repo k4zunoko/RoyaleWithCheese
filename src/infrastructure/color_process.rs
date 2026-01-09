@@ -1,6 +1,6 @@
-/// 色検知処理アダプタ
-/// 
-/// OpenCVを使用したHSV色空間での物体検出実装。
+//! 色検知処理アダプタ
+//!
+//! OpenCVを使用したHSV色空間での物体検出実装。
 
 use crate::domain::{
     config::DetectionMethod, BoundingBox, DetectionResult, DomainError, DomainResult, Frame,

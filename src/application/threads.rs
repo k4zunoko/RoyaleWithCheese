@@ -137,7 +137,7 @@ pub(crate) fn capture_thread<C: CapturePort>(
                 #[cfg(debug_assertions)]
                 {
                     frame_count += 1;
-                    if frame_count % 144 == 0 { // 144フレーム（約1秒@144Hz）に1回ログ出力
+                    if frame_count.is_multiple_of(144) { // 144フレーム（約1秒@144Hz）に1回ログ出力
                         tracing::debug!("Frame captured: {}x{} (count: {})", frame.width, frame.height, frame_count);
                     }
                 }
@@ -175,46 +175,38 @@ pub(crate) fn process_thread<P: ProcessPort>(
     #[cfg(debug_assertions)]
     let mut process_count = 0u64;
     
-    loop {
-        match rx.recv() {
-            Ok(timestamped) => {
-                let result = {
-                    let mut guard = process.lock().unwrap();
-                    guard.process_frame(&timestamped.frame, &roi, &hsv_range)
-                };
+    while let Ok(timestamped) = rx.recv() {
+        let result = {
+            let mut guard = process.lock().unwrap();
+            guard.process_frame(&timestamped.frame, &roi, &hsv_range)
+        };
 
-                match result {
-                    Ok(detection_result) => {
-                        let processed_at = Instant::now();
-                        let detection = TimestampedDetection {
-                            result: detection_result,
-                            captured_at: timestamped.captured_at,
-                            processed_at,
-                        };
-                        
-                        #[cfg(debug_assertions)]
-                        {
-                            process_count += 1;
-                            if process_count % 144 == 0 { // 144フレーム（約1秒@144Hz）に1回ログ出力
-                                let latency = processed_at.duration_since(timestamped.captured_at);
-                                tracing::debug!("Frame processed: detected={}, latency={:?}ms, count={}", 
-                                    detection_result.detected, latency.as_millis(), process_count);
-                            }
-                        }
-                        
-                        send_latest_only(&tx, detection);
-                    }
-                    Err(e) => {
-                        #[cfg(debug_assertions)]
-                        tracing::error!("Process error: {:?}", e);
-                        #[cfg(not(debug_assertions))]
-                        let _ = e;
+        match result {
+            Ok(detection_result) => {
+                let processed_at = Instant::now();
+                let detection = TimestampedDetection {
+                    result: detection_result,
+                    captured_at: timestamped.captured_at,
+                    processed_at,
+                };
+                
+                #[cfg(debug_assertions)]
+                {
+                    process_count += 1;
+                    if process_count.is_multiple_of(144) { // 144フレーム（約1秒@144Hz）に1回ログ出力
+                        let latency = processed_at.duration_since(timestamped.captured_at);
+                        tracing::debug!("Frame processed: detected={}, latency={:?}ms, count={}", 
+                            detection_result.detected, latency.as_millis(), process_count);
                     }
                 }
+                
+                send_latest_only(&tx, detection);
             }
-            Err(_) => {
-                // Channel closed
-                break;
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                tracing::error!("Process error: {:?}", e);
+                #[cfg(not(debug_assertions))]
+                let _ = e;
             }
         }
     }

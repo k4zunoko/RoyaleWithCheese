@@ -9,7 +9,6 @@ use std::time::{Duration, Instant};
 /// DDAキャプチャのタイムアウトやエラー発生時の再初期化ポリシーを定義。
 /// 指数バックオフを使用して、再初期化間隔を段階的に延長します。
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct RecoveryStrategy {
     /// 連続タイムアウト閉値（この回数を超えたら再初期化）
     pub consecutive_timeout_threshold: u32,
@@ -34,7 +33,6 @@ impl Default for RecoveryStrategy {
 
 /// 再初期化状態管理
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct RecoveryState {
     strategy: RecoveryStrategy,
     consecutive_timeouts: u32,
@@ -43,7 +41,6 @@ pub struct RecoveryState {
     total_reinitializations: u64,
 }
 
-#[allow(dead_code)]
 impl RecoveryState {
     /// 新しいRecoveryStateを作成
     ///
@@ -60,6 +57,7 @@ impl RecoveryState {
     }
 
     /// デフォルト戦略でRecoveryStateを作成
+    #[allow(dead_code)]  // テストで使用
     pub fn with_default_strategy() -> Self {
         Self::new(RecoveryStrategy::default())
     }
@@ -68,6 +66,7 @@ impl RecoveryState {
     ///
     /// # Returns
     /// 再初期化が必要な場合は true
+    #[allow(dead_code)]  // Captureリカバリーで将来使用予定
     pub fn record_timeout(&mut self) -> bool {
         self.consecutive_timeouts += 1;
 
@@ -80,6 +79,7 @@ impl RecoveryState {
     }
 
     /// 成功を記録（連続タイムアウトカウンターをリセット）
+    #[allow(dead_code)]  // Captureリカバリーで将来使用予定
     pub fn record_success(&mut self) {
         self.consecutive_timeouts = 0;
         self.current_backoff = self.strategy.initial_backoff;
@@ -87,6 +87,7 @@ impl RecoveryState {
     }
 
     /// 再初期化試行を記録
+    #[allow(dead_code)]  // Captureリカバリーで将来使用予定
     pub fn record_reinitialization_attempt(&mut self) {
         self.total_reinitializations += 1;
 
@@ -100,6 +101,7 @@ impl RecoveryState {
     }
 
     /// 現在のバックオフ時間を取得
+    #[allow(dead_code)]  // Captureリカバリーで将来使用予定
     pub fn current_backoff(&self) -> Duration {
         self.current_backoff
     }
@@ -108,6 +110,7 @@ impl RecoveryState {
     ///
     /// # Returns
     /// 累積失敗時間。失敗していない場合は None
+    #[allow(dead_code)]  // Captureリカバリーで将来使用予定
     pub fn cumulative_failure_duration(&self) -> Option<Duration> {
         self.cumulative_failure_start
             .map(|start| start.elapsed())
@@ -117,6 +120,7 @@ impl RecoveryState {
     ///
     /// # Returns
     /// 上限を超えた場合は true
+    #[allow(dead_code)]  // Captureリカバリーで将来使用予定
     pub fn is_cumulative_failure_exceeded(&self) -> bool {
         if let Some(duration) = self.cumulative_failure_duration() {
             duration >= self.strategy.max_cumulative_failure
@@ -126,11 +130,13 @@ impl RecoveryState {
     }
 
     /// 総再初期化回数を取得
+    #[allow(dead_code)]  // 統計レポートで将来使用予定
     pub fn total_reinitializations(&self) -> u64 {
         self.total_reinitializations
     }
 
     /// 連続タイムアウト回数を取得
+    #[allow(dead_code)]  // テストで使用
     pub fn consecutive_timeouts(&self) -> u32 {
         self.consecutive_timeouts
     }

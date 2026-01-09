@@ -1,7 +1,7 @@
-/// Port定義（Clean Architectureのインターフェース）
-/// 
-/// Domain層が外部実装に依存するための抽象trait。
-/// Infrastructure層がこれらを実装し、Application層がDIで注入する。
+//! Port定義（Clean Architectureのインターフェース）
+//!
+//! Domain層が外部実装に依存するための抽象trait。
+//! Infrastructure層がこれらを実装し、Application層がDIで注入する。
 
 use crate::domain::{
     CoordinateTransformConfig, DetectionResult, DomainResult, Frame, HsvRange,
@@ -9,7 +9,6 @@ use crate::domain::{
 };
 
 /// キャプチャポート: 画面フレームの取得を抽象化
-#[allow(dead_code)]
 pub trait CapturePort: Send + Sync {
     /// ROI指定でフレームをキャプチャする（GPU ROI実装）
     /// 
@@ -32,6 +31,7 @@ pub trait CapturePort: Send + Sync {
     /// - `Ok(Some(Frame))`: フレームの取得成功
     /// - `Ok(None)`: タイムアウト（フレーム更新なし）
     /// - `Err(DomainError)`: 致命的エラー（再初期化が必要）
+    #[allow(dead_code)]  // trait定義として必要だが現在未使用
     fn capture_frame(&mut self) -> DomainResult<Option<Frame>> {
         let info = self.device_info();
         let full_roi = Roi::new(0, 0, info.width, info.height);
@@ -41,6 +41,7 @@ pub trait CapturePort: Send + Sync {
     /// キャプチャセッションを再初期化
     /// 
     /// DDA接続が切断された場合などに呼び出される。
+    #[allow(dead_code)]  // trait定義として必要だが現在未使用
     fn reinitialize(&mut self) -> DomainResult<()>;
 
     /// キャプチャデバイスの情報を取得
@@ -48,7 +49,6 @@ pub trait CapturePort: Send + Sync {
 }
 
 /// デバイス情報
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
     pub width: u32,
@@ -58,7 +58,6 @@ pub struct DeviceInfo {
 }
 
 /// 処理ポート: 画像処理（色検知/YOLO等）を抽象化
-#[allow(dead_code)]
 pub trait ProcessPort: Send + Sync {
     /// フレームを処理して検出結果を返す
     /// 
@@ -78,16 +77,18 @@ pub trait ProcessPort: Send + Sync {
     ) -> DomainResult<DetectionResult>;
 
     /// 処理バックエンドを取得
+    #[allow(dead_code)]  // trait定義として必要だが現在未使用
     fn backend(&self) -> ProcessorBackend;
 
     /// 処理統計を取得（オプション）
+    #[allow(dead_code)]  // trait定義として必要だが現在未使用
     fn stats(&self) -> ProcessStats {
         ProcessStats::default()
     }
 }
 
 /// 処理統計情報
-#[allow(dead_code)]
+#[allow(dead_code)]  // ProcessPort::statsで使用されるが、そのメソッドが未呼び出し
 #[derive(Debug, Clone, Default)]
 pub struct ProcessStats {
     pub total_frames: u64,
@@ -96,7 +97,6 @@ pub struct ProcessStats {
 }
 
 /// 通信ポート: HID送信を抽象化
-#[allow(dead_code)]
 pub trait CommPort: Send + Sync {
     /// 検出結果をデバイスに送信
     /// 
@@ -109,6 +109,7 @@ pub trait CommPort: Send + Sync {
     fn send(&mut self, data: &[u8]) -> DomainResult<()>;
 
     /// デバイスとの接続状態を確認
+    #[allow(dead_code)]  // trait定義として必要だが現在未使用
     fn is_connected(&self) -> bool;
 
     /// デバイスとの接続を再試行
@@ -204,13 +205,13 @@ fn encode_hid_delta(value: f32) -> (u8, u8) {
 /// - 整数演算のみで高速処理
 /// 
 /// # レポート構造（8バイト）
-/// - [0]: ReportID (固定 0x01)
-/// - [1-2]: Reserved (0x00)
-/// - [3-4]: Δx (符号付きバイトペア: [値バイト, 符号バイト], 範囲: -255 ~ 255)
+/// - `[0]`: ReportID (固定 0x01)
+/// - `[1-2]`: Reserved (0x00)
+/// - `[3-4]`: Δx (符号付きバイトペア: `[値バイト, 符号バイト]`, 範囲: -255 ~ 255)
 ///   - 符号バイト: 正=0x00, 負=0xFF, ゼロ=0x00
 ///   - 値バイト: 絶対値（正の場合）または2の補数的値（負の場合）
-/// - [5-6]: Δy (同上)
-/// - [7]: Reserved (0xFF)
+/// - `[5-6]`: Δy (同上)
+/// - `[7]`: Reserved (0xFF)
 /// 
 /// # 注意
 /// このフォーマットは標準的な2の補数表現ではなく、特定のHIDデバイス向けの
@@ -239,11 +240,10 @@ pub fn coordinates_to_hid_report(coords: &TransformedCoordinates) -> Vec<u8> {
 /// 新しいコードでは `apply_coordinate_transform()` + `coordinates_to_hid_report()` を使用してください。
 /// 
 /// # レポート構造（8バイト）
-/// - [0]: ReportID (固定 0x01)
-/// - [3-4]: Center X (u16, ビッグエンディアン)
-/// - [5-6]: Center Y (u16, ビッグエンディアン)
-/// - [7]: Reserved (0xFF)
-
+/// - `[0]`: ReportID (固定 0x01)
+/// - `[3-4]`: Center X (u16, ビッグエンディアン)
+/// - `[5-6]`: Center Y (u16, ビッグエンディアン)
+/// - `[7]`: Reserved (0xFF)
 #[allow(dead_code)]
 pub fn detection_to_hid_report(result: &DetectionResult) -> Vec<u8> {
     let mut report = vec![0u8; 8];

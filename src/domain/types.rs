@@ -1,12 +1,11 @@
-/// コア型定義
-/// 
-/// Domain層の中心となるデータ構造。
-/// すべての処理で共有される不変の型。
+//! コア型定義
+//!
+//! Domain層の中心となるデータ構造。
+//! すべての処理で共有される不変の型。
 
 use std::time::Instant;
 
 /// ピクセル座標で指定されるROI（Region of Interest）
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Roi {
     pub x: u32,
@@ -17,27 +16,25 @@ pub struct Roi {
 
 impl Roi {
     /// 新しいROIを作成
-    #[allow(dead_code)]
     pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
         Self { x, y, width, height }
     }
 
     /// ROIの中心座標を取得
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // テストと将来の使用のため保持
     #[inline]
     pub fn center(&self) -> (u32, u32) {
         (self.x + self.width / 2, self.y + self.height / 2)
     }
 
     /// ROIの面積を取得
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // テストと将来の使用のため保持
     #[inline]
     pub fn area(&self) -> u32 {
         self.width * self.height
     }
 
     /// 指定された矩形との交差判定
-    #[allow(dead_code)]
     #[inline]
     pub fn intersects(&self, other: &Roi) -> bool {
         let self_x2 = self.x + self.width;
@@ -63,7 +60,6 @@ impl Roi {
     /// # レイテンシへの影響
     /// - 計算コスト: 減算2回、除算2回（~10ns未満）
     /// - 毎フレーム実行しても影響は無視できるレベル（<0.01ms）
-    #[allow(dead_code)]
     #[inline]
     pub fn centered_in(&self, screen_width: u32, screen_height: u32) -> Option<Self> {
         // ROIサイズが画面サイズを超える場合はNone
@@ -80,7 +76,6 @@ impl Roi {
 }
 
 /// HSV色空間のレンジ（OpenCV準拠: H[0-180], S[0-255], V[0-255]）
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HsvRange {
     pub h_min: u8,
@@ -93,7 +88,6 @@ pub struct HsvRange {
 
 impl HsvRange {
     /// 新しいHSVレンジを作成
-    #[allow(dead_code)]
     pub fn new(h_min: u8, h_max: u8, s_min: u8, s_max: u8, v_min: u8, v_max: u8) -> Self {
         Self {
             h_min,
@@ -106,14 +100,14 @@ impl HsvRange {
     }
 
     /// OpenCVのScalar形式で下限を取得 [H, S, V]
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // テストと将来の使用のため保持
     #[inline]
     pub fn lower_bound(&self) -> [u8; 3] {
         [self.h_min, self.s_min, self.v_min]
     }
 
     /// OpenCVのScalar形式で上限を取得 [H, S, V]
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // テストと将来の使用のため保持
     #[inline]
     pub fn upper_bound(&self) -> [u8; 3] {
         [self.h_max, self.s_max, self.v_max]
@@ -121,10 +115,10 @@ impl HsvRange {
 }
 
 /// キャプチャされたフレームデータ
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Frame {
     /// フレーム取得時刻
+    #[allow(dead_code)]  // Clone traitで使用されるが直接読み取りは未使用
     pub timestamp: Instant,
     /// フレーム画像データ（BGR形式、連続メモリ）
     pub data: Vec<u8>,
@@ -138,7 +132,7 @@ pub struct Frame {
 
 impl Frame {
     /// 新しいフレームを作成
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // Infrastructure層では直接構造体を作成するため未使用
     pub fn new(data: Vec<u8>, width: u32, height: u32) -> Self {
         Self {
             timestamp: Instant::now(),
@@ -150,14 +144,14 @@ impl Frame {
     }
 
     /// DirtyRectsを設定
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // テストと将来のDirtyRect最適化で使用
     pub fn with_dirty_rects(mut self, rects: Vec<Roi>) -> Self {
         self.dirty_rects = rects;
         self
     }
 
     /// 指定されたROIとDirtyRectsが交差するか判定
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // 将来のDirtyRect最適化で使用予定
     #[inline]
     pub fn roi_is_dirty(&self, roi: &Roi) -> bool {
         if self.dirty_rects.is_empty() {
@@ -172,7 +166,6 @@ impl Frame {
 /// 
 /// BoundingBox検出メソッド使用時に検出対象の矩形情報を保持します。
 /// 座標はROI内の相対座標です。
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoundingBox {
     /// 矩形の左上隅X座標
@@ -187,20 +180,19 @@ pub struct BoundingBox {
 
 impl BoundingBox {
     /// 新しいバウンディングボックスを作成
-    #[allow(dead_code)]
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self { x, y, width, height }
     }
 
     /// 矩形の中心座標を取得
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // テストと将来の使用のため保持
     #[inline]
     pub fn center(&self) -> (f32, f32) {
         (self.x + self.width / 2.0, self.y + self.height / 2.0)
     }
 
     /// 矩形の面積を取得
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // 将来的に使用予定
     #[inline]
     pub fn area(&self) -> f32 {
         self.width * self.height
@@ -208,7 +200,6 @@ impl BoundingBox {
 }
 
 /// 色検知の結果
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DetectionResult {
     /// 検出時刻
@@ -227,7 +218,6 @@ pub struct DetectionResult {
 
 impl DetectionResult {
     /// 検出なしの結果を作成
-    #[allow(dead_code)]
     pub fn none() -> Self {
         Self {
             timestamp: Instant::now(),
@@ -240,7 +230,7 @@ impl DetectionResult {
     }
 
     /// 検出ありの結果を作成
-    #[allow(dead_code)]
+    #[allow(dead_code)]  // テストで使用
     pub fn some(center_x: f32, center_y: f32, coverage: u32) -> Self {
         Self {
             timestamp: Instant::now(),
@@ -253,7 +243,6 @@ impl DetectionResult {
     }
 
     /// 検出ありの結果をバウンディングボックス付きで作成
-    #[allow(dead_code)]
     pub fn with_bounding_box(center_x: f32, center_y: f32, coverage: u32, bbox: BoundingBox) -> Self {
         Self {
             timestamp: Instant::now(),
@@ -270,7 +259,6 @@ impl DetectionResult {
 /// 
 /// ROI中心からの相対座標（Δx, Δy）を表します。
 /// HIDデバイスへの相対移動量として使用されます。
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransformedCoordinates {
     /// ROI中心からの相対X座標（ピクセル、±値）
@@ -283,14 +271,13 @@ pub struct TransformedCoordinates {
 
 impl TransformedCoordinates {
     /// 新しい変換座標を作成
-    #[allow(dead_code)]
     pub fn new(x: f32, y: f32, detected: bool) -> Self {
         Self { x, y, detected }
     }
 }
 
 /// 処理バックエンドの種類
-#[allow(dead_code)]
+#[allow(dead_code)]  // ProcessPort::backendで使用されるが、そのメソッドが未呼び出し
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessorBackend {
     /// CPU処理（OpenCV Mat使用）

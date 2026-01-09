@@ -7,11 +7,12 @@ use std::time::{Duration, Instant};
 
 /// 統計情報の種別
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[allow(dead_code)]
 pub enum StatKind {
     /// キャプチャ処理時間
+    #[allow(dead_code)]  // 将来の計測用
     Capture,
     /// 前処理時間
+    #[allow(dead_code)]  // 将来の計測用
     Preprocess,
     /// 画像処理時間（色検知/YOLO推論）
     Process,
@@ -23,7 +24,6 @@ pub enum StatKind {
 
 /// パーセンタイル統計値
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct PercentileStats {
     pub p50: Duration,
     pub p95: Duration,
@@ -33,7 +33,6 @@ pub struct PercentileStats {
 
 /// 統計情報コレクター
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct StatsCollector {
     /// FPS計測用のフレームタイムスタンプ（最大1秒分保持）
     frame_times: VecDeque<Instant>,
@@ -49,7 +48,6 @@ pub struct StatsCollector {
     report_interval: Duration,
 }
 
-#[allow(dead_code)]
 impl StatsCollector {
     /// 新しいStatsCollectorを作成
     ///
@@ -94,7 +92,7 @@ impl StatsCollector {
     /// * `kind` - 統計種別
     /// * `duration` - 処理時間
     pub fn record_duration(&mut self, kind: StatKind, duration: Duration) {
-        let queue = self.durations.entry(kind).or_insert_with(VecDeque::new);
+        let queue = self.durations.entry(kind).or_default();
         queue.push_back(duration);
 
         // 最大サンプル数を超えたら古いデータを破棄
@@ -104,11 +102,13 @@ impl StatsCollector {
     }
 
     /// 再初期化をカウント
+    #[allow(dead_code)]  // 将来の統計レポート用
     pub fn record_reinitialization(&mut self) {
         self.reinit_count += 1;
     }
 
     /// 累積失敗時間を追加
+    #[allow(dead_code)]  // 将来の統計レポート用
     pub fn add_failure_duration(&mut self, duration: Duration) {
         self.cumulative_failure_duration += duration;
     }

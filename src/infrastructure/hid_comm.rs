@@ -1,7 +1,7 @@
-/// HID通信アダプタ
-/// 
-/// hidapiを使用したHIDデバイスとの通信実装。
-/// 低レイテンシを重視し、非ブロッキング送信を行う。
+//! HID通信アダプタ
+//!
+//! hidapiを使用したHIDデバイスとの通信実装。
+//! 低レイテンシを重視し、非ブロッキング送信を行う。
 
 use crate::domain::{CommPort, DomainError, DomainResult};
 use hidapi::{HidApi, HidDevice};

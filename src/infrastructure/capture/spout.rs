@@ -62,7 +62,7 @@ impl SpoutCaptureAdapter {
         }
         
         // D3D11デバイスをSpoutに渡す
-        let device_ptr = device.as_raw() as *mut std::ffi::c_void;
+        let device_ptr = device.as_raw();
         let result = unsafe { spoutdx_receiver_open_dx11(receiver, device_ptr) };
         if !SpoutDxResult::from_raw(result).is_ok() {
             unsafe { spoutdx_receiver_destroy(receiver); }
@@ -419,7 +419,7 @@ impl CapturePort for SpoutCaptureAdapter {
             return Err(DomainError::ReInitializationRequired);
         }
         
-        let device_ptr = self.device.as_raw() as *mut std::ffi::c_void;
+        let device_ptr = self.device.as_raw();
         let result = unsafe { spoutdx_receiver_open_dx11(receiver, device_ptr) };
         if !SpoutDxResult::from_raw(result).is_ok() {
             unsafe { spoutdx_receiver_destroy(receiver); }

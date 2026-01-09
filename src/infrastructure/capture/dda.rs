@@ -1,7 +1,7 @@
-/// DDA (Desktop Duplication API) キャプチャアダプタ
-/// 
-/// Windows Desktop Duplication APIを使用した低レイテンシ画面キャプチャ。
-/// 144Hzモニタで毎秒144フレーム取得可能。
+//! DDA (Desktop Duplication API) キャプチャアダプタ
+//!
+//! Windows Desktop Duplication APIを使用した低レイテンシ画面キャプチャ。
+//! 144Hzモニタで毎秒144フレーム取得可能。
 
 use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, Roi};
 use std::time::Instant;
@@ -87,8 +87,9 @@ impl DdaCaptureAdapter {
             .map_err(|e| DomainError::Capture(format!("Failed to initialize DDA: {:?}", e)))?;
 
         // カーソル描画を無効化(マウスカーソルを画面キャプチャに含めない)
-        let mut options = DuplicationApiOptions::default();
-        options.skip_cursor = true;
+        let options = DuplicationApiOptions {
+            skip_cursor: true,
+        };
         dupl.configure(options);
 
         // TextureReader初期化(GPU → CPU転送用)
@@ -102,7 +103,7 @@ impl DdaCaptureAdapter {
         let device_info = DeviceInfo {
             width: display_mode.width,
             height: display_mode.height,
-            refresh_rate: (display_mode.refresh_num / display_mode.refresh_den) as u32,
+            refresh_rate: display_mode.refresh_num / display_mode.refresh_den,
             name: format!("Display {} on Adapter {}", output_idx, adapter_idx),
         };
 
@@ -401,8 +402,9 @@ impl CapturePort for DdaCaptureAdapter {
             .map_err(|e| DomainError::Capture(format!("Failed to reinitialize DDA: {:?}", e)))?;
 
         // カーソル描画を無効化(再初期化時も設定を適用)
-        let mut options = DuplicationApiOptions::default();
-        options.skip_cursor = true;
+        let options = DuplicationApiOptions {
+            skip_cursor: true,
+        };
         dupl.configure(options);
 
         let (device, ctx) = dupl.get_device_and_ctx();
@@ -415,7 +417,7 @@ impl CapturePort for DdaCaptureAdapter {
         let device_info = DeviceInfo {
             width: display_mode.width,
             height: display_mode.height,
-            refresh_rate: (display_mode.refresh_num / display_mode.refresh_den) as u32,
+            refresh_rate: display_mode.refresh_num / display_mode.refresh_den,
             name: format!("Display {} on Adapter {}", self.output_idx, self.adapter_idx),
         };
 
