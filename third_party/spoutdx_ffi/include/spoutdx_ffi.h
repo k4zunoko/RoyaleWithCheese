@@ -76,10 +76,23 @@ SPOUTDX_FFI_API int spoutdx_receiver_set_sender_name(
 
 // -- Receive --
 
+// Receive to user-provided texture
 SPOUTDX_FFI_API int spoutdx_receiver_receive_texture(
     SpoutDxReceiverHandle handle,
     void* dst_texture  // ID3D11Texture2D*
 );
+
+// Receive to internal class texture (no copy needed)
+// After this, use spoutdx_receiver_get_received_texture() to get the texture
+SPOUTDX_FFI_API int spoutdx_receiver_receive(SpoutDxReceiverHandle handle);
+
+// Get the internally received texture (valid after spoutdx_receiver_receive)
+// Returns: ID3D11Texture2D* or NULL
+SPOUTDX_FFI_API void* spoutdx_receiver_get_received_texture(SpoutDxReceiverHandle handle);
+
+// Get the D3D11 context used by SpoutDX (for CopyResource, etc.)
+// Returns: ID3D11DeviceContext* or NULL
+SPOUTDX_FFI_API void* spoutdx_receiver_get_dx11_context(SpoutDxReceiverHandle handle);
 
 SPOUTDX_FFI_API int spoutdx_receiver_release(SpoutDxReceiverHandle handle);
 
