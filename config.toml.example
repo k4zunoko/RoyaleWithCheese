@@ -3,8 +3,9 @@
 
 [capture]
 # キャプチャソース:
-#   "dda"   - Desktop Duplication API（デフォルト、画面全体をキャプチャ）
+#   "dda"   - Desktop Duplication API（画面全体をキャプチャ）
 #   "spout" - Spout DX11テクスチャ受信（送信側アプリケーションが必要）
+#   "wgc"   - Windows Graphics Capture（低レイテンシモード、Win10 1803+）
 source = "dda"
 
 # Spout送信者名（source = "spout" の場合のみ有効）

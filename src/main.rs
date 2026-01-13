@@ -11,6 +11,7 @@ use crate::domain::ports::CapturePort; // traitメソッド使用のため
 use crate::domain::Roi;  // ROI型を使用
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
 use crate::infrastructure::capture::spout::SpoutCaptureAdapter;
+use crate::infrastructure::capture::wgc::WgcCaptureAdapter;
 use crate::infrastructure::color_process::ColorProcessAdapter;
 use crate::infrastructure::hid_comm::HidCommAdapter;
 use crate::infrastructure::input::WindowsInputAdapter;
@@ -89,6 +90,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
             let capture = SpoutCaptureAdapter::new(
                 config.capture.spout_sender_name.clone(),
+            )?;
+            run_with_capture(capture, config)
+        }
+        CaptureSource::Wgc => {
+            tracing::info!("Using Windows Graphics Capture (WGC) - Low Latency Mode");
+            let capture = WgcCaptureAdapter::new(
+                config.capture.monitor_index as usize,
             )?;
             run_with_capture(capture, config)
         }

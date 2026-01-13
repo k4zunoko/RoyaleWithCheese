@@ -90,6 +90,7 @@ pub struct WgcCaptureAdapter {
     capture_item: GraphicsCaptureItem,
     frame_pool: Direct3D11CaptureFramePool,
     _d3d_device: IDirect3DDevice,
+    _capture_session: windows::Graphics::Capture::GraphicsCaptureSession,
 }
 
 // WGCオブジェクトはスレッド安全に使用するためSend + Syncを実装
@@ -219,13 +220,13 @@ impl WgcCaptureAdapter {
             })?;
 
         // キャプチャセッション開始
-        let _session = frame_pool
+        let capture_session = frame_pool
             .CreateCaptureSession(&capture_item)
             .map_err(|e| {
                 DomainError::Initialization(format!("Failed to create capture session: {:?}", e))
             })?;
         
-        _session
+        capture_session
             .StartCapture()
             .map_err(|e| {
                 DomainError::Initialization(format!("Failed to start capture: {:?}", e))
@@ -249,6 +250,7 @@ impl WgcCaptureAdapter {
             capture_item,
             frame_pool,
             _d3d_device: d3d_device,
+            _capture_session: capture_session,
         })
     }
 

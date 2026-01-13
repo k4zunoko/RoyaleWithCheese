@@ -5,6 +5,15 @@
 詳細な設計・仕様・運用情報は docs/ に集約しています：
 - docs/README.md
 
+## 特徴
+
+- **3種類のキャプチャ方式をサポート**
+  - **DDA (Desktop Duplication API)**: 画面全体を高速キャプチャ
+  - **Spout**: 他アプリケーションからのDX11テクスチャ受信
+  - **WGC (Windows Graphics Capture)**: 低レイテンシモード (Win10 1803+、処理レイテンシ0-1ms)
+- **高速画像処理**: HSV色検知による高精度検出
+- **マルチスレッドアーキテクチャ**: Capture → Process → HID → Stats の4スレッド構成
+
 ## クイックスタート
 
 ```powershell

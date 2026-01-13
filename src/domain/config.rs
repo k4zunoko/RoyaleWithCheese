@@ -27,6 +27,8 @@ pub enum CaptureSource {
     Dda,
     /// Spout DX11テクスチャ受信
     Spout,
+    /// Windows Graphics Capture (低レイテンシ、Win10 1803+)
+    Wgc,
 }
 
 /// アプリケーション設定のルート構造
