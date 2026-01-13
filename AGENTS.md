@@ -21,6 +21,8 @@ Windows環境で、画面キャプチャ → 画像処理 → HID出力を低レ
 | docs/DOMAIN_LAYER.md | Domain層の詳細仕様 |
 | docs/APPLICATION_LAYER.md | Application層の詳細仕様 |
 | docs/INFRASTRUCTURE_CAPTURE.md | DDAキャプチャ実装の詳細 |
+| docs/INFRASTRUCTURE_SPOUT.md | Spoutテクスチャ受信の詳細 |
+| docs/INFRASTRUCTURE_WGC.md | WGCキャプチャ設計方針（計画中） |
 | docs/ERROR_HANDLING.md | エラーハンドリング戦略 |
 | docs/TESTING_STRATEGY.md | テスト戦略 |
 | docs/LOGGING.md | ログ実装の詳細 |
