@@ -42,6 +42,15 @@ windows = { version = "0.57", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Media_Audio",
     "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    # WGC (Windows Graphics Capture) 用
+    "Graphics_Capture",
+    "Graphics_DirectX",
+    "Graphics_DirectX_Direct3D11",
+    "Foundation_Collections",
+    "Win32_System_WinRT_Direct3D11",
+    "Win32_Graphics_Gdi",
+    "Win32_System_WinRT",
 ] }
 
 [profile.release]

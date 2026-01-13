@@ -158,16 +158,24 @@ pub enum CaptureSource {
 
 ## 未決定事項・検討ポイント
 
-### 1. クレート選定（優先度: 高）
+### 1. クレート選定（決定済み）
 
 **問題**: `windows-capture` vs `windows` crate 直接使用
 
-| 選択肢 | メリット | デメリット |
-|--------|----------|------------|
-| `windows-capture` | 実装が簡潔、コールバック処理済み | 外部依存追加、カスタマイズ制限 |
-| `windows` crate 直接 | 細かい制御、依存最小 | 実装量増加、WinRT扱いの複雑さ |
+**決定**: `windows` crate v0.57 を直接使用
 
-**決定方針**: Phase 1 で `windows-capture` を試し、問題があれば直接実装に切り替え
+**根拠** (Phase 1検証結果):
+- `windows-capture` v1.5 は `windows` v0.61 に依存
+- 既存プロジェクトは `windows` v0.57 を使用（`win_desktop_duplication` の要求）
+- バージョン不整合によりコンパイル不可
+- 直接実装により、細かい制御と最適化が可能
+- 既存コード（DDA/Spout）への影響なし
+
+**実装アプローチ**:
+- `Graphics.Capture.GraphicsCaptureItem` でモニター選択
+- `Graphics.Capture.Direct3D11CaptureFramePool` でフレームプール作成
+- `FrameArrived` イベントハンドラでフレーム取得
+- Arc<Mutex> パターンで最新フレームを保持
 
 ### 2. フレーム取得方式（優先度: 高）
 
@@ -202,28 +210,33 @@ pub enum CaptureSource {
 
 **決定方針**: Phase 2 で比較ベンチマークを実施
 
-### 5. Feature Flag（優先度: 低）
+### 5. Feature Flag（決定済み）
 
 **問題**: WGCサポートをオプションにするか？
 
 - `windows-capture` は追加の依存（Windows API）を持つ
 - DDAのみでほとんどのユースケースをカバー
 
-**オプション**:
-- (A) デフォルトで含める（シンプル）
-- (B) `wgc-capture` feature flagで制御
-- (C) 別バイナリとして提供
+**決定**: (A) デフォルトで含める（DDA/Spoutと同様）
 
-**暫定決定**: (A) デフォルトで含める（DDA/Spoutと同様）
+**根拠**:
+- ユーザーは `config.toml` の `capture.source` で切り替え可能
+- 実装・ドキュメント管理がシンプル
+- DDA/Spoutと設計整合性が取れる
 
-### 6. 最小Windowsバージョン（優先度: 低）
+### 6. 最小Windowsバージョン（決定済み）
 
 **問題**: Windows 10 1803以降が必要
 
 - 現在のプロジェクトは最小バージョンを明示していない
 - WGC追加で実質 Win10 1803+ が必要に
 
-**決定方針**: ドキュメントに明記（REQUIREMENTS.md更新）
+**決定**: REQUIREMENTS.md に最小バージョンを明記
+
+**根拠**:
+- WGCはWin10 1803+でのみ動作
+- DDAはWin8+、Spoutも幅広く動作
+- 実用上、Win10 1803+ は十分に普及している
 
 ## 実装フェーズ
 
@@ -323,3 +336,48 @@ pub enum CaptureSource {
 | 日付 | 内容 |
 |------|------|
 | 2026-01-13 | 初版作成（設計方針、実装計画、未決定事項の洗い出し） |
+| 2026-01-13 | 未決定事項5,6を決定、Phase 1開始（プロトタイプ実装完了、ビルド検証は保留） |
+| 2026-01-13 | Phase 1完了：windows-captureバージョン不整合により直接実装に切り替え決定 |
+
+---
+
+## Phase 1 進捗状況
+
+**ステータス**: ✅ 完了
+
+### 完了項目
+- ✅ `windows-capture` クレートの評価
+- ✅ バージョン不整合の発覚
+- ✅ 直接実装への切り替え決定
+- ✅ フレーム取得方式の設計（Arc<Mutex> パターン）
+- ✅ Phase 1技術検証レポート完成
+
+### 主要な判断
+**問題**: `windows-capture` (windows 0.61) と `win_desktop_duplication` (windows 0.57) のバージョン不整合
+
+**決定**: `windows` crate v0.57 を直接使用してWGCを実装
+
+**影響**:
+- 実装量が増加（許容範囲内）
+- 既存コード（DDA/Spout）への影響なし
+- より細かい制御と最適化が可能
+
+### 次のステップ
+
+**Phase 2**: 基本実装（進行中）
+
+**完了済み (Task 1: GraphicsCaptureItem作成)**:
+- ✅ windows features 追加（Graphics_Capture等8個のfeature）
+- ✅ `IGraphicsCaptureItemInterop` COMインターフェース定義
+- ✅ モニター列挙 (`enumerate_monitors`)
+- ✅ GraphicsCaptureItem作成 (`create_capture_item_for_monitor`)
+- ✅ D3D11デバイス作成 (`create_d3d11_device`)
+- ✅ ビルド成功確認
+
+**次のタスク (Task 2-6)**:
+- Task 2: Direct3D11CaptureFramePool作成
+- Task 3: FrameArrivedイベントハンドリング
+- Task 4-6: capture_frame_with_roi完全実装、エラーマッピング、動作検証
+
+詳細は [WGC_PHASE1_REPORT.md](WGC_PHASE1_REPORT.md) を参照。
+

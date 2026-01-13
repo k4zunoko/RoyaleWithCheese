@@ -8,9 +8,9 @@ Windows 上で、画面キャプチャ → 画像処理 → HID送信を **低�
 
 ### 対象
 
-- OS: Windows
+- OS: Windows 10 バージョン 1803 以降（Windows Graphics Capture使用時は必須、DDA/Spoutのみの場合はWindows 8以降）
 - 主なパイプライン: Capture / Process / HID / Stats(UI) の4スレッド構成
-- 画面キャプチャ: DXGI Desktop Duplication API（DDA）
+- 画面キャプチャ: DXGI Desktop Duplication API（DDA）、Windows Graphics Capture（WGC）、Spout DX11テクスチャ受信
 - 画像処理: OpenCV を用いた HSV 色検知（"fast-color"）
 - 通信: HID（hidapi）
 
