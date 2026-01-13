@@ -4,42 +4,40 @@
 //! 144Hzモニタで毎秒144フレーム取得可能。
 
 use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, Roi};
-use std::time::Instant;
-use std::mem;
-use std::ptr;
-use win_desktop_duplication::{
-    devices::AdapterFactory,
-    outputs::Display,
-    set_process_dpi_awareness, co_init,
-    DesktopDuplicationApi,
-    DuplicationApiOptions,
+use crate::infrastructure::capture::common::{
+    clamp_roi, copy_roi_to_staging, copy_texture_to_cpu, StagingTextureManager,
 };
+use std::time::Instant;
+use win_desktop_duplication::{
+    co_init, devices::AdapterFactory, outputs::Display, set_process_dpi_awareness,
+    DesktopDuplicationApi, DuplicationApiOptions,
+};
+use windows::core::Interface;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::*;
-use windows::core::Interface;
 
 // DDApiErrorはpublicではないため、Result型から推論する必要がある
 // エラーハンドリングでは具体的なエラー型を使用せず、Result<T>のパターンマッチで対応
 
 /// DDAキャプチャアダプタ
-/// 
+///
 /// CapturePort traitを実装し、DDAによる画面キャプチャを提供。
 pub struct DdaCaptureAdapter {
     dupl: DesktopDuplicationApi,
     output: Display,
     device_info: DeviceInfo,
-    #[allow(dead_code)]  // 将来的に使用予定
+    #[allow(dead_code)] // 将来的に使用予定
     timeout_ms: u32,
-    
+
     // GPU ROI実装用のD3D11リソース
     // Note: win_desktop_duplicationとwindows crateで同じバージョン(0.57)を使用
+    #[allow(dead_code)] // get_device_and_ctx()で取得するがcontextのみ使用
     device: ID3D11Device4,
     context: ID3D11DeviceContext4,
-    
-    // ステージングテクスチャの再利用（パフォーマンス最適化）
-    staging_tex: Option<ID3D11Texture2D>,
-    staging_size: (u32, u32),
-    
+
+    // ステージングテクスチャ管理（共通モジュール使用）
+    staging_manager: StagingTextureManager,
+
     // 再初期化時に元の設定を保持
     // reinitialize() メソッドで使用されるため、コンパイラの "never read" 警告は誤検知
     #[allow(dead_code)]
@@ -50,16 +48,16 @@ pub struct DdaCaptureAdapter {
 
 impl DdaCaptureAdapter {
     /// 新しいDDAキャプチャアダプタを作成
-    /// 
+    ///
     /// # Arguments
     /// - `adapter_idx`: GPUアダプタのインデックス（通常は0）
     /// - `output_idx`: ディスプレイ出力のインデックス（通常は0）
     /// - `timeout_ms`: キャプチャタイムアウト時間（ミリ秒）
-    /// 
+    ///
     /// # Returns
     /// - `Ok(DdaCaptureAdapter)`: 初期化成功
     /// - `Err(DomainError)`: 初期化失敗
-    /// 
+    ///
     /// # Safety
     /// このメソッドはCOM初期化とDPI設定を行う。
     /// プロセスごとに1回のみ呼び出すべき。
@@ -72,24 +70,18 @@ impl DdaCaptureAdapter {
         // アダプタとディスプレイの取得
         let adapter = AdapterFactory::new()
             .get_adapter_by_idx(adapter_idx as u32)
-            .ok_or_else(|| {
-                DomainError::Capture(format!("Failed to get adapter {}", adapter_idx))
-            })?;
+            .ok_or_else(|| DomainError::Capture(format!("Failed to get adapter {}", adapter_idx)))?;
 
-        let output = adapter
-            .get_display_by_idx(output_idx as u32)
-            .ok_or_else(|| {
-                DomainError::Capture(format!("Failed to get display {}", output_idx))
-            })?;
+        let output = adapter.get_display_by_idx(output_idx as u32).ok_or_else(|| {
+            DomainError::Capture(format!("Failed to get display {}", output_idx))
+        })?;
 
         // DDA API初期化
         let mut dupl = DesktopDuplicationApi::new(adapter.clone(), output.clone())
             .map_err(|e| DomainError::Capture(format!("Failed to initialize DDA: {:?}", e)))?;
 
         // カーソル描画を無効化(マウスカーソルを画面キャプチャに含めない)
-        let options = DuplicationApiOptions {
-            skip_cursor: true,
-        };
+        let options = DuplicationApiOptions { skip_cursor: true };
         dupl.configure(options);
 
         // TextureReader初期化(GPU → CPU転送用)
@@ -114,22 +106,21 @@ impl DdaCaptureAdapter {
             timeout_ms,
             device,
             context: ctx,
-            staging_tex: None,
-            staging_size: (0, 0),
+            staging_manager: StagingTextureManager::new(),
             adapter_idx,
             output_idx,
         })
     }
 
     /// VSync待機
-    /// 
+    ///
     /// 144Hzモニタなら約6.9ms間隔でVSync信号が来る。
-    /// 
+    ///
     /// **注意**: レイテンシ最小化のため、現在は使用していない。
     /// VSync待機は次のVBlankまで必ず待つため、最大1フレーム分の遅延が発生する。
     /// acquire_next_frame_now()のみを使用することで、OSのデスクトップ更新時に
     /// 即座に復帰し、最低レイテンシを実現する。
-    /// 
+    ///
     /// 将来的にフレームレート制御が必要になった場合のために保持。
     #[allow(dead_code)]
     fn wait_for_vsync(&self) -> DomainResult<()> {
@@ -137,87 +128,39 @@ impl DdaCaptureAdapter {
             .wait_for_vsync()
             .map_err(|e| DomainError::Capture(format!("VSync wait failed: {:?}", e)))
     }
-    
-    /// ROIを画面サイズ内にクランプ
-    /// 
-    /// ROIが画面外にはみ出している場合、画面内に収まるように調整。
-    /// ROIが完全に画面外の場合はNoneを返す。
-    fn clamp_roi(&self, roi: &Roi) -> Option<Roi> {
-        let w = self.device_info.width;
-        let h = self.device_info.height;
-        
-        // ROIのサイズが0なら無効
-        if roi.width == 0 || roi.height == 0 {
-            return None;
-        }
-        
-        // ROIが完全に画面外ならNone
-        if roi.x >= w || roi.y >= h {
-            return None;
-        }
-        
-        // 画面内に収まるようにクランプ
-        let clamped_x = roi.x.min(w);
-        let clamped_y = roi.y.min(h);
-        let max_w = w.saturating_sub(clamped_x);
-        let max_h = h.saturating_sub(clamped_y);
-        let clamped_width = roi.width.min(max_w);
-        let clamped_height = roi.height.min(max_h);
-        
-        // クランプ後のサイズが0なら無効
-        if clamped_width == 0 || clamped_height == 0 {
-            return None;
-        }
-        
-        Some(Roi::new(clamped_x, clamped_y, clamped_width, clamped_height))
-    }
-    
-    /// ステージングテクスチャを確保または再利用
-    /// 
-    /// # パフォーマンス最適化
-    /// - ROIサイズが同じであれば既存のテクスチャを再利用
-    /// - サイズ変更時のみ再作成し、GPUリソースの再割り当てを最小化
-    fn ensure_staging_texture(&mut self, width: u32, height: u32) -> DomainResult<ID3D11Texture2D> {
-        // サイズが同じで既にテクスチャがあれば再利用
-        if let Some(ref tex) = self.staging_tex {
-            if self.staging_size == (width, height) {
-                return Ok(tex.clone());
+
+    /// フレームを取得（DDA固有処理）
+    ///
+    /// # Returns
+    /// - `Ok(Some(texture))`: フレーム取得成功
+    /// - `Ok(None)`: タイムアウト（フレーム更新なし）
+    /// - `Err(DomainError)`: 致命的エラー
+    fn acquire_frame(
+        &mut self,
+    ) -> DomainResult<Option<win_desktop_duplication::texture::Texture>> {
+        match self.dupl.acquire_next_frame_now() {
+            Ok(tex) => Ok(Some(tex)),
+            Err(e) => {
+                // エラーメッセージから種別を判定
+                let error_msg = format!("{:?}", e);
+
+                if error_msg.contains("Timeout") {
+                    // タイムアウト: フレーム更新なし
+                    Ok(None)
+                } else if error_msg.contains("AccessLost") || error_msg.contains("AccessDenied") {
+                    // Recoverable: 排他的フルスクリーン切替、デスクトップモード変更
+                    // Application層が再初期化の判断を行う
+                    #[cfg(debug_assertions)]
+                    tracing::debug!("DDA Access error: {}", error_msg);
+                    Err(DomainError::DeviceNotAvailable)
+                } else {
+                    // Non-recoverable: インスタンス再作成が必要
+                    #[cfg(debug_assertions)]
+                    tracing::error!("DDA Unexpected error: {}", error_msg);
+                    Err(DomainError::ReInitializationRequired)
+                }
             }
         }
-        
-        // 新しいステージングテクスチャを作成
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: width,
-            Height: height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC {
-                Count: 1,
-                Quality: 0,
-            },
-            Usage: D3D11_USAGE_STAGING,
-            BindFlags: D3D11_BIND_FLAG(0).0 as u32,
-            CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
-            MiscFlags: D3D11_RESOURCE_MISC_FLAG(0).0 as u32,
-        };
-        
-        let mut staging_tex: Option<ID3D11Texture2D> = None;
-        unsafe {
-            self.device
-                .CreateTexture2D(&desc, None, Some(&mut staging_tex))
-                .map_err(|e| DomainError::Capture(format!("Failed to create staging texture: {:?}", e)))?;
-        }
-        
-        let tex = staging_tex.ok_or_else(|| 
-            DomainError::Capture("Staging texture creation returned None".to_string())
-        )?;
-        
-        // キャッシュに保存
-        self.staging_tex = Some(tex.clone());
-        self.staging_size = (width, height);
-        
-        Ok(tex)
     }
 }
 
@@ -225,133 +168,74 @@ impl CapturePort for DdaCaptureAdapter {
     fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
         // ROIを画面中心に動的配置
         // レイテンシへの影響: ~10ns未満（減算2回、除算2回）
-        let centered_roi = roi.centered_in(self.device_info.width, self.device_info.height)
-            .ok_or_else(|| {
-                DomainError::Configuration(format!(
-                    "ROI size ({}x{}) exceeds display bounds ({}x{})",
-                    roi.width, roi.height,
-                    self.device_info.width, self.device_info.height
-                ))
-            })?;
-        
+        let centered_roi =
+            roi.centered_in(self.device_info.width, self.device_info.height)
+                .ok_or_else(|| {
+                    DomainError::Configuration(format!(
+                        "ROI size ({}x{}) exceeds display bounds ({}x{})",
+                        roi.width, roi.height, self.device_info.width, self.device_info.height
+                    ))
+                })?;
+
         // ROI境界検証とクランプ（画面外アクセス防止）
-        let clamped_roi = self.clamp_roi(&centered_roi).ok_or_else(|| {
-            DomainError::Capture(format!(
-                "ROI ({}, {}, {}x{}) is completely outside display bounds ({}x{})",
-                centered_roi.x, centered_roi.y, centered_roi.width, centered_roi.height,
-                self.device_info.width, self.device_info.height
-            ))
-        })?;
-        
-        // VSync待機を削除: acquire_next_frame_now()が最新フレームを即座に返すため、
-        // VSync待機は不要。レイテンシ最小化のため、DDAの更新通知を直接待つ。
-        // self.wait_for_vsync()?; // ← 削除
+        // 共通モジュールの関数を使用
+        let clamped_roi =
+            clamp_roi(&centered_roi, self.device_info.width, self.device_info.height).ok_or_else(
+                || {
+                    DomainError::Capture(format!(
+                        "ROI ({}, {}, {}x{}) is completely outside display bounds ({}x{})",
+                        centered_roi.x,
+                        centered_roi.y,
+                        centered_roi.width,
+                        centered_roi.height,
+                        self.device_info.width,
+                        self.device_info.height
+                    ))
+                },
+            )?;
 
         #[cfg(feature = "performance-timing")]
         let acquire_start = Instant::now();
-        
-        // フレーム取得（即座に取得、ブロッキング）
-        let tex = match self.dupl.acquire_next_frame_now() {
-            Ok(tex) => tex,
-            Err(e) => {
-                // エラーメッセージから種別を判定
-                let error_msg = format!("{:?}", e);
-                
-                if error_msg.contains("Timeout") {
-                    // タイムアウト: フレーム更新なし
-                    return Ok(None);
-                } else if error_msg.contains("AccessLost") || error_msg.contains("AccessDenied") {
-                    // Recoverable: 排他的フルスクリーン切替、デスクトップモード変更
-                    // Application層が再初期化の判断を行う
-                    #[cfg(debug_assertions)]
-                    tracing::debug!("DDA Access error: {}", error_msg);
-                    return Err(DomainError::DeviceNotAvailable);
-                } else {
-                    // Non-recoverable: インスタンス再作成が必要
-                    #[cfg(debug_assertions)]
-                    tracing::error!("DDA Unexpected error: {}", error_msg);
-                    return Err(DomainError::ReInitializationRequired);
-                }
-            }
+
+        // フレーム取得（DDA固有処理）
+        let tex = match self.acquire_frame()? {
+            Some(tex) => tex,
+            None => return Ok(None), // タイムアウト
         };
 
         #[cfg(feature = "performance-timing")]
         let acquire_time = acquire_start.elapsed();
 
-        // ROI領域のデータサイズを計算（BGRA形式）
-        let roi_data_size = (clamped_roi.width * clamped_roi.height * 4) as usize;
-        let mut data = vec![0u8; roi_data_size];
-
-        // ステージングテクスチャを確保または再利用（パフォーマンス最適化）
-        let staging_tex = self.ensure_staging_texture(clamped_roi.width, clamped_roi.height)?;
+        // ステージングテクスチャを確保または再利用（共通モジュール使用）
+        // DDAはBGRA形式固定
+        let staging_tex = self.staging_manager.ensure_texture(
+            &self.device,
+            clamped_roi.width,
+            clamped_roi.height,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+        )?;
 
         #[cfg(feature = "performance-timing")]
         let gpu_copy_start = Instant::now();
 
-        // GPU上でROI領域だけをSTAGINGへコピー
-        unsafe {
-            let src_box = D3D11_BOX {
-                left: clamped_roi.x,
-                top: clamped_roi.y,
-                front: 0,
-                right: clamped_roi.x + clamped_roi.width,
-                bottom: clamped_roi.y + clamped_roi.height,
-                back: 1,
-            };
+        // GPU上でROI領域だけをSTAGINGへコピー（共通モジュール使用）
+        // win_desktop_duplicationのTextureをID3D11Resourceとして取得
+        let src_resource: ID3D11Resource = tex
+            .as_raw_ref()
+            .clone()
+            .cast()
+            .map_err(|e| DomainError::Capture(format!("Failed to cast texture to resource: {:?}", e)))?;
 
-            // win_desktop_duplicationのTextureをID3D11Resourceとして取得
-            // ID3D11Texture2DはID3D11Resourceを継承しているため、cast()で型安全にキャスト
-            // transmute()は未定義動作の可能性があるため使用しない
-            let src_resource: ID3D11Resource = tex.as_raw_ref().clone().cast()
-                .map_err(|e| DomainError::Capture(format!("Failed to cast texture to resource: {:?}", e)))?;
-
-            self.context.CopySubresourceRegion(
-                &staging_tex,
-                0,
-                0,
-                0,
-                0,
-                &src_resource,
-                0,
-                Some(&src_box),
-            );
-        }
+        copy_roi_to_staging(&self.context, &src_resource, &staging_tex, &clamped_roi);
 
         #[cfg(feature = "performance-timing")]
         let gpu_copy_time = gpu_copy_start.elapsed();
         #[cfg(feature = "performance-timing")]
         let cpu_transfer_start = Instant::now();
 
-        // STAGINGテクスチャをMapしてCPUアクセス
-        unsafe {
-            let mut mapped: D3D11_MAPPED_SUBRESOURCE = mem::zeroed();
-            self.context
-                .Map(
-                    &staging_tex,
-                    0,
-                    D3D11_MAP_READ,
-                    0,
-                    Some(&mut mapped),
-                )
-                .map_err(|e| DomainError::Capture(format!("Failed to map staging texture: {:?}", e)))?;
-
-            // RowPitchを考慮してデータをコピー
-            let row_pitch = mapped.RowPitch as usize;
-            let row_size = (clamped_roi.width * 4) as usize;
-            
-            for y in 0..clamped_roi.height as usize {
-                let src_offset = y * row_pitch;
-                let dst_offset = y * row_size;
-                
-                ptr::copy_nonoverlapping(
-                    (mapped.pData as *const u8).add(src_offset),
-                    data.as_mut_ptr().add(dst_offset),
-                    row_size,
-                );
-            }
-
-            self.context.Unmap(&staging_tex, 0);
-        }
+        // GPU→CPU転送（共通モジュール使用）
+        let data =
+            copy_texture_to_cpu(&self.context, &staging_tex, clamped_roi.width, clamped_roi.height)?;
 
         #[cfg(feature = "performance-timing")]
         let cpu_transfer_time = cpu_transfer_start.elapsed();
@@ -382,37 +266,44 @@ impl CapturePort for DdaCaptureAdapter {
 
     fn reinitialize(&mut self) -> DomainResult<()> {
         #[cfg(debug_assertions)]
-        tracing::info!("Reinitializing DDA capture adapter (adapter: {}, output: {})", 
-            self.adapter_idx, self.output_idx);
+        tracing::info!(
+            "Reinitializing DDA capture adapter (adapter: {}, output: {})",
+            self.adapter_idx,
+            self.output_idx
+        );
 
         // 元のadapter_idx/output_idxを使用してインスタンスを再作成
         let adapter = AdapterFactory::new()
             .get_adapter_by_idx(self.adapter_idx as u32)
-            .ok_or_else(|| DomainError::Capture(
-                format!("Failed to get adapter {} during reinit", self.adapter_idx)
-            ))?;
+            .ok_or_else(|| {
+                DomainError::Capture(format!(
+                    "Failed to get adapter {} during reinit",
+                    self.adapter_idx
+                ))
+            })?;
 
         let output = adapter
             .get_display_by_idx(self.output_idx as u32)
-            .ok_or_else(|| DomainError::Capture(
-                format!("Failed to get display {} during reinit", self.output_idx)
-            ))?;
+            .ok_or_else(|| {
+                DomainError::Capture(format!(
+                    "Failed to get display {} during reinit",
+                    self.output_idx
+                ))
+            })?;
 
         let mut dupl = DesktopDuplicationApi::new(adapter, output.clone())
             .map_err(|e| DomainError::Capture(format!("Failed to reinitialize DDA: {:?}", e)))?;
 
         // カーソル描画を無効化(再初期化時も設定を適用)
-        let options = DuplicationApiOptions {
-            skip_cursor: true,
-        };
+        let options = DuplicationApiOptions { skip_cursor: true };
         dupl.configure(options);
 
         let (device, ctx) = dupl.get_device_and_ctx();
 
         // device_infoを再計算（解像度やリフレッシュレートが変わっている可能性）
-        let display_mode = output
-            .get_current_display_mode()
-            .map_err(|e| DomainError::Capture(format!("Failed to get display mode during reinit: {:?}", e)))?;
+        let display_mode = output.get_current_display_mode().map_err(|e| {
+            DomainError::Capture(format!("Failed to get display mode during reinit: {:?}", e))
+        })?;
 
         let device_info = DeviceInfo {
             width: display_mode.width,
@@ -427,14 +318,17 @@ impl CapturePort for DdaCaptureAdapter {
         self.device = device;
         self.context = ctx;
         self.device_info = device_info;
-        
+
         // ステージングテクスチャをクリア（サイズが変わっている可能性があるため）
-        self.staging_tex = None;
-        self.staging_size = (0, 0);
+        self.staging_manager.clear();
 
         #[cfg(debug_assertions)]
-        tracing::info!("DDA reinitialization completed: {}x{}@{}Hz", 
-            self.device_info.width, self.device_info.height, self.device_info.refresh_rate);
+        tracing::info!(
+            "DDA reinitialization completed: {}x{}@{}Hz",
+            self.device_info.width,
+            self.device_info.height,
+            self.device_info.refresh_rate
+        );
 
         Ok(())
     }
@@ -454,9 +348,12 @@ mod tests {
         // 注: DDA APIは同時に1つのインスタンスしか作成できない場合がある
         // 他のテストと同時実行しないこと
         let adapter = DdaCaptureAdapter::new(0, 0, 8);
-        
+
         if adapter.is_err() {
-            println!("DDA initialization failed (expected if another instance exists): {:?}", adapter.err());
+            println!(
+                "DDA initialization failed (expected if another instance exists): {:?}",
+                adapter.err()
+            );
             return; // 他のテストが実行中の場合は失敗を許容
         }
 
@@ -479,7 +376,10 @@ mod tests {
         let mut adapter = match DdaCaptureAdapter::new(0, 0, 8) {
             Ok(a) => a,
             Err(e) => {
-                println!("DDA initialization failed (expected if another instance exists): {:?}", e);
+                println!(
+                    "DDA initialization failed (expected if another instance exists): {:?}",
+                    e
+                );
                 return;
             }
         };
@@ -509,8 +409,8 @@ mod tests {
     #[test]
     #[ignore] // 管理者権限 + GPU必須 + 時間がかかるため通常はスキップ
     fn test_dda_capture_multiple_frames() {
-        let mut adapter = DdaCaptureAdapter::new(0, 0, 8)
-            .expect("DDA initialization failed");
+        let mut adapter =
+            DdaCaptureAdapter::new(0, 0, 8).expect("DDA initialization failed");
 
         let mut frame_count = 0;
         let mut timeout_count = 0;
@@ -541,7 +441,10 @@ mod tests {
 
         // デスクトップ環境では144 FPS、排他的フルスクリーンではエラーが多発
         if error_count == 0 {
-            assert!(frame_count > 0, "Should capture at least one frame in desktop mode");
+            assert!(
+                frame_count > 0,
+                "Should capture at least one frame in desktop mode"
+            );
         } else {
             println!("NOTE: High error count indicates exclusive fullscreen environment");
             println!("Application layer should handle this with recovery logic");
@@ -570,7 +473,10 @@ mod tests {
         // 再初期化（DDA API制限により失敗する可能性が高い）
         let result = adapter.reinitialize();
         if result.is_err() {
-            println!("Reinitialization failed (expected due to DDA API limitation): {:?}", result.err());
+            println!(
+                "Reinitialization failed (expected due to DDA API limitation): {:?}",
+                result.err()
+            );
             return;
         }
 
@@ -585,27 +491,49 @@ mod tests {
         let mut adapter = match DdaCaptureAdapter::new(0, 0, 8) {
             Ok(a) => a,
             Err(e) => {
-                println!("DDA initialization failed (expected if another instance exists): {:?}", e);
+                println!(
+                    "DDA initialization failed (expected if another instance exists): {:?}",
+                    e
+                );
                 return;
             }
         };
 
         let device_info = adapter.device_info();
-        println!("Display resolution: {}x{}", device_info.width, device_info.height);
+        println!(
+            "Display resolution: {}x{}",
+            device_info.width, device_info.height
+        );
 
         // テスト1: 400x300のROI
         let roi_small = Roi::new(100, 100, 400, 300);
-        println!("\nTest 1: Capturing with ROI {}x{} at ({}, {})", roi_small.width, roi_small.height, roi_small.x, roi_small.y);
-        
+        println!(
+            "\nTest 1: Capturing with ROI {}x{} at ({}, {})",
+            roi_small.width, roi_small.height, roi_small.x, roi_small.y
+        );
+
         match adapter.capture_frame_with_roi(&roi_small) {
             Ok(Some(frame)) => {
                 println!("  Frame size: {}x{}", frame.width, frame.height);
                 println!("  Data length: {} bytes", frame.data.len());
-                println!("  Expected: {} bytes", roi_small.width * roi_small.height * 4);
+                println!(
+                    "  Expected: {} bytes",
+                    roi_small.width * roi_small.height * 4
+                );
 
-                assert_eq!(frame.width, roi_small.width, "Frame width should match ROI width");
-                assert_eq!(frame.height, roi_small.height, "Frame height should match ROI height");
-                assert_eq!(frame.data.len(), (roi_small.width * roi_small.height * 4) as usize, "Data size should match ROI size");
+                assert_eq!(
+                    frame.width, roi_small.width,
+                    "Frame width should match ROI width"
+                );
+                assert_eq!(
+                    frame.height, roi_small.height,
+                    "Frame height should match ROI height"
+                );
+                assert_eq!(
+                    frame.data.len(),
+                    (roi_small.width * roi_small.height * 4) as usize,
+                    "Data size should match ROI size"
+                );
             }
             Ok(None) => {
                 println!("  No frame update (timeout)");
@@ -617,22 +545,41 @@ mod tests {
 
         // テスト2: 800x600のROI（設計書での目標サイズ）
         let roi_medium = Roi::new(560, 240, 800, 600);
-        println!("\nTest 2: Capturing with ROI {}x{} at ({}, {}) - Design target size", roi_medium.width, roi_medium.height, roi_medium.x, roi_medium.y);
-        
+        println!(
+            "\nTest 2: Capturing with ROI {}x{} at ({}, {}) - Design target size",
+            roi_medium.width, roi_medium.height, roi_medium.x, roi_medium.y
+        );
+
         match adapter.capture_frame_with_roi(&roi_medium) {
             Ok(Some(frame)) => {
                 println!("  Frame size: {}x{}", frame.width, frame.height);
                 println!("  Data length: {} bytes", frame.data.len());
-                println!("  Expected: {} bytes", roi_medium.width * roi_medium.height * 4);
-                println!("  PCIe transfer reduction: {} -> {} bytes ({:.1}% reduction)",
+                println!(
+                    "  Expected: {} bytes",
+                    roi_medium.width * roi_medium.height * 4
+                );
+                println!(
+                    "  PCIe transfer reduction: {} -> {} bytes ({:.1}% reduction)",
                     device_info.width * device_info.height * 4,
                     frame.data.len(),
-                    (1.0 - frame.data.len() as f64 / (device_info.width * device_info.height * 4) as f64) * 100.0
+                    (1.0 - frame.data.len() as f64
+                        / (device_info.width * device_info.height * 4) as f64)
+                        * 100.0
                 );
 
-                assert_eq!(frame.width, roi_medium.width, "Frame width should match ROI width");
-                assert_eq!(frame.height, roi_medium.height, "Frame height should match ROI height");
-                assert_eq!(frame.data.len(), (roi_medium.width * roi_medium.height * 4) as usize, "Data size should match ROI size");
+                assert_eq!(
+                    frame.width, roi_medium.width,
+                    "Frame width should match ROI width"
+                );
+                assert_eq!(
+                    frame.height, roi_medium.height,
+                    "Frame height should match ROI height"
+                );
+                assert_eq!(
+                    frame.data.len(),
+                    (roi_medium.width * roi_medium.height * 4) as usize,
+                    "Data size should match ROI size"
+                );
             }
             Ok(None) => {
                 println!("  No frame update (timeout)");
@@ -645,16 +592,32 @@ mod tests {
         // テスト3: フルスクリーンROIとcapture_frame()の比較
         let roi_full = Roi::new(0, 0, device_info.width, device_info.height);
         println!("\nTest 3: Full-screen ROI vs capture_frame()");
-        
+
         let frame_with_roi = adapter.capture_frame_with_roi(&roi_full);
         let frame_default = adapter.capture_frame();
 
         match (frame_with_roi, frame_default) {
             (Ok(Some(f1)), Ok(Some(f2))) => {
-                println!("  capture_frame_with_roi: {}x{}, {} bytes", f1.width, f1.height, f1.data.len());
-                println!("  capture_frame: {}x{}, {} bytes", f2.width, f2.height, f2.data.len());
-                assert_eq!(f1.width, f2.width, "Both methods should return same dimensions");
-                assert_eq!(f1.height, f2.height, "Both methods should return same dimensions");
+                println!(
+                    "  capture_frame_with_roi: {}x{}, {} bytes",
+                    f1.width,
+                    f1.height,
+                    f1.data.len()
+                );
+                println!(
+                    "  capture_frame: {}x{}, {} bytes",
+                    f2.width,
+                    f2.height,
+                    f2.data.len()
+                );
+                assert_eq!(
+                    f1.width, f2.width,
+                    "Both methods should return same dimensions"
+                );
+                assert_eq!(
+                    f1.height, f2.height,
+                    "Both methods should return same dimensions"
+                );
             }
             _ => {
                 println!("  One or both captures returned None or error");

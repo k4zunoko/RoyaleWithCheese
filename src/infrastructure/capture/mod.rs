@@ -1,5 +1,9 @@
 //! Capture実装: 画面キャプチャの具体実装
+//!
+//! DDAとSpoutの2つのキャプチャ方式を提供。
+//! 共通処理は`common`モジュールに集約されている。
 
+pub mod common;
 pub mod dda;
 pub mod spout;
 pub mod spout_ffi;
