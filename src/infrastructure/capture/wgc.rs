@@ -35,6 +35,7 @@ unsafe impl Interface for IGraphicsCaptureItemInterop {
 }
 
 impl IGraphicsCaptureItemInterop {
+    #[allow(non_snake_case)]
     pub unsafe fn CreateForMonitor(
         &self,
         monitor: HMONITOR,
@@ -52,6 +53,7 @@ impl IGraphicsCaptureItemInterop {
 }
 
 #[repr(C)]
+#[allow(non_snake_case)]
 pub struct IGraphicsCaptureItemInterop_Vtbl {
     pub base__: windows::core::IUnknown_Vtbl,
     pub CreateForWindow: unsafe extern "system" fn(
@@ -74,7 +76,7 @@ pub struct IGraphicsCaptureItemInterop_Vtbl {
 pub struct WgcCaptureAdapter {
     // デバイス情報
     device_info: DeviceInfo,
-    monitor_index: usize,
+    _monitor_index: usize,
 
     // 最新フレームの保持（コールバックから更新）
     latest_frame: Arc<Mutex<Option<CapturedFrameData>>>,
@@ -86,9 +88,9 @@ pub struct WgcCaptureAdapter {
     // ステージングテクスチャ管理
     staging_manager: StagingTextureManager,
 
-    // WGCセッション
-    capture_item: GraphicsCaptureItem,
-    frame_pool: Direct3D11CaptureFramePool,
+    // WGCセッション（ドロップ防止のため保持）
+    _capture_item: GraphicsCaptureItem,
+    _frame_pool: Direct3D11CaptureFramePool,
     _d3d_device: IDirect3DDevice,
     _capture_session: windows::Graphics::Capture::GraphicsCaptureSession,
 }
@@ -226,6 +228,20 @@ impl WgcCaptureAdapter {
                 DomainError::Initialization(format!("Failed to create capture session: {:?}", e))
             })?;
         
+        // 黄色枠を無効化（レイテンシ重視）
+        capture_session
+            .SetIsBorderRequired(false)
+            .map_err(|e| {
+                DomainError::Initialization(format!("Failed to disable border: {:?}", e))
+            })?;
+        
+        // カーソルキャプチャを無効化
+        capture_session
+            .SetIsCursorCaptureEnabled(false)
+            .map_err(|e| {
+                DomainError::Initialization(format!("Failed to disable cursor capture: {:?}", e))
+            })?;
+        
         capture_session
             .StartCapture()
             .map_err(|e| {
@@ -242,13 +258,13 @@ impl WgcCaptureAdapter {
 
         Ok(Self {
             device_info,
-            monitor_index,
+            _monitor_index: monitor_index,
             latest_frame,
             device,
             context,
             staging_manager: StagingTextureManager::new(),
-            capture_item,
-            frame_pool,
+            _capture_item: capture_item,
+            _frame_pool: frame_pool,
             _d3d_device: d3d_device,
             _capture_session: capture_session,
         })
@@ -274,7 +290,7 @@ impl WgcCaptureAdapter {
                 }
             }
 
-            EnumDisplayMonitors(
+            let _ = EnumDisplayMonitors(
                 HDC(0),
                 None,
                 Some(enum_proc),
@@ -418,44 +434,42 @@ impl CapturePort for WgcCaptureAdapter {
         };
 
         // ROI処理（レイテンシ最小化のため、ステージングテクスチャへ直接コピー）
-        unsafe {
-            // ROIをクランプ
-            let clamped_roi = match clamp_roi(roi, frame_data.width, frame_data.height) {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        // ROIをクランプ
+        let clamped_roi = match clamp_roi(roi, frame_data.width, frame_data.height) {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
-            let staging = self.staging_manager.ensure_texture(
-                &self.device,
-                clamped_roi.width,
-                clamped_roi.height,
-                windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
-            )?;
+        let staging = self.staging_manager.ensure_texture(
+            &self.device,
+            clamped_roi.width,
+            clamped_roi.height,
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+        )?;
 
-            // ROI領域をステージングテクスチャにコピー（最小コピー量）
-            copy_roi_to_staging(
-                &self.context,
-                &frame_data.texture,
-                &staging,
-                &clamped_roi,
-            );
+        // ROI領域をステージングテクスチャにコピー（最小コピー量）
+        copy_roi_to_staging(
+            &self.context,
+            &frame_data.texture,
+            &staging,
+            &clamped_roi,
+        );
 
-            // CPUメモリへコピー
-            let data = copy_texture_to_cpu(
-                &self.context,
-                &staging,
-                clamped_roi.width,
-                clamped_roi.height,
-            )?;
+        // CPUメモリへコピー
+        let data = copy_texture_to_cpu(
+            &self.context,
+            &staging,
+            clamped_roi.width,
+            clamped_roi.height,
+        )?;
 
-            Ok(Some(Frame {
-                data,
-                width: clamped_roi.width,
-                height: clamped_roi.height,
-                timestamp: frame_data.timestamp,
-                dirty_rects: vec![],
-            }))
-        }
+        Ok(Some(Frame {
+            data,
+            width: clamped_roi.width,
+            height: clamped_roi.height,
+            timestamp: frame_data.timestamp,
+            dirty_rects: vec![],
+        }))
     }
 
     fn reinitialize(&mut self) -> DomainResult<()> {
