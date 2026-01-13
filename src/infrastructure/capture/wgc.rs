@@ -426,7 +426,7 @@ impl CapturePort for WgcCaptureAdapter {
             
             match &*guard {
                 Some(data) => data.clone(),
-                None => {
+                std::option::Option::None => {
                     // まだフレームが到着していない
                     return Ok(None);
                 }
@@ -437,7 +437,7 @@ impl CapturePort for WgcCaptureAdapter {
         // ROIをクランプ
         let clamped_roi = match clamp_roi(roi, frame_data.width, frame_data.height) {
             Some(r) => r,
-            None => return Ok(None),
+            std::option::Option::None => return Ok(None),
         };
 
         let staging = self.staging_manager.ensure_texture(
