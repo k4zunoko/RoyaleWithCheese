@@ -17,18 +17,23 @@ pub struct Roi {
 impl Roi {
     /// 新しいROIを作成
     pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// ROIの中心座標を取得
-    #[allow(dead_code)]  // テストと将来の使用のため保持
+    #[allow(dead_code)] // テストと将来の使用のため保持
     #[inline]
     pub fn center(&self) -> (u32, u32) {
         (self.x + self.width / 2, self.y + self.height / 2)
     }
 
     /// ROIの面積を取得
-    #[allow(dead_code)]  // テストと将来の使用のため保持
+    #[allow(dead_code)] // テストと将来の使用のため保持
     #[inline]
     pub fn area(&self) -> u32 {
         self.width * self.height
@@ -46,17 +51,17 @@ impl Roi {
     }
 
     /// 指定された画面サイズの中心に配置されるROIを作成
-    /// 
+    ///
     /// ROIのwidth/heightを保持したまま、x/yを画面中心に配置するように計算します。
-    /// 
+    ///
     /// # Arguments
     /// - `screen_width`: 画面幅（ピクセル）
     /// - `screen_height`: 画面高さ（ピクセル）
-    /// 
+    ///
     /// # Returns
     /// - `Some(Roi)`: 画面中心に配置されたROI
     /// - `None`: ROIサイズが画面サイズを超える場合
-    /// 
+    ///
     /// # レイテンシへの影響
     /// - 計算コスト: 減算2回、除算2回（~10ns未満）
     /// - 毎フレーム実行しても影響は無視できるレベル（<0.01ms）
@@ -66,11 +71,11 @@ impl Roi {
         if self.width > screen_width || self.height > screen_height {
             return None;
         }
-        
+
         // 中心座標を計算
         let x = (screen_width - self.width) / 2;
         let y = (screen_height - self.height) / 2;
-        
+
         Some(Roi::new(x, y, self.width, self.height))
     }
 }
@@ -100,14 +105,14 @@ impl HsvRange {
     }
 
     /// OpenCVのScalar形式で下限を取得 [H, S, V]
-    #[allow(dead_code)]  // テストと将来の使用のため保持
+    #[allow(dead_code)] // テストと将来の使用のため保持
     #[inline]
     pub fn lower_bound(&self) -> [u8; 3] {
         [self.h_min, self.s_min, self.v_min]
     }
 
     /// OpenCVのScalar形式で上限を取得 [H, S, V]
-    #[allow(dead_code)]  // テストと将来の使用のため保持
+    #[allow(dead_code)] // テストと将来の使用のため保持
     #[inline]
     pub fn upper_bound(&self) -> [u8; 3] {
         [self.h_max, self.s_max, self.v_max]
@@ -118,7 +123,7 @@ impl HsvRange {
 #[derive(Debug, Clone)]
 pub struct Frame {
     /// フレーム取得時刻
-    #[allow(dead_code)]  // Clone traitで使用されるが直接読み取りは未使用
+    #[allow(dead_code)] // Clone traitで使用されるが直接読み取りは未使用
     pub timestamp: Instant,
     /// フレーム画像データ（BGR形式、連続メモリ）
     pub data: Vec<u8>,
@@ -132,7 +137,7 @@ pub struct Frame {
 
 impl Frame {
     /// 新しいフレームを作成
-    #[allow(dead_code)]  // Infrastructure層では直接構造体を作成するため未使用
+    #[allow(dead_code)] // Infrastructure層では直接構造体を作成するため未使用
     pub fn new(data: Vec<u8>, width: u32, height: u32) -> Self {
         Self {
             timestamp: Instant::now(),
@@ -144,14 +149,14 @@ impl Frame {
     }
 
     /// DirtyRectsを設定
-    #[allow(dead_code)]  // テストと将来のDirtyRect最適化で使用
+    #[allow(dead_code)] // テストと将来のDirtyRect最適化で使用
     pub fn with_dirty_rects(mut self, rects: Vec<Roi>) -> Self {
         self.dirty_rects = rects;
         self
     }
 
     /// 指定されたROIとDirtyRectsが交差するか判定
-    #[allow(dead_code)]  // 将来のDirtyRect最適化で使用予定
+    #[allow(dead_code)] // 将来のDirtyRect最適化で使用予定
     #[inline]
     pub fn roi_is_dirty(&self, roi: &Roi) -> bool {
         if self.dirty_rects.is_empty() {
@@ -163,7 +168,7 @@ impl Frame {
 }
 
 /// バウンディングボックス（外接矩形）
-/// 
+///
 /// BoundingBox検出メソッド使用時に検出対象の矩形情報を保持します。
 /// 座標はROI内の相対座標です。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -181,18 +186,23 @@ pub struct BoundingBox {
 impl BoundingBox {
     /// 新しいバウンディングボックスを作成
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     /// 矩形の中心座標を取得
-    #[allow(dead_code)]  // テストと将来の使用のため保持
+    #[allow(dead_code)] // テストと将来の使用のため保持
     #[inline]
     pub fn center(&self) -> (f32, f32) {
         (self.x + self.width / 2.0, self.y + self.height / 2.0)
     }
 
     /// 矩形の面積を取得
-    #[allow(dead_code)]  // 将来的に使用予定
+    #[allow(dead_code)] // 将来的に使用予定
     #[inline]
     pub fn area(&self) -> f32 {
         self.width * self.height
@@ -230,7 +240,7 @@ impl DetectionResult {
     }
 
     /// 検出ありの結果を作成
-    #[allow(dead_code)]  // テストで使用
+    #[allow(dead_code)] // テストで使用
     pub fn some(center_x: f32, center_y: f32, coverage: u32) -> Self {
         Self {
             timestamp: Instant::now(),
@@ -243,7 +253,12 @@ impl DetectionResult {
     }
 
     /// 検出ありの結果をバウンディングボックス付きで作成
-    pub fn with_bounding_box(center_x: f32, center_y: f32, coverage: u32, bbox: BoundingBox) -> Self {
+    pub fn with_bounding_box(
+        center_x: f32,
+        center_y: f32,
+        coverage: u32,
+        bbox: BoundingBox,
+    ) -> Self {
         Self {
             timestamp: Instant::now(),
             center_x,
@@ -256,7 +271,7 @@ impl DetectionResult {
 }
 
 /// 変換後の座標（感度・クリッピング・デッドゾーン適用済み）
-/// 
+///
 /// ROI中心からの相対座標（Δx, Δy）を表します。
 /// HIDデバイスへの相対移動量として使用されます。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -277,14 +292,12 @@ impl TransformedCoordinates {
 }
 
 /// 処理バックエンドの種類
-#[allow(dead_code)]  // ProcessPort::backendで使用されるが、そのメソッドが未呼び出し
+#[allow(dead_code)] // ProcessPort::backendで使用されるが、そのメソッドが未呼び出し
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessorBackend {
     /// CPU処理（OpenCV Mat使用）
     Cpu,
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -316,10 +329,10 @@ mod tests {
     #[test]
     fn test_roi_centered_in_normal() {
         // 1920x1080画面の中心に960x540のROI
-        let roi = Roi::new(0, 0, 960, 540);  // x, yは無視される
+        let roi = Roi::new(0, 0, 960, 540); // x, yは無視される
         let centered = roi.centered_in(1920, 1080).unwrap();
-        assert_eq!(centered.x, 480);  // (1920 - 960) / 2
-        assert_eq!(centered.y, 270);  // (1080 - 540) / 2
+        assert_eq!(centered.x, 480); // (1920 - 960) / 2
+        assert_eq!(centered.y, 270); // (1080 - 540) / 2
         assert_eq!(centered.width, 960);
         assert_eq!(centered.height, 540);
     }
@@ -353,16 +366,16 @@ mod tests {
     fn test_roi_centered_in_different_resolutions() {
         // 異なる解像度で同じROIサイズを使用
         let roi = Roi::new(0, 0, 460, 240);
-        
+
         // 1920x1080
         let centered_1080 = roi.centered_in(1920, 1080).unwrap();
-        assert_eq!(centered_1080.x, 730);  // (1920 - 460) / 2
-        assert_eq!(centered_1080.y, 420);  // (1080 - 240) / 2
-        
+        assert_eq!(centered_1080.x, 730); // (1920 - 460) / 2
+        assert_eq!(centered_1080.y, 420); // (1080 - 240) / 2
+
         // 2560x1440
         let centered_1440 = roi.centered_in(2560, 1440).unwrap();
-        assert_eq!(centered_1440.x, 1050);  // (2560 - 460) / 2
-        assert_eq!(centered_1440.y, 600);   // (1440 - 240) / 2
+        assert_eq!(centered_1440.x, 1050); // (2560 - 460) / 2
+        assert_eq!(centered_1440.y, 600); // (1440 - 240) / 2
     }
 
     #[test]

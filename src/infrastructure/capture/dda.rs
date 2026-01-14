@@ -70,11 +70,13 @@ impl DdaCaptureAdapter {
         // アダプタとディスプレイの取得
         let adapter = AdapterFactory::new()
             .get_adapter_by_idx(adapter_idx as u32)
-            .ok_or_else(|| DomainError::Capture(format!("Failed to get adapter {}", adapter_idx)))?;
+            .ok_or_else(|| {
+                DomainError::Capture(format!("Failed to get adapter {}", adapter_idx))
+            })?;
 
-        let output = adapter.get_display_by_idx(output_idx as u32).ok_or_else(|| {
-            DomainError::Capture(format!("Failed to get display {}", output_idx))
-        })?;
+        let output = adapter
+            .get_display_by_idx(output_idx as u32)
+            .ok_or_else(|| DomainError::Capture(format!("Failed to get display {}", output_idx)))?;
 
         // DDA API初期化
         let mut dupl = DesktopDuplicationApi::new(adapter.clone(), output.clone())
@@ -135,9 +137,7 @@ impl DdaCaptureAdapter {
     /// - `Ok(Some(texture))`: フレーム取得成功
     /// - `Ok(None)`: タイムアウト（フレーム更新なし）
     /// - `Err(DomainError)`: 致命的エラー
-    fn acquire_frame(
-        &mut self,
-    ) -> DomainResult<Option<win_desktop_duplication::texture::Texture>> {
+    fn acquire_frame(&mut self) -> DomainResult<Option<win_desktop_duplication::texture::Texture>> {
         match self.dupl.acquire_next_frame_now() {
             Ok(tex) => Ok(Some(tex)),
             Err(e) => {
@@ -168,31 +168,33 @@ impl CapturePort for DdaCaptureAdapter {
     fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
         // ROIを画面中心に動的配置
         // レイテンシへの影響: ~10ns未満（減算2回、除算2回）
-        let centered_roi =
-            roi.centered_in(self.device_info.width, self.device_info.height)
-                .ok_or_else(|| {
-                    DomainError::Configuration(format!(
-                        "ROI size ({}x{}) exceeds display bounds ({}x{})",
-                        roi.width, roi.height, self.device_info.width, self.device_info.height
-                    ))
-                })?;
+        let centered_roi = roi
+            .centered_in(self.device_info.width, self.device_info.height)
+            .ok_or_else(|| {
+                DomainError::Configuration(format!(
+                    "ROI size ({}x{}) exceeds display bounds ({}x{})",
+                    roi.width, roi.height, self.device_info.width, self.device_info.height
+                ))
+            })?;
 
         // ROI境界検証とクランプ（画面外アクセス防止）
         // 共通モジュールの関数を使用
-        let clamped_roi =
-            clamp_roi(&centered_roi, self.device_info.width, self.device_info.height).ok_or_else(
-                || {
-                    DomainError::Capture(format!(
-                        "ROI ({}, {}, {}x{}) is completely outside display bounds ({}x{})",
-                        centered_roi.x,
-                        centered_roi.y,
-                        centered_roi.width,
-                        centered_roi.height,
-                        self.device_info.width,
-                        self.device_info.height
-                    ))
-                },
-            )?;
+        let clamped_roi = clamp_roi(
+            &centered_roi,
+            self.device_info.width,
+            self.device_info.height,
+        )
+        .ok_or_else(|| {
+            DomainError::Capture(format!(
+                "ROI ({}, {}, {}x{}) is completely outside display bounds ({}x{})",
+                centered_roi.x,
+                centered_roi.y,
+                centered_roi.width,
+                centered_roi.height,
+                self.device_info.width,
+                self.device_info.height
+            ))
+        })?;
 
         #[cfg(feature = "performance-timing")]
         let acquire_start = Instant::now();
@@ -220,11 +222,9 @@ impl CapturePort for DdaCaptureAdapter {
 
         // GPU上でROI領域だけをSTAGINGへコピー（共通モジュール使用）
         // win_desktop_duplicationのTextureをID3D11Resourceとして取得
-        let src_resource: ID3D11Resource = tex
-            .as_raw_ref()
-            .clone()
-            .cast()
-            .map_err(|e| DomainError::Capture(format!("Failed to cast texture to resource: {:?}", e)))?;
+        let src_resource: ID3D11Resource = tex.as_raw_ref().clone().cast().map_err(|e| {
+            DomainError::Capture(format!("Failed to cast texture to resource: {:?}", e))
+        })?;
 
         copy_roi_to_staging(&self.context, &src_resource, &staging_tex, &clamped_roi);
 
@@ -234,8 +234,12 @@ impl CapturePort for DdaCaptureAdapter {
         let cpu_transfer_start = Instant::now();
 
         // GPU→CPU転送（共通モジュール使用）
-        let data =
-            copy_texture_to_cpu(&self.context, &staging_tex, clamped_roi.width, clamped_roi.height)?;
+        let data = copy_texture_to_cpu(
+            &self.context,
+            &staging_tex,
+            clamped_roi.width,
+            clamped_roi.height,
+        )?;
 
         #[cfg(feature = "performance-timing")]
         let cpu_transfer_time = cpu_transfer_start.elapsed();
@@ -309,7 +313,10 @@ impl CapturePort for DdaCaptureAdapter {
             width: display_mode.width,
             height: display_mode.height,
             refresh_rate: display_mode.refresh_num / display_mode.refresh_den,
-            name: format!("Display {} on Adapter {}", self.output_idx, self.adapter_idx),
+            name: format!(
+                "Display {} on Adapter {}",
+                self.output_idx, self.adapter_idx
+            ),
         };
 
         // 状態を更新
@@ -409,8 +416,7 @@ mod tests {
     #[test]
     #[ignore] // 管理者権限 + GPU必須 + 時間がかかるため通常はスキップ
     fn test_dda_capture_multiple_frames() {
-        let mut adapter =
-            DdaCaptureAdapter::new(0, 0, 8).expect("DDA initialization failed");
+        let mut adapter = DdaCaptureAdapter::new(0, 0, 8).expect("DDA initialization failed");
 
         let mut frame_count = 0;
         let mut timeout_count = 0;
@@ -436,7 +442,10 @@ mod tests {
         println!("Capture statistics (1 second):");
         println!("  Frames captured: {}", frame_count);
         println!("  Timeouts: {}", timeout_count);
-        println!("  Errors: {} (expected in exclusive fullscreen)", error_count);
+        println!(
+            "  Errors: {} (expected in exclusive fullscreen)",
+            error_count
+        );
         println!("  Effective FPS: {}", frame_count);
 
         // デスクトップ環境では144 FPS、排他的フルスクリーンではエラーが多発

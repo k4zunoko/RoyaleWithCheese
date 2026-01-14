@@ -29,19 +29,19 @@ pub enum DomainError {
     Configuration(String),
 
     /// タイムアウトエラー
-    #[allow(dead_code)]  // 将来のエラーハンドリング用
+    #[allow(dead_code)] // 将来のエラーハンドリング用
     #[error("Operation timed out: {0}")]
     Timeout(String),
 
     /// デバイス一時不可（Recoverable）
-    /// 
+    ///
     /// ロック画面遷移やディスプレイモード変更など、
     /// すぐに復旧可能なエラー。
     #[error("Device temporarily unavailable")]
     DeviceNotAvailable,
 
     /// 再初期化必要（Non-recoverable）
-    /// 
+    ///
     /// インスタンス再作成が必要な致命的エラー。
     #[error("Reinitialization required")]
     ReInitializationRequired,
@@ -51,12 +51,12 @@ pub enum DomainError {
     Initialization(String),
 
     /// リソース不足エラー
-    #[allow(dead_code)]  // 将来のエラーハンドリング用
+    #[allow(dead_code)] // 将来のエラーハンドリング用
     #[error("Resource unavailable: {0}")]
     ResourceUnavailable(String),
 
     /// その他のエラー
-    #[allow(dead_code)]  // 将来のエラーハンドリング用
+    #[allow(dead_code)] // 将来のエラーハンドリング用
     #[error("Unexpected error: {0}")]
     Other(String),
 }

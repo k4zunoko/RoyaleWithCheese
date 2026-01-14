@@ -10,9 +10,9 @@
 //! - `runtime_state`: ランタイム状態管理（Insertキー切り替え、マウスボタン状態）
 //! - `input_detector`: キー押下検知（エッジ検出）
 
-pub mod pipeline;
-pub mod threads;
-pub mod recovery;
-pub mod stats;
-pub mod runtime_state;
 pub mod input_detector;
+pub mod pipeline;
+pub mod recovery;
+pub mod runtime_state;
+pub mod stats;
+pub mod threads;

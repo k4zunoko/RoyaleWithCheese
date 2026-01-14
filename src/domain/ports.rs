@@ -4,19 +4,19 @@
 //! Infrastructure層がこれらを実装し、Application層がDIで注入する。
 
 use crate::domain::{
-    CoordinateTransformConfig, DetectionResult, DomainResult, Frame, HsvRange,
-    ProcessorBackend, Roi, TransformedCoordinates,
+    CoordinateTransformConfig, DetectionResult, DomainResult, Frame, HsvRange, ProcessorBackend,
+    Roi, TransformedCoordinates,
 };
 
 /// キャプチャポート: 画面フレームの取得を抽象化
 pub trait CapturePort: Send + Sync {
     /// ROI指定でフレームをキャプチャする（GPU ROI実装）
-    /// 
+    ///
     /// 指定されたROI領域のみをGPU上で切り出し、CPU転送量を削減します。
-    /// 
+    ///
     /// # Arguments
     /// - `roi`: キャプチャするROI領域（デバイス座標系）
-    /// 
+    ///
     /// # Returns
     /// - `Ok(Some(Frame))`: フレームの取得成功（ROI領域のみ、Frame.width/heightはROIサイズ）
     /// - `Ok(None)`: タイムアウト（フレーム更新なし）
@@ -24,14 +24,14 @@ pub trait CapturePort: Send + Sync {
     fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>>;
 
     /// フレームをキャプチャする（全画面、デフォルト実装）
-    /// 
+    ///
     /// 内部的にはcapture_frame_with_roi()を全画面ROIで呼び出します。
-    /// 
+    ///
     /// # Returns
     /// - `Ok(Some(Frame))`: フレームの取得成功
     /// - `Ok(None)`: タイムアウト（フレーム更新なし）
     /// - `Err(DomainError)`: 致命的エラー（再初期化が必要）
-    #[allow(dead_code)]  // trait定義として必要だが現在未使用
+    #[allow(dead_code)] // trait定義として必要だが現在未使用
     fn capture_frame(&mut self) -> DomainResult<Option<Frame>> {
         let info = self.device_info();
         let full_roi = Roi::new(0, 0, info.width, info.height);
@@ -39,9 +39,9 @@ pub trait CapturePort: Send + Sync {
     }
 
     /// キャプチャセッションを再初期化
-    /// 
+    ///
     /// DDA接続が切断された場合などに呼び出される。
-    #[allow(dead_code)]  // trait定義として必要だが現在未使用
+    #[allow(dead_code)] // trait定義として必要だが現在未使用
     fn reinitialize(&mut self) -> DomainResult<()>;
 
     /// キャプチャデバイスの情報を取得
@@ -60,12 +60,12 @@ pub struct DeviceInfo {
 /// 処理ポート: 画像処理（色検知/YOLO等）を抽象化
 pub trait ProcessPort: Send + Sync {
     /// フレームを処理して検出結果を返す
-    /// 
+    ///
     /// # Arguments
     /// - `frame`: 処理対象のフレーム
     /// - `roi`: 処理領域
     /// - `hsv_range`: 色検知の場合のHSVレンジ（YOLOの場合は無視）
-    /// 
+    ///
     /// # Returns
     /// - `Ok(DetectionResult)`: 検出結果
     /// - `Err(DomainError)`: 処理エラー
@@ -77,18 +77,18 @@ pub trait ProcessPort: Send + Sync {
     ) -> DomainResult<DetectionResult>;
 
     /// 処理バックエンドを取得
-    #[allow(dead_code)]  // trait定義として必要だが現在未使用
+    #[allow(dead_code)] // trait定義として必要だが現在未使用
     fn backend(&self) -> ProcessorBackend;
 
     /// 処理統計を取得（オプション）
-    #[allow(dead_code)]  // trait定義として必要だが現在未使用
+    #[allow(dead_code)] // trait定義として必要だが現在未使用
     fn stats(&self) -> ProcessStats {
         ProcessStats::default()
     }
 }
 
 /// 処理統計情報
-#[allow(dead_code)]  // ProcessPort::statsで使用されるが、そのメソッドが未呼び出し
+#[allow(dead_code)] // ProcessPort::statsで使用されるが、そのメソッドが未呼び出し
 #[derive(Debug, Clone, Default)]
 pub struct ProcessStats {
     pub total_frames: u64,
@@ -99,17 +99,17 @@ pub struct ProcessStats {
 /// 通信ポート: HID送信を抽象化
 pub trait CommPort: Send + Sync {
     /// 検出結果をデバイスに送信
-    /// 
+    ///
     /// # Arguments
     /// - `data`: 送信データ（8バイトを想定）
-    /// 
+    ///
     /// # Returns
     /// - `Ok(())`: 送信成功
     /// - `Err(DomainError)`: 送信エラー（デバイス切断等）
     fn send(&mut self, data: &[u8]) -> DomainResult<()>;
 
     /// デバイスとの接続状態を確認
-    #[allow(dead_code)]  // trait定義として必要だが現在未使用
+    #[allow(dead_code)] // trait定義として必要だが現在未使用
     fn is_connected(&self) -> bool;
 
     /// デバイスとの接続を再試行
@@ -117,16 +117,16 @@ pub trait CommPort: Send + Sync {
 }
 
 /// 座標変換を適用（感度・デッドゾーン・クリッピング）
-/// 
+///
 /// ROI中心からの相対位置に対して、以下の処理を順次適用し、
 /// 中心からの相対座標（Δx, Δy）を返します：
 /// 1. デッドゾーン判定（中心からの距離がdead_zone未満なら(0, 0)に補正）
 /// 2. 感度適用（x_sensitivity, y_sensitivityで倍率変更）
 /// 3. クリッピング（±clip_limitで制限）
-/// 
+///
 /// # 戻り値
 /// ROI中心からの相対座標（Δx, Δy）。HIDデバイスへの相対移動量として使用。
-/// 
+///
 /// # 低レイテンシ設計
 /// - インライン展開可能な単純計算のみ
 /// - メモリアロケーションなし（スタック上で完結）
@@ -141,13 +141,13 @@ pub fn apply_coordinate_transform(
         // 検出なしの場合は移動なし (Δx=0, Δy=0)
         return TransformedCoordinates::new(0.0, 0.0, false);
     }
-    
+
     // ROI中心からの相対位置（ピクセル）
     let center_x = roi.width as f32 / 2.0;
     let center_y = roi.height as f32 / 2.0;
     let relative_x = result.center_x - center_x;
     let relative_y = result.center_y - center_y;
-    
+
     // デッドゾーン判定（二乗比較）
     let distance_sq = relative_x * relative_x + relative_y * relative_y;
     let dead_zone_sq = transform.dead_zone * transform.dead_zone;
@@ -155,30 +155,30 @@ pub fn apply_coordinate_transform(
         // デッドゾーン内: 移動なし (Δx=0, Δy=0)
         return TransformedCoordinates::new(0.0, 0.0, true);
     }
-    
+
     // 感度適用
     let scaled_x = relative_x * transform.sensitivity;
     let scaled_y = relative_y * transform.sensitivity;
-    
+
     // クリッピング（対称: ±clip_limit）
     let clipped_x = scaled_x.clamp(-transform.x_clip_limit, transform.x_clip_limit);
     let clipped_y = scaled_y.clamp(-transform.y_clip_limit, transform.y_clip_limit);
-    
+
     // 中心からの相対座標として返す（Δx, Δy）
     TransformedCoordinates::new(clipped_x, clipped_y, true)
 }
 
 /// 浮動小数点座標を符号付きバイトペアにエンコード
-/// 
+///
 /// HIDデバイス固有のフォーマット: (符号バイト, 絶対値バイト)
 /// - 正の値: (0x00, 絶対値)  例: +100 -> (0x00, 100)
 /// - 負の値: (0xFF, 2の補数的値) 例: -100 -> (0xFF, 156)
 /// - ゼロ: (0x00, 0x00)
-/// 
+///
 /// # 範囲制限
 /// - 入力値は整数部分のみ使用（小数点以下切り捨て）
 /// - ±255の範囲に制限（デバイス仕様による）
-/// 
+///
 /// # 戻り値
 /// (符号バイト, 値バイト) のタプル
 #[inline]
@@ -197,13 +197,13 @@ fn encode_hid_delta(value: f32) -> (u8, u8) {
 }
 
 /// 変換座標をHIDレポートに変換
-/// 
+///
 /// 中心からの相対座標（Δx, Δy）をデバイス固有のフォーマットに変換します。
-/// 
+///
 /// # 低レイテンシ設計
 /// - インライン展開により関数呼び出しオーバーヘッドを排除
 /// - 整数演算のみで高速処理
-/// 
+///
 /// # レポート構造（8バイト）
 /// - `[0]`: ReportID (固定 0x01)
 /// - `[1-2]`: Reserved (0x00)
@@ -212,7 +212,7 @@ fn encode_hid_delta(value: f32) -> (u8, u8) {
 ///   - 値バイト: 絶対値（正の場合）または2の補数的値（負の場合）
 /// - `[5-6]`: Δy (同上)
 /// - `[7]`: Reserved (0xFF)
-/// 
+///
 /// # 注意
 /// このフォーマットは標準的な2の補数表現ではなく、特定のHIDデバイス向けの
 /// カスタムエンコーディングです。
@@ -235,10 +235,10 @@ pub fn coordinates_to_hid_report(coords: &TransformedCoordinates) -> Vec<u8> {
 }
 
 /// 検出結果を直接HIDレポートに変換（後方互換性のため残す）
-/// 
+///
 /// # Deprecated
 /// 新しいコードでは `apply_coordinate_transform()` + `coordinates_to_hid_report()` を使用してください。
-/// 
+///
 /// # レポート構造（8バイト）
 /// - `[0]`: ReportID (固定 0x01)
 /// - `[3-4]`: Center X (u16, ビッグエンディアン)
@@ -315,7 +315,7 @@ mod tests {
         assert_eq!(report.len(), 8);
         assert_eq!(report[0], 0x01); // ReportID
         assert_eq!(report[1], 0); // Detection flag = 0
-        
+
         // Center X/Y は0
         let cx = u16::from_be_bytes([report[3], report[4]]);
         let cy = u16::from_be_bytes([report[5], report[6]]);
@@ -328,9 +328,9 @@ mod tests {
         let result = DetectionResult::none();
         let roi = Roi::new(0, 0, 100, 100);
         let transform = CoordinateTransformConfig::default();
-        
+
         let coords = apply_coordinate_transform(&result, &roi, &transform);
-        
+
         assert!(!coords.detected);
         assert_eq!(coords.x, 0.0); // 移動なし (Δx=0)
         assert_eq!(coords.y, 0.0); // 移動なし (Δy=0)
@@ -347,12 +347,12 @@ mod tests {
             y_clip_limit: f32::MAX,
             dead_zone: 0.0,
         };
-        
+
         let coords = apply_coordinate_transform(&result, &roi, &transform);
-        
+
         assert!(coords.detected);
-        assert_eq!(coords.x, 10.0);  // Δx = +10
-        assert_eq!(coords.y, 20.0);  // Δy = +20
+        assert_eq!(coords.x, 10.0); // Δx = +10
+        assert_eq!(coords.y, 20.0); // Δy = +20
     }
 
     #[test]
@@ -366,9 +366,9 @@ mod tests {
             y_clip_limit: f32::MAX,
             dead_zone: 0.0,
         };
-        
+
         let coords = apply_coordinate_transform(&result, &roi, &transform);
-        
+
         assert!(coords.detected);
         // Δx = 10 * 2.0 = 20, Δy = 20 * 2.0 = 40
         assert_eq!(coords.x, 20.0);
@@ -386,9 +386,9 @@ mod tests {
             y_clip_limit: 15.0,
             dead_zone: 0.0,
         };
-        
+
         let coords = apply_coordinate_transform(&result, &roi, &transform);
-        
+
         assert!(coords.detected);
         // Δx = clamp(30, -15, 15) = 15, Δy = clamp(40, -15, 15) = 15
         assert_eq!(coords.x, 15.0);
@@ -406,9 +406,9 @@ mod tests {
             y_clip_limit: f32::MAX,
             dead_zone: 5.0,
         };
-        
+
         let coords = apply_coordinate_transform(&result, &roi, &transform);
-        
+
         assert!(coords.detected); // 検出はされているがデッドゾーン内
         assert_eq!(coords.x, 0.0); // 移動なし (Δx=0)
         assert_eq!(coords.y, 0.0); // 移動なし (Δy=0)
@@ -425,9 +425,9 @@ mod tests {
             y_clip_limit: 20.0,
             dead_zone: 3.0,
         };
-        
+
         let coords = apply_coordinate_transform(&result, &roi, &transform);
-        
+
         assert!(coords.detected);
         // 距離 = sqrt(15^2 + 10^2) = 18.0 > 3.0 (デッドゾーン外)
         // スケール後: (15*2, 10*2) = (30, 20)
@@ -441,16 +441,16 @@ mod tests {
     fn test_coordinates_to_hid_report_positive() {
         let coords = TransformedCoordinates::new(123.5, 456.7, true);
         let report = coordinates_to_hid_report(&coords);
-        
+
         assert_eq!(report.len(), 8);
         assert_eq!(report[0], 0x01);
-        
+
         // カスタムフォーマット: [値バイト, 符号バイト]
         // 正の値: 符号=0x00
-        assert_eq!(report[3], 123);  // X値バイト
+        assert_eq!(report[3], 123); // X値バイト
         assert_eq!(report[4], 0x00); // X符号バイト（正）
-        // 456は255を超えるので255にクリップされる
-        assert_eq!(report[5], 255);  // Y値バイト（クリップ）
+                                     // 456は255を超えるので255にクリップされる
+        assert_eq!(report[5], 255); // Y値バイト（クリップ）
         assert_eq!(report[6], 0x00); // Y符号バイト（正）
         assert_eq!(report[7], 0xFF);
     }
@@ -460,16 +460,16 @@ mod tests {
         // 負の値をテスト (左・上方向の移動)
         let coords = TransformedCoordinates::new(-50.3, -100.8, true);
         let report = coordinates_to_hid_report(&coords);
-        
+
         assert_eq!(report.len(), 8);
         assert_eq!(report[0], 0x01);
-        
+
         // カスタムフォーマット: [値バイト, 符号バイト]
         // 負の値: 符号=0xFF, 値=2の補数的値
-        assert_eq!(report[3], (256 - 50) as u8);  // X値バイト（2の補数的）
-        assert_eq!(report[4], 0xFF);              // X符号バイト（負）
+        assert_eq!(report[3], (256 - 50) as u8); // X値バイト（2の補数的）
+        assert_eq!(report[4], 0xFF); // X符号バイト（負）
         assert_eq!(report[5], (256 - 100) as u8); // Y値バイト（2の補数的）
-        assert_eq!(report[6], 0xFF);              // Y符号バイト（負）
+        assert_eq!(report[6], 0xFF); // Y符号バイト（負）
         assert_eq!(report[7], 0xFF);
     }
 
@@ -478,10 +478,10 @@ mod tests {
         // 移動なし (Δx=0, Δy=0)
         let coords = TransformedCoordinates::new(0.0, 0.0, true);
         let report = coordinates_to_hid_report(&coords);
-        
+
         assert_eq!(report.len(), 8);
         assert_eq!(report[0], 0x01);
-        
+
         let dx = i16::from_be_bytes([report[3], report[4]]);
         let dy = i16::from_be_bytes([report[5], report[6]]);
         assert_eq!(dx, 0);
@@ -517,21 +517,21 @@ pub struct InputState {
 }
 
 /// 入力ポート: キーボードとマウスの状態取得を抽象化
-/// 
+///
 /// Windows APIや将来的に他のOS対応を抽象化するtrait。
 /// Infrastructure層が実装し、Application層がDIで注入します。
 pub trait InputPort: Send + Sync {
     /// 指定したキーが現在押下されているかを確認
-    /// 
+    ///
     /// # Arguments
     /// * `key` - 仮想キーコード
-    /// 
+    ///
     /// # Returns
     /// キーが現在押下されていればtrue
     fn is_key_pressed(&self, key: VirtualKey) -> bool;
-    
+
     /// 現在の入力状態を一括取得
-    /// 
+    ///
     /// # Returns
     /// マウスボタンの状態を含むInputState
     fn poll_input_state(&self) -> InputState {

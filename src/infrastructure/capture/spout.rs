@@ -101,10 +101,7 @@ impl SpoutCaptureAdapter {
         };
 
         #[cfg(debug_assertions)]
-        tracing::info!(
-            "Spout receiver initialized: sender_name={:?}",
-            sender_name
-        );
+        tracing::info!("Spout receiver initialized: sender_name={:?}", sender_name);
 
         Ok(Self {
             receiver,
@@ -193,9 +190,7 @@ impl SpoutCaptureAdapter {
         // ID3D11Texture2Dとして扱う
         let received_tex: ID3D11Texture2D = unsafe {
             ID3D11Texture2D::from_raw_borrowed(&received_tex_ptr)
-                .ok_or_else(|| {
-                    DomainError::Capture("Failed to get received texture".to_string())
-                })?
+                .ok_or_else(|| DomainError::Capture("Failed to get received texture".to_string()))?
                 .clone()
         };
 
@@ -208,16 +203,13 @@ impl SpoutCaptureAdapter {
         }
         let spout_context: ID3D11DeviceContext = unsafe {
             ID3D11DeviceContext::from_raw_borrowed(&spout_context_ptr)
-                .ok_or_else(|| {
-                    DomainError::Capture("Failed to wrap SpoutDX context".to_string())
-                })?
+                .ok_or_else(|| DomainError::Capture("Failed to wrap SpoutDX context".to_string()))?
                 .clone()
         };
 
         // 送信者情報を取得
         let mut sender_info = SpoutDxSenderInfo::default();
-        let result =
-            unsafe { spoutdx_receiver_get_sender_info(self.receiver, &mut sender_info) };
+        let result = unsafe { spoutdx_receiver_get_sender_info(self.receiver, &mut sender_info) };
 
         if !SpoutDxResult::from_raw(result).is_ok()
             || sender_info.width == 0
@@ -278,30 +270,32 @@ impl CapturePort for SpoutCaptureAdapter {
 
         // ROIを画面中心に動的配置
         // レイテンシへの影響: ~10ns未満（減算2回、除算2回）
-        let centered_roi =
-            roi.centered_in(self.device_info.width, self.device_info.height)
-                .ok_or_else(|| {
-                    DomainError::Configuration(format!(
-                        "ROI size ({}x{}) exceeds texture bounds ({}x{})",
-                        roi.width, roi.height, self.device_info.width, self.device_info.height
-                    ))
-                })?;
+        let centered_roi = roi
+            .centered_in(self.device_info.width, self.device_info.height)
+            .ok_or_else(|| {
+                DomainError::Configuration(format!(
+                    "ROI size ({}x{}) exceeds texture bounds ({}x{})",
+                    roi.width, roi.height, self.device_info.width, self.device_info.height
+                ))
+            })?;
 
         // ROIのクランプ（共通モジュール使用）
-        let clamped_roi =
-            clamp_roi(&centered_roi, self.device_info.width, self.device_info.height).ok_or_else(
-                || {
-                    DomainError::Capture(format!(
-                        "ROI ({}, {}, {}x{}) is outside texture bounds ({}x{})",
-                        centered_roi.x,
-                        centered_roi.y,
-                        centered_roi.width,
-                        centered_roi.height,
-                        self.device_info.width,
-                        self.device_info.height
-                    ))
-                },
-            )?;
+        let clamped_roi = clamp_roi(
+            &centered_roi,
+            self.device_info.width,
+            self.device_info.height,
+        )
+        .ok_or_else(|| {
+            DomainError::Capture(format!(
+                "ROI ({}, {}, {}x{}) is outside texture bounds ({}x{})",
+                centered_roi.x,
+                centered_roi.y,
+                centered_roi.width,
+                centered_roi.height,
+                self.device_info.width,
+                self.device_info.height
+            ))
+        })?;
 
         // ステージングテクスチャを確保（送信者のフォーマットに合わせる）
         // 共通モジュール使用
@@ -423,7 +417,10 @@ mod tests {
                 println!("  Resolution: {}x{}", info.width, info.height);
             }
             Err(e) => {
-                println!("Spout initialization failed (expected without sender): {:?}", e);
+                println!(
+                    "Spout initialization failed (expected without sender): {:?}",
+                    e
+                );
             }
         }
     }
@@ -431,8 +428,7 @@ mod tests {
     #[test]
     #[ignore] // Spout送信者が必要
     fn test_spout_capture_with_sender() {
-        let mut adapter =
-            SpoutCaptureAdapter::new(None).expect("Failed to create Spout adapter");
+        let mut adapter = SpoutCaptureAdapter::new(None).expect("Failed to create Spout adapter");
 
         let roi = Roi::new(0, 0, 100, 100);
 

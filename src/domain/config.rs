@@ -150,7 +150,7 @@ impl Default for ProcessConfig {
 }
 
 /// ROI設定（サイズのみ、位置は画面中心に自動配置）
-/// 
+///
 /// x, y座標は実行時に画面解像度から自動計算される。
 /// プロジェクトの設計方針として、ROIは常に画面中心に配置される。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,17 +163,17 @@ impl RoiConfig {
     /// デフォルトROI: 1920x1080中心の960x540を想定したサイズ
     pub const DEFAULT_WIDTH: u32 = 960;
     pub const DEFAULT_HEIGHT: u32 = 540;
-    
+
     /// 画面中心にROIを配置
-    /// 
+    ///
     /// # Arguments
     /// - `screen_width`: 画面幅（ピクセル）
     /// - `screen_height`: 画面高さ（ピクセル）
-    /// 
+    ///
     /// # Returns
     /// - `Ok(Roi)`: 画面中心に配置されたROI
     /// - `Err(DomainError)`: ROIサイズが画面サイズを超える場合
-    /// 
+    ///
     /// # Example
     /// ```ignore
     /// let roi_config = RoiConfig { width: 960, height: 540 };
@@ -194,11 +194,11 @@ impl RoiConfig {
                 self.height, screen_height
             )));
         }
-        
+
         // 中心座標を計算
         let x = (screen_width - self.width) / 2;
         let y = (screen_height - self.height) / 2;
-        
+
         Ok(Roi::new(x, y, self.width, self.height))
     }
 }
@@ -267,9 +267,9 @@ impl Default for CoordinateTransformConfig {
     fn default() -> Self {
         Self {
             sensitivity: 1.0,
-            x_clip_limit: f32::MAX,  // クリッピングなし
-            y_clip_limit: f32::MAX,  // クリッピングなし
-            dead_zone: 0.0,          // デッドゾーンなし
+            x_clip_limit: f32::MAX, // クリッピングなし
+            y_clip_limit: f32::MAX, // クリッピングなし
+            dead_zone: 0.0,         // デッドゾーンなし
         }
     }
 }
@@ -312,7 +312,7 @@ impl Default for CommunicationConfig {
             product_id: 0x0000,
             serial_number: None,
             device_path: None,
-            hid_send_interval_ms: 8,  // 約144Hz（8ms間隔）
+            hid_send_interval_ms: 8, // 約144Hz（8ms間隔）
         }
     }
 }
@@ -320,8 +320,8 @@ impl Default for CommunicationConfig {
 impl Default for ActivationConfig {
     fn default() -> Self {
         Self {
-            max_distance_from_center: 50.0,  // ROI中心から50ピクセル
-            active_window_ms: 500,  // 500ms = 0.5秒
+            max_distance_from_center: 50.0, // ROI中心から50ピクセル
+            active_window_ms: 500,          // 500ms = 0.5秒
         }
     }
 }
@@ -383,9 +383,8 @@ impl AppConfig {
             DomainError::Configuration(format!("Failed to read config file: {}", e))
         })?;
 
-        toml::from_str(&content).map_err(|e| {
-            DomainError::Configuration(format!("Failed to parse config file: {}", e))
-        })
+        toml::from_str(&content)
+            .map_err(|e| DomainError::Configuration(format!("Failed to parse config file: {}", e)))
     }
 
     /// デフォルト設定をTOMLファイルに書き出す
@@ -396,9 +395,8 @@ impl AppConfig {
             DomainError::Configuration(format!("Failed to serialize config: {}", e))
         })?;
 
-        std::fs::write(path, content).map_err(|e| {
-            DomainError::Configuration(format!("Failed to write config file: {}", e))
-        })
+        std::fs::write(path, content)
+            .map_err(|e| DomainError::Configuration(format!("Failed to write config file: {}", e)))
     }
 
     /// 設定の妥当性を検証
@@ -498,8 +496,8 @@ mod tests {
             height: 540,
         };
         let roi = roi_config.to_roi_centered(1920, 1080).unwrap();
-        assert_eq!(roi.x, 480);  // (1920 - 960) / 2
-        assert_eq!(roi.y, 270);  // (1080 - 540) / 2
+        assert_eq!(roi.x, 480); // (1920 - 960) / 2
+        assert_eq!(roi.y, 270); // (1080 - 540) / 2
         assert_eq!(roi.width, 960);
         assert_eq!(roi.height, 540);
     }
@@ -550,8 +548,8 @@ mod tests {
             height: 720,
         };
         let roi = roi_config.to_roi_centered(2560, 1440).unwrap();
-        assert_eq!(roi.x, 640);   // (2560 - 1280) / 2
-        assert_eq!(roi.y, 360);   // (1440 - 720) / 2
+        assert_eq!(roi.x, 640); // (2560 - 1280) / 2
+        assert_eq!(roi.y, 360); // (1440 - 720) / 2
         assert_eq!(roi.width, 1280);
         assert_eq!(roi.height, 720);
     }

@@ -9,10 +9,10 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StatKind {
     /// キャプチャ処理時間
-    #[allow(dead_code)]  // 将来の計測用
+    #[allow(dead_code)] // 将来の計測用
     Capture,
     /// 前処理時間
-    #[allow(dead_code)]  // 将来の計測用
+    #[allow(dead_code)] // 将来の計測用
     Preprocess,
     /// 画像処理時間（色検知/YOLO推論）
     Process,
@@ -66,7 +66,7 @@ impl StatsCollector {
 
     /// FPS計算の時間範囲（1秒間のフレーム数を計測）
     const FPS_WINDOW_SECS: u64 = 1;
-    
+
     /// フレーム受信を記録（FPS計測用）
     pub fn record_frame(&mut self) {
         let now = Instant::now();
@@ -85,7 +85,7 @@ impl StatsCollector {
 
     /// 最大サンプル保持数（パーセンタイル計算用）
     const MAX_DURATION_SAMPLES: usize = 1000;
-    
+
     /// 処理時間を記録
     ///
     /// # Arguments
@@ -102,13 +102,13 @@ impl StatsCollector {
     }
 
     /// 再初期化をカウント
-    #[allow(dead_code)]  // 将来の統計レポート用
+    #[allow(dead_code)] // 将来の統計レポート用
     pub fn record_reinitialization(&mut self) {
         self.reinit_count += 1;
     }
 
     /// 累積失敗時間を追加
-    #[allow(dead_code)]  // 将来の統計レポート用
+    #[allow(dead_code)] // 将来の統計レポート用
     pub fn add_failure_duration(&mut self, duration: Duration) {
         self.cumulative_failure_duration += duration;
     }
@@ -226,7 +226,11 @@ mod tests {
         }
 
         let fps = stats.current_fps();
-        assert!(fps > 5.0 && fps < 15.0, "FPS should be around 10, got {}", fps);
+        assert!(
+            fps > 5.0 && fps < 15.0,
+            "FPS should be around 10, got {}",
+            fps
+        );
     }
 
     #[test]

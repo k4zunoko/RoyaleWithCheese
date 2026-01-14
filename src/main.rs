@@ -1,14 +1,20 @@
-#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(not(debug_assertions), target_os = "windows"),
+    windows_subsystem = "windows"
+)]
 
-mod domain;
-mod logging;
 mod application;
+mod domain;
 mod infrastructure;
+mod logging;
 
+use crate::application::pipeline::{PipelineConfig, PipelineRunner};
+use crate::application::recovery::{RecoveryState, RecoveryStrategy};
 use crate::domain::config::AppConfig;
 use crate::domain::config::CaptureSource;
 use crate::domain::ports::CapturePort; // traitメソッド使用のため
-use crate::domain::Roi;  // ROI型を使用
+use crate::domain::Roi; // ROI型を使用
+use crate::infrastructure::audio_feedback::WindowsAudioFeedback;
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
 use crate::infrastructure::capture::spout::SpoutCaptureAdapter;
 use crate::infrastructure::capture::wgc::WgcCaptureAdapter;
@@ -16,9 +22,6 @@ use crate::infrastructure::color_process::ColorProcessAdapter;
 use crate::infrastructure::hid_comm::HidCommAdapter;
 use crate::infrastructure::input::WindowsInputAdapter;
 use crate::infrastructure::process_selector::ProcessSelector;
-use crate::infrastructure::audio_feedback::WindowsAudioFeedback;
-use crate::application::pipeline::{PipelineRunner, PipelineConfig};
-use crate::application::recovery::{RecoveryState, RecoveryStrategy};
 use crate::logging::init_logging;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -63,7 +66,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     config.validate()?;
 
     tracing::info!("Configuration validated successfully");
-    tracing::info!("Capture: source={:?}, timeout={}ms, monitor={}",
+    tracing::info!(
+        "Capture: source={:?}, timeout={}ms, monitor={}",
         config.capture.source,
         config.capture.timeout_ms,
         config.capture.monitor_index
@@ -88,16 +92,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 tracing::info!("  Sender name: auto (first active sender)");
             }
-            let capture = SpoutCaptureAdapter::new(
-                config.capture.spout_sender_name.clone(),
-            )?;
+            let capture = SpoutCaptureAdapter::new(config.capture.spout_sender_name.clone())?;
             run_with_capture(capture, config)
         }
         CaptureSource::Wgc => {
             tracing::info!("Using Windows Graphics Capture (WGC) - Low Latency Mode");
-            let capture = WgcCaptureAdapter::new(
-                config.capture.monitor_index as usize,
-            )?;
+            let capture = WgcCaptureAdapter::new(config.capture.monitor_index as usize)?;
             run_with_capture(capture, config)
         }
     }
@@ -109,7 +109,8 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
     config: AppConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let device_info = capture.device_info();
-    tracing::info!("Capture initialized: {}x{} @ {}Hz - {}",
+    tracing::info!(
+        "Capture initialized: {}x{} @ {}Hz - {}",
         device_info.width,
         device_info.height,
         device_info.refresh_rate,
@@ -120,7 +121,10 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
     // width/heightの妥当性のみ検証（初期化時の画面サイズに対して）
     let roi = if device_info.width > 0 && device_info.height > 0 {
         // 画面サイズが既知の場合、ROIサイズの妥当性を検証
-        config.process.roi.to_roi_centered(device_info.width, device_info.height)?
+        config
+            .process
+            .roi
+            .to_roi_centered(device_info.width, device_info.height)?
     } else {
         // Spout未接続時など、画面サイズが不明な場合はサイズのみ設定
         // 実際の位置は毎フレーム動的に計算される
@@ -128,14 +132,18 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
             device_info.width, device_info.height);
         Roi::new(0, 0, config.process.roi.width, config.process.roi.height)
     };
-    tracing::info!("Process: mode={}, ROI={}x{} (dynamically centered each frame)",
+    tracing::info!(
+        "Process: mode={}, ROI={}x{} (dynamically centered each frame)",
         config.process.mode,
         roi.width,
         roi.height
     );
 
     // 処理アダプタの初期化（config.process.modeに基づく）
-    tracing::info!("Initializing process adapter with mode: {}", config.process.mode);
+    tracing::info!(
+        "Initializing process adapter with mode: {}",
+        config.process.mode
+    );
     let process = match config.process.mode.as_str() {
         "fast-color" => {
             tracing::info!(
@@ -187,7 +195,8 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
     let hsv_range = config.process.hsv_range.into();
     let coordinate_transform = config.process.coordinate_transform.clone();
 
-    tracing::info!("Coordinate transform: sensitivity={:.2}, clip_limit=({:.1}, {:.1}), dead_zone={:.1}",
+    tracing::info!(
+        "Coordinate transform: sensitivity={:.2}, clip_limit=({:.1}, {:.1}), dead_zone={:.1}",
         coordinate_transform.sensitivity,
         coordinate_transform.x_clip_limit,
         coordinate_transform.y_clip_limit,
@@ -205,7 +214,8 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
         config.communication.serial_number.clone(),
         config.communication.device_path.clone(),
     )?;
-    tracing::info!("HID adapter initialized: VID=0x{:04X}, PID=0x{:04X}",
+    tracing::info!(
+        "HID adapter initialized: VID=0x{:04X}, PID=0x{:04X}",
         config.communication.vendor_id,
         config.communication.product_id
     );

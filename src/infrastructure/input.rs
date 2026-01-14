@@ -1,7 +1,7 @@
 //! Windows 入力監視実装（Infrastructure層）
 //!
 //! Win32 APIのGetAsyncKeyStateを使用してInputPort traitを実装します。
-//! 
+//!
 //! # 低レイテンシ設計
 //! - ポーリング方式（イベントドリブンより高速）
 //! - 直接Windows API呼び出し（中間レイヤーなし）
@@ -55,11 +55,11 @@ mod tests {
     #[ignore] // 手動テスト用
     fn test_is_key_pressed() {
         let adapter = WindowsInputAdapter::new();
-        
+
         // Insertキーを押してテストを実行
         println!("Press INSERT key...");
         std::thread::sleep(std::time::Duration::from_secs(2));
-        
+
         // この時点でInsertキーが押されていればtrue
         let pressed = adapter.is_key_pressed(VirtualKey::Insert);
         println!("INSERT key pressed: {}", pressed);

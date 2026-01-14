@@ -3,15 +3,11 @@
 //! Capture / Process / HID / Stats の4スレッド構成でパイプラインを制御します。
 //! HID送信を統計処理から分離し、低レイテンシを実現します。
 
+use crate::application::{recovery::RecoveryState, stats::StatsCollector, threads};
 use crate::domain::{
     error::DomainResult,
     ports::{CapturePort, CommPort, InputPort, ProcessPort},
-    types::{Roi, HsvRange},
-};
-use crate::application::{
-    recovery::RecoveryState, 
-    stats::StatsCollector,
-    threads,
+    types::{HsvRange, Roi},
 };
 use crossbeam_channel::{bounded, unbounded};
 use std::sync::{Arc, Mutex};
@@ -27,21 +23,18 @@ pub struct ActivationConditions {
 }
 
 impl ActivationConditions {
-    pub fn new(
-        max_distance: f32,
-        active_window_duration: Duration,
-    ) -> Self {
+    pub fn new(max_distance: f32, active_window_duration: Duration) -> Self {
         Self {
             max_distance_squared: max_distance * max_distance, // 平方根計算を避けるため2乗で保持
             active_window_duration,
         }
     }
-    
+
     /// 最大距離の2乗を取得（threads.rsからアクセス用）
     pub(crate) fn max_distance_squared(&self) -> f32 {
         self.max_distance_squared
     }
-    
+
     /// アクティブウィンドウの持続時間を取得（threads.rsからアクセス用）
     pub(crate) fn active_window_duration(&self) -> Duration {
         self.active_window_duration
@@ -54,7 +47,7 @@ pub struct PipelineConfig {
     /// 統計出力間隔
     pub stats_interval: Duration,
     /// DirtyRect最適化を有効化（未実装）
-    #[allow(dead_code)]  // 将来の実装用
+    #[allow(dead_code)] // 将来の実装用
     pub enable_dirty_rect_optimization: bool,
     /// HID送信間隔（新しい値がない場合も直前の値を送信）
     pub hid_send_interval: Duration,
@@ -65,7 +58,7 @@ impl Default for PipelineConfig {
         Self {
             stats_interval: Duration::from_secs(10),
             enable_dirty_rect_optimization: true,
-            hid_send_interval: Duration::from_millis(8),  // 約144Hz
+            hid_send_interval: Duration::from_millis(8), // 約144Hz
         }
     }
 }
@@ -88,7 +81,7 @@ where
     runtime_state: crate::application::runtime_state::RuntimeState,
     activation_conditions: ActivationConditions,
     audio_feedback: Option<crate::infrastructure::audio_feedback::WindowsAudioFeedback>,
-    
+
     roi: Roi,
     hsv_range: HsvRange,
     coordinate_transform: crate::domain::CoordinateTransformConfig,
@@ -102,7 +95,7 @@ where
     I: InputPort + Send + Sync + 'static,
 {
     /// 新しいPipelineRunnerを作成
-    #[allow(clippy::too_many_arguments)]  // パイプライン初期化には多くのコンポーネントが必要
+    #[allow(clippy::too_many_arguments)] // パイプライン初期化には多くのコンポーネントが必要
     pub fn new(
         capture: C,
         process: P,
@@ -132,7 +125,7 @@ where
             coordinate_transform,
         }
     }
-    
+
     /// RuntimeStateを取得（テスト用）
     #[cfg(test)]
     #[allow(dead_code)]
@@ -183,7 +176,16 @@ where
             let runtime_state = self.runtime_state.clone();
             let activation_conditions = self.activation_conditions.clone();
             std::thread::spawn(move || {
-                threads::hid_thread(comm, rx, roi, coordinate_transform, stats_tx_clone, hid_send_interval, runtime_state, activation_conditions);
+                threads::hid_thread(
+                    comm,
+                    rx,
+                    roi,
+                    coordinate_transform,
+                    stats_tx_clone,
+                    hid_send_interval,
+                    runtime_state,
+                    activation_conditions,
+                );
             })
         };
 
@@ -204,18 +206,17 @@ where
 
         Ok(())
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::threads::TimestampedFrame;
     use crate::domain::{
         error::DomainError,
         ports::{DeviceInfo, VirtualKey},
-        types::{DetectionResult, Frame, Roi, HsvRange, ProcessorBackend},
+        types::{DetectionResult, Frame, HsvRange, ProcessorBackend, Roi},
     };
-    use crate::application::threads::TimestampedFrame;
     use std::time::Instant;
 
     // モック実装
@@ -375,40 +376,73 @@ mod tests {
 
         // テスト1: 小さいROI (400x300)
         let roi_small = Roi::new(100, 100, 400, 300);
-        let frame = capture.capture_frame_with_roi(&roi_small)
+        let frame = capture
+            .capture_frame_with_roi(&roi_small)
             .expect("Capture should succeed")
             .expect("Frame should be present");
 
         assert_eq!(frame.width, roi_small.width, "Frame width should match ROI");
-        assert_eq!(frame.height, roi_small.height, "Frame height should match ROI");
-        assert_eq!(frame.data.len(), (roi_small.width * roi_small.height * 4) as usize, "Data size should match ROI");
+        assert_eq!(
+            frame.height, roi_small.height,
+            "Frame height should match ROI"
+        );
+        assert_eq!(
+            frame.data.len(),
+            (roi_small.width * roi_small.height * 4) as usize,
+            "Data size should match ROI"
+        );
 
         // テスト2: 設計目標サイズ (800x600)
         let roi_medium = Roi::new(560, 240, 800, 600);
-        let frame = capture.capture_frame_with_roi(&roi_medium)
+        let frame = capture
+            .capture_frame_with_roi(&roi_medium)
             .expect("Capture should succeed")
             .expect("Frame should be present");
 
-        assert_eq!(frame.width, roi_medium.width, "Frame width should match ROI");
-        assert_eq!(frame.height, roi_medium.height, "Frame height should match ROI");
-        assert_eq!(frame.data.len(), (roi_medium.width * roi_medium.height * 4) as usize, "Data size should match ROI");
+        assert_eq!(
+            frame.width, roi_medium.width,
+            "Frame width should match ROI"
+        );
+        assert_eq!(
+            frame.height, roi_medium.height,
+            "Frame height should match ROI"
+        );
+        assert_eq!(
+            frame.data.len(),
+            (roi_medium.width * roi_medium.height * 4) as usize,
+            "Data size should match ROI"
+        );
 
         // テスト3: フルスクリーンROI
         let roi_full = Roi::new(0, 0, 1920, 1080);
-        let frame = capture.capture_frame_with_roi(&roi_full)
+        let frame = capture
+            .capture_frame_with_roi(&roi_full)
             .expect("Capture should succeed")
             .expect("Frame should be present");
 
-        assert_eq!(frame.width, roi_full.width, "Frame width should match full screen ROI");
-        assert_eq!(frame.height, roi_full.height, "Frame height should match full screen ROI");
+        assert_eq!(
+            frame.width, roi_full.width,
+            "Frame width should match full screen ROI"
+        );
+        assert_eq!(
+            frame.height, roi_full.height,
+            "Frame height should match full screen ROI"
+        );
 
         // テスト4: capture_frame()のデフォルト実装がフルスクリーンROIを使用することを確認
         let device_info = capture.device_info();
-        let frame_default = capture.capture_frame()
+        let frame_default = capture
+            .capture_frame()
             .expect("Capture should succeed")
             .expect("Frame should be present");
 
-        assert_eq!(frame_default.width, device_info.width, "Default capture should return full screen width");
-        assert_eq!(frame_default.height, device_info.height, "Default capture should return full screen height");
+        assert_eq!(
+            frame_default.width, device_info.width,
+            "Default capture should return full screen width"
+        );
+        assert_eq!(
+            frame_default.height, device_info.height,
+            "Default capture should return full screen height"
+        );
     }
 }

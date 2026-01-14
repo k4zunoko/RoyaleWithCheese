@@ -14,7 +14,7 @@ use crate::infrastructure::capture::common::{
 };
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use windows::core::{factory, Interface, IUnknown, GUID};
+use windows::core::{factory, IUnknown, Interface, GUID};
 use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Graphics::DirectX::DirectXPixelFormat;
@@ -135,9 +135,7 @@ impl WgcCaptureAdapter {
         let monitors = Self::enumerate_monitors()?;
 
         if monitors.is_empty() {
-            return Err(DomainError::Initialization(
-                "No monitors found".to_string(),
-            ));
+            return Err(DomainError::Initialization("No monitors found".to_string()));
         }
 
         let hmonitor = monitors.get(monitor_index).ok_or_else(|| {
@@ -184,7 +182,7 @@ impl WgcCaptureAdapter {
         let latest_frame = Arc::new(Mutex::new(None));
         let latest_frame_for_callback = Arc::clone(&latest_frame);
         let device_clone = device.clone();
-        
+
         frame_pool
             .FrameArrived(&windows::Foundation::TypedEventHandler::new(
                 move |pool: &Option<Direct3D11CaptureFramePool>, _args| {
@@ -199,7 +197,7 @@ impl WgcCaptureAdapter {
                                     unsafe {
                                         let mut desc = D3D11_TEXTURE2D_DESC::default();
                                         texture.GetDesc(&mut desc);
-                                        
+
                                         // 最新フレームを更新
                                         if let Ok(mut guard) = latest_frame_for_callback.lock() {
                                             *guard = Some(CapturedFrameData {
@@ -227,26 +225,22 @@ impl WgcCaptureAdapter {
             .map_err(|e| {
                 DomainError::Initialization(format!("Failed to create capture session: {:?}", e))
             })?;
-        
+
         // 黄色枠を無効化（レイテンシ重視）
-        capture_session
-            .SetIsBorderRequired(false)
-            .map_err(|e| {
-                DomainError::Initialization(format!("Failed to disable border: {:?}", e))
-            })?;
-        
+        capture_session.SetIsBorderRequired(false).map_err(|e| {
+            DomainError::Initialization(format!("Failed to disable border: {:?}", e))
+        })?;
+
         // カーソルキャプチャを無効化
         capture_session
             .SetIsCursorCaptureEnabled(false)
             .map_err(|e| {
                 DomainError::Initialization(format!("Failed to disable cursor capture: {:?}", e))
             })?;
-        
-        capture_session
-            .StartCapture()
-            .map_err(|e| {
-                DomainError::Initialization(format!("Failed to start capture: {:?}", e))
-            })?;
+
+        capture_session.StartCapture().map_err(|e| {
+            DomainError::Initialization(format!("Failed to start capture: {:?}", e))
+        })?;
 
         #[cfg(debug_assertions)]
         tracing::info!(
@@ -299,43 +293,31 @@ impl WgcCaptureAdapter {
         }
 
         if data.monitors.is_empty() {
-            Err(DomainError::Initialization(
-                "No monitors found".to_string(),
-            ))
+            Err(DomainError::Initialization("No monitors found".to_string()))
         } else {
             Ok(data.monitors)
         }
     }
 
     /// HMONITORからGraphicsCaptureItemを作成
-    fn create_capture_item_for_monitor(
-        hmonitor: HMONITOR,
-    ) -> DomainResult<GraphicsCaptureItem> {
+    fn create_capture_item_for_monitor(hmonitor: HMONITOR) -> DomainResult<GraphicsCaptureItem> {
         unsafe {
             let interop: IGraphicsCaptureItemInterop =
-                factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
-                    .map_err(|e| {
-                        DomainError::Initialization(format!(
-                            "Failed to get IGraphicsCaptureItemInterop factory: {:?}",
-                            e
-                        ))
-                    })?;
-
-            interop
-                .CreateForMonitor(hmonitor)
-                .map_err(|e| {
+                factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(|e| {
                     DomainError::Initialization(format!(
-                        "CreateForMonitor failed: {:?}",
+                        "Failed to get IGraphicsCaptureItemInterop factory: {:?}",
                         e
                     ))
-                })
+                })?;
+
+            interop.CreateForMonitor(hmonitor).map_err(|e| {
+                DomainError::Initialization(format!("CreateForMonitor failed: {:?}", e))
+            })
         }
     }
 
     /// D3D11DeviceからIDirect3DDeviceを作成（WGC用）
-    fn create_direct3d_device(
-        d3d_device: &ID3D11Device,
-    ) -> DomainResult<IDirect3DDevice> {
+    fn create_direct3d_device(d3d_device: &ID3D11Device) -> DomainResult<IDirect3DDevice> {
         unsafe {
             // DXGIデバイスを取得
             let dxgi_device: windows::Win32::Graphics::Dxgi::IDXGIDevice =
@@ -345,18 +327,12 @@ impl WgcCaptureAdapter {
 
             // WinRT IDirect3DDevice を作成
             let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device).map_err(|e| {
-                DomainError::Initialization(format!(
-                    "Failed to create IDirect3DDevice: {:?}",
-                    e
-                ))
+                DomainError::Initialization(format!("Failed to create IDirect3DDevice: {:?}", e))
             })?;
 
             // IDirect3DDevice にキャスト
             let direct3d_device: IDirect3DDevice = inspectable.cast().map_err(|e| {
-                DomainError::Initialization(format!(
-                    "Failed to cast to IDirect3DDevice: {:?}",
-                    e
-                ))
+                DomainError::Initialization(format!("Failed to cast to IDirect3DDevice: {:?}", e))
             })?;
 
             Ok(direct3d_device)
@@ -375,9 +351,9 @@ impl WgcCaptureAdapter {
                 DomainError::Capture(format!("Failed to get interface access: {:?}", e))
             })?;
 
-            let texture: ID3D11Texture2D = access.GetInterface().map_err(|e| {
-                DomainError::Capture(format!("Failed to get texture: {:?}", e))
-            })?;
+            let texture: ID3D11Texture2D = access
+                .GetInterface()
+                .map_err(|e| DomainError::Capture(format!("Failed to get texture: {:?}", e)))?;
 
             Ok(texture)
         }
@@ -423,7 +399,7 @@ impl CapturePort for WgcCaptureAdapter {
             let guard = self.latest_frame.lock().map_err(|e| {
                 DomainError::Capture(format!("Failed to lock latest frame: {:?}", e))
             })?;
-            
+
             match &*guard {
                 Some(data) => data.clone(),
                 std::option::Option::None => {
@@ -448,12 +424,7 @@ impl CapturePort for WgcCaptureAdapter {
         )?;
 
         // ROI領域をステージングテクスチャにコピー（最小コピー量）
-        copy_roi_to_staging(
-            &self.context,
-            &frame_data.texture,
-            &staging,
-            &clamped_roi,
-        );
+        copy_roi_to_staging(&self.context, &frame_data.texture, &staging, &clamped_roi);
 
         // CPUメモリへコピー
         let data = copy_texture_to_cpu(

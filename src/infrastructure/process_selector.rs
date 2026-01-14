@@ -3,7 +3,9 @@
 //! ビルド時のfeatureフラグではなく、実行時に設定で処理方式を選択するための列挙型。
 //! vtableのオーバーヘッドを避けるため、trait objectではなくenumでディスパッチ。
 
-use crate::domain::{DetectionResult, DomainResult, Frame, HsvRange, ProcessPort, ProcessorBackend, Roi};
+use crate::domain::{
+    DetectionResult, DomainResult, Frame, HsvRange, ProcessPort, ProcessorBackend, Roi,
+};
 use crate::infrastructure::color_process::ColorProcessAdapter;
 
 /// 処理アダプタの選択

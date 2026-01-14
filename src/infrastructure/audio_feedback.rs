@@ -6,9 +6,9 @@
 use crate::domain::config::AudioFeedbackConfig;
 
 /// Windows音声フィードバック実装
-/// 
+///
 /// PlaySoundW APIを使用してシステム音を非同期再生します。
-/// 
+///
 /// # 低レイテンシ設計
 /// - **非同期再生**: SND_ASYNCフラグにより、音声再生は別スレッドで実行
 /// - **超高速**: PlaySoundW呼び出しは数マイクロ秒で完了（ファイルI/Oは別スレッド）
@@ -25,10 +25,10 @@ impl WindowsAudioFeedback {
     }
 
     /// トグル時の音声を再生
-    /// 
+    ///
     /// # Arguments
     /// * `enabled` - トグル後の状態（true=有効化、false=無効化）
-    /// 
+    ///
     /// # パフォーマンス
     /// - SND_ASYNCフラグにより非同期再生（数マイクロ秒で復帰）
     /// - 音声ファイルが見つからない場合でもブロックせず即座に復帰
@@ -47,12 +47,14 @@ impl WindowsAudioFeedback {
         // Windows APIを使用して音声再生
         #[cfg(target_os = "windows")]
         {
-            use windows::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
             use windows::core::PCWSTR;
+            use windows::Win32::Media::Audio::{
+                PlaySoundW, SND_ASYNC, SND_FILENAME, SND_NODEFAULT,
+            };
 
             // UTF-16に変換（null終端を含む）
             let wide_path: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
-            
+
             // フラグ設定
             // - SND_FILENAME: ファイルパスとして解釈
             // - SND_ASYNC: 非同期再生（即座に復帰）
@@ -61,7 +63,7 @@ impl WindowsAudioFeedback {
             if self.config.fallback_to_silent {
                 flags |= SND_NODEFAULT;
             }
-            
+
             unsafe {
                 let result = PlaySoundW(PCWSTR(wide_path.as_ptr()), None, flags);
                 if !result.as_bool() {
@@ -97,7 +99,7 @@ mod tests {
         let mut config = AudioFeedbackConfig::default();
         config.enabled = false;
         let feedback = WindowsAudioFeedback::new(config);
-        
+
         // 無効時は何も実行されない（パニックしないことを確認）
         feedback.play_toggle_sound(true);
         feedback.play_toggle_sound(false);
@@ -111,11 +113,11 @@ mod tests {
 
         let config = AudioFeedbackConfig::default();
         let feedback = WindowsAudioFeedback::new(config);
-        
+
         println!("Playing 'enabled' sound...");
         feedback.play_toggle_sound(true);
         thread::sleep(Duration::from_millis(1500));
-        
+
         println!("Playing 'disabled' sound...");
         feedback.play_toggle_sound(false);
         thread::sleep(Duration::from_millis(1500));
@@ -127,7 +129,7 @@ mod tests {
         config.on_sound = "C:\\NonExistent\\Sound.wav".to_string();
         config.fallback_to_silent = true;
         let feedback = WindowsAudioFeedback::new(config);
-        
+
         // fallback_to_silent=true なので、エラーでもパニックしない
         feedback.play_toggle_sound(true);
     }
@@ -141,7 +143,7 @@ mod tests {
             fallback_to_silent: true,
         };
         let feedback = WindowsAudioFeedback::new(config);
-        
+
         // カスタム音声パスでもパニックしない
         feedback.play_toggle_sound(true);
         feedback.play_toggle_sound(false);

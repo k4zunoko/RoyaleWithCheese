@@ -22,7 +22,7 @@ impl SpoutDxResult {
     pub fn is_ok(self) -> bool {
         self == SpoutDxResult::Ok
     }
-    
+
     pub fn from_raw(value: c_int) -> Self {
         match value {
             0 => SpoutDxResult::Ok,
@@ -60,7 +60,9 @@ impl Default for SpoutDxSenderInfo {
 impl SpoutDxSenderInfo {
     /// C文字列をRust Stringに変換
     pub fn name_as_string(&self) -> String {
-        let bytes: Vec<u8> = self.name.iter()
+        let bytes: Vec<u8> = self
+            .name
+            .iter()
             .take_while(|&&c| c != 0)
             .map(|&c| c as u8)
             .collect();
@@ -86,10 +88,7 @@ extern "C" {
     pub fn spoutdx_receiver_destroy(handle: SpoutDxReceiverHandle) -> c_int;
 
     // DirectX初期化
-    pub fn spoutdx_receiver_open_dx11(
-        handle: SpoutDxReceiverHandle,
-        device: *mut c_void,
-    ) -> c_int;
+    pub fn spoutdx_receiver_open_dx11(handle: SpoutDxReceiverHandle, device: *mut c_void) -> c_int;
     pub fn spoutdx_receiver_close_dx11(handle: SpoutDxReceiverHandle) -> c_int;
 
     // 受信設定
@@ -104,18 +103,18 @@ extern "C" {
         handle: SpoutDxReceiverHandle,
         dst_texture: *mut c_void,
     ) -> c_int;
-    
+
     // 内部テクスチャへの受信（推奨方式）
     pub fn spoutdx_receiver_receive(handle: SpoutDxReceiverHandle) -> c_int;
-    
+
     // 内部受信テクスチャを取得（spoutdx_receiver_receive後に使用）
     // 戻り値: ID3D11Texture2D* または NULL
     pub fn spoutdx_receiver_get_received_texture(handle: SpoutDxReceiverHandle) -> *mut c_void;
-    
+
     // SpoutDX側のD3D11コンテキストを取得（CopyResource等に使用）
     // 戻り値: ID3D11DeviceContext* または NULL
     pub fn spoutdx_receiver_get_dx11_context(handle: SpoutDxReceiverHandle) -> *mut c_void;
-    
+
     #[allow(dead_code)]
     pub fn spoutdx_receiver_release(handle: SpoutDxReceiverHandle) -> c_int;
 
@@ -124,7 +123,7 @@ extern "C" {
         handle: SpoutDxReceiverHandle,
         out_info: *mut SpoutDxSenderInfo,
     ) -> c_int;
-    
+
     #[allow(dead_code)]
     pub fn spoutdx_receiver_is_updated(handle: SpoutDxReceiverHandle) -> c_int;
     #[allow(dead_code)]
@@ -139,7 +138,10 @@ mod tests {
     #[test]
     fn test_spout_dx_result_conversion() {
         assert!(SpoutDxResult::from_raw(0).is_ok());
-        assert_eq!(SpoutDxResult::from_raw(-3), SpoutDxResult::ErrorNotConnected);
+        assert_eq!(
+            SpoutDxResult::from_raw(-3),
+            SpoutDxResult::ErrorNotConnected
+        );
         assert_eq!(SpoutDxResult::from_raw(-99), SpoutDxResult::ErrorInternal);
         assert_eq!(SpoutDxResult::from_raw(-999), SpoutDxResult::ErrorInternal);
     }
@@ -149,7 +151,7 @@ mod tests {
         let mut info = SpoutDxSenderInfo::default();
         info.name[0..4].copy_from_slice(&[b'T' as i8, b'e' as i8, b's' as i8, b't' as i8]);
         assert_eq!(info.name_as_string(), "Test");
-        
+
         // 空文字列のテスト
         let empty = SpoutDxSenderInfo::default();
         assert_eq!(empty.name_as_string(), "");

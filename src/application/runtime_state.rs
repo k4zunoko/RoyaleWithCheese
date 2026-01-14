@@ -4,19 +4,22 @@
 //! `Arc<AtomicBool>`を使用したロックフリー設計により、
 //! 読み取り側スレッド（Capture/Process/HID）は数CPUサイクルで状態を確認できます。
 
-use std::sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU64, Ordering},
+    Arc,
+};
 use std::time::Instant;
 
 /// ランタイム状態（スレッド間共有、ロックフリー設計）
-/// 
+///
 /// Insertキーによるシステム有効/無効切り替えやマウスボタン状態を管理します。
-/// 
+///
 /// # 低レイテンシ設計
 /// `Arc<AtomicBool>`を使用したロックフリー実装により、以下の特性を実現：
 /// - **読み取り**: `Ordering::Relaxed` - 数CPUサイクル、Mutexロック不要
 /// - **書き込み**: stats_threadのみが実行（低頻度）
 /// - **メモリオーダー**: Relaxed - 厳密な順序保証不要（若干の遅延は許容）
-/// 
+///
 /// # 使用スレッド
 /// - **書き込み**: Stats/UIスレッドのみ（入力ポーリング）
 /// - **読み取り**: Capture/Process/HIDスレッド（高頻度）
@@ -45,31 +48,31 @@ impl RuntimeState {
             start_time: Instant::now(),
         }
     }
-    
+
     // ===== 高速読み取り（Capture/Process/HIDスレッド用） =====
-    
+
     /// システムが有効かどうかを確認（ロックフリー、超高速）
     #[inline]
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::Relaxed)
     }
-    
+
     /// マウス左ボタンが押下されているかを確認（ロックフリー、超高速）
     #[inline]
     #[allow(dead_code)] // 将来的に使用する可能性
     pub fn is_mouse_left_pressed(&self) -> bool {
         self.mouse_left.load(Ordering::Relaxed)
     }
-    
+
     /// マウス右ボタンが押下されているかを確認（ロックフリー、超高速）
     #[inline]
     #[allow(dead_code)] // 将来的に使用する可能性
     pub fn is_mouse_right_pressed(&self) -> bool {
         self.mouse_right.load(Ordering::Relaxed)
     }
-    
+
     // ===== 書き込み（stats_thread用） =====
-    
+
     /// 有効/無効をトグル（新しい状態を返す）
     pub fn toggle_enabled(&self) -> bool {
         let current = self.enabled.load(Ordering::Relaxed);
@@ -77,18 +80,18 @@ impl RuntimeState {
         self.enabled.store(new_value, Ordering::Relaxed);
         new_value
     }
-    
+
     /// マウスボタン状態を設定
     pub fn set_mouse_buttons(&self, left: bool, right: bool) {
         self.mouse_left.store(left, Ordering::Relaxed);
         self.mouse_right.store(right, Ordering::Relaxed);
     }
-    
+
     /// 無効状態のログを出力すべきかを判定（5秒に1回のレートリミット）
-    /// 
+    ///
     /// HIDスレッドでシステム無効時のログレートリミットに使用します。
     /// ロックフリーのAtomic操作のみで実装されており、数CPUサイクルで完了します。
-    /// 
+    ///
     /// # Returns
     /// - `true`: ログを出力すべき（5秒以上経過または初回）
     /// - `false`: ログをスキップすべき（5秒未満）
@@ -96,17 +99,14 @@ impl RuntimeState {
     pub fn should_log_disabled_status(&self) -> bool {
         let now_ms = self.start_time.elapsed().as_millis() as u64;
         let last_ms = self.last_disabled_log_ms.load(Ordering::Relaxed);
-        
+
         // 初回または5秒以上経過した場合
         if last_ms == 0 || now_ms.saturating_sub(last_ms) >= 5000 {
             // Atomic CAS（Compare-And-Swap）で更新
             // 複数スレッドが同時に呼び出しても、1つのスレッドのみが成功する
-            self.last_disabled_log_ms.compare_exchange(
-                last_ms,
-                now_ms,
-                Ordering::Relaxed,
-                Ordering::Relaxed
-            ).is_ok()
+            self.last_disabled_log_ms
+                .compare_exchange(last_ms, now_ms, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
         } else {
             false
         }
@@ -127,11 +127,11 @@ mod tests {
     fn test_runtime_state_toggle() {
         let state = RuntimeState::new();
         assert!(state.is_enabled());
-        
+
         let new_state = state.toggle_enabled();
         assert!(!new_state);
         assert!(!state.is_enabled());
-        
+
         let new_state = state.toggle_enabled();
         assert!(new_state);
         assert!(state.is_enabled());
@@ -142,11 +142,11 @@ mod tests {
         let state = RuntimeState::new();
         assert!(!state.is_mouse_left_pressed());
         assert!(!state.is_mouse_right_pressed());
-        
+
         state.set_mouse_buttons(true, false);
         assert!(state.is_mouse_left_pressed());
         assert!(!state.is_mouse_right_pressed());
-        
+
         state.set_mouse_buttons(false, true);
         assert!(!state.is_mouse_left_pressed());
         assert!(state.is_mouse_right_pressed());

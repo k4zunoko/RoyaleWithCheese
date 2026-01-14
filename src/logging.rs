@@ -39,8 +39,8 @@ pub fn init_logging(
     json_format: bool,
     log_dir: Option<PathBuf>,
 ) -> Option<tracing_appender::non_blocking::WorkerGuard> {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(log_level));
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
 
     match log_dir {
         Some(dir) => {
@@ -73,7 +73,11 @@ pub fn init_logging(
                 return None;
             }
 
-            info!("Logging initialized (async file): level={}, format={}", log_level, if json_format { "json" } else { "text" });
+            info!(
+                "Logging initialized (async file): level={}, format={}",
+                log_level,
+                if json_format { "json" } else { "text" }
+            );
             Some(guard)
         }
         None => {
@@ -94,7 +98,11 @@ pub fn init_logging(
             };
 
             if result.is_ok() {
-                info!("Logging initialized (stdout): level={}, format={}", log_level, if json_format { "json" } else { "text" });
+                info!(
+                    "Logging initialized (stdout): level={}, format={}",
+                    log_level,
+                    if json_format { "json" } else { "text" }
+                );
             }
             None
         }
@@ -262,11 +270,7 @@ impl SpanTimer {
 impl Drop for SpanTimer {
     fn drop(&mut self) {
         let elapsed = self.elapsed_us();
-        tracing::debug!(
-            span = self.name,
-            elapsed_us = elapsed,
-            "Span completed"
-        );
+        tracing::debug!(span = self.name, elapsed_us = elapsed, "Span completed");
     }
 }
 

@@ -157,7 +157,12 @@ pub fn clamp_roi(roi: &Roi, bounds_width: u32, bounds_height: u32) -> Option<Roi
         return None;
     }
 
-    Some(Roi::new(clamped_x, clamped_y, clamped_width, clamped_height))
+    Some(Roi::new(
+        clamped_x,
+        clamped_y,
+        clamped_width,
+        clamped_height,
+    ))
 }
 
 /// ROI領域をソーステクスチャからステージングテクスチャへコピー
@@ -223,9 +228,7 @@ pub fn copy_texture_to_cpu(
         let mut mapped: D3D11_MAPPED_SUBRESOURCE = mem::zeroed();
         context
             .Map(staging_tex, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
-            .map_err(|e| {
-                DomainError::Capture(format!("Failed to map staging texture: {:?}", e))
-            })?;
+            .map_err(|e| DomainError::Capture(format!("Failed to map staging texture: {:?}", e)))?;
 
         // RowPitchを考慮してデータをコピー
         let row_pitch = mapped.RowPitch as usize;
