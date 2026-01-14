@@ -83,12 +83,18 @@ Capture→Process、Process→HID は `bounded(1)` を使い、古いデータ�
 
 設定ファイル契約は [CLI_CONTRACT.md](CLI_CONTRACT.md) を参照してください。
 
+## キャプチャ方式の実装状況
+
+- **DDA (Desktop Duplication API)**: ✅ 実装済み - 画面全体の高速キャプチャ
+- **Spout**: ✅ 実装済み（2026-01-08） - DX11テクスチャ受信
+- **WGC (Windows Graphics Capture)**: ✅ 実装済み（2026-01-13） - 低レイテンシモード
+
 ## process.mode の実装状況
 
-- `fast-color`: 実装済み（HSV 色検知）
-- `yolo-ort`: 現状未実装（指定するとエラーで終了）
+- `fast-color`: ✅ 実装済み（HSV 色検知）
+- `yolo-ort`: ❌ 未実装（指定するとエラーで終了）
 
-未実装/制約は [ROADMAP.md](ROADMAP.md) にまとめます。
+詳細は [ROADMAP.md](ROADMAP.md) を参照してください。
 
 ## Cargo features
 
