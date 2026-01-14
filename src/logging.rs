@@ -9,31 +9,31 @@
 //! # 設計意図
 //! 低レイテンシを最優先し、ログ出力がHot Pathのパフォーマンスに影響しないように実装しています。
 
-#[cfg(debug_assertions)] 
+#[cfg(debug_assertions)]
 use std::path::PathBuf;
-#[cfg(debug_assertions)] 
+#[cfg(debug_assertions)]
 use tracing::info;
-#[cfg(debug_assertions)] 
+#[cfg(debug_assertions)]
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// ログシステムを初期化
-/// 
+///
 /// # ビルドモード別の動作
 /// - **Release ビルド**: この関数自体が空関数にコンパイル最適化され、ゼロオーバーヘッド
 /// - **Debug ビルド**: tracing-appenderで非同期ファイル出力（メインスレッドはメモリコピーのみ）
-/// 
+///
 /// # Arguments
 /// - `log_level`: ログレベル（"info", "debug", "trace"等）
 /// - `json_format`: JSON形式で出力するか
 /// - `log_dir`: ログファイル出力先（None = 標準出力）
-/// 
+///
 /// # Returns
 /// - Debug: `Some(WorkerGuard)` - プログラム終了まで保持必須（Drop時にログスレッド終了）
 /// - Release: `None` - オーバーヘッドなし
-/// 
+///
 /// # 重要
 /// Debugビルドでは戻り値の`WorkerGuard`をmain関数終了まで保持する必要があります。
-#[cfg(debug_assertions)] 
+#[cfg(debug_assertions)]
 pub fn init_logging(
     log_level: &str,
     json_format: bool,
@@ -46,7 +46,7 @@ pub fn init_logging(
         Some(dir) => {
             // ファイル出力（非同期）
             std::fs::create_dir_all(&dir).expect("Failed to create log directory");
-            
+
             let file_appender = tracing_appender::rolling::daily(dir, "royale_with_cheese.log");
             let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
@@ -102,7 +102,7 @@ pub fn init_logging(
 }
 
 /// Release ビルド時のスタブ実装
-#[cfg(not(debug_assertions))] 
+#[cfg(not(debug_assertions))]
 pub fn init_logging(
     _log_level: &str,
     _json_format: bool,
@@ -113,14 +113,14 @@ pub fn init_logging(
 }
 
 /// 区間計測用のマクロ
-/// 
+///
 /// Release ビルド時は完全にコンパイルアウト（ゼロコスト）
 /// Debug ビルド時のみ計測を実行
-/// 
+///
 /// # 使用例
 /// ```ignore
 /// use royale_with_cheese::measure_span;
-/// 
+///
 /// fn process_frame() {
 ///     measure_span!("process_frame", {
 ///         // 処理内容
@@ -130,7 +130,7 @@ pub fn init_logging(
 #[macro_export]
 macro_rules! measure_span {
     ($name:expr, $body:expr) => {
-        #[cfg(debug_assertions)] 
+        #[cfg(debug_assertions)]
         {
             let _span = tracing::info_span!($name).entered();
             let _start = std::time::Instant::now();
@@ -143,7 +143,7 @@ macro_rules! measure_span {
             );
             result
         }
-        #[cfg(not(debug_assertions))] 
+        #[cfg(not(debug_assertions))]
         {
             $body
         }
@@ -224,7 +224,7 @@ impl MeasurementStats {
 }
 
 /// 区間計測ヘルパー
-/// 
+///
 /// Release ビルド時は `Instant::now()` でオーバーヘッドが生じる可能性があるため、
 #[allow(dead_code)]
 pub struct SpanTimer {
@@ -233,7 +233,7 @@ pub struct SpanTimer {
 }
 
 impl SpanTimer {
-    #[cfg(debug_assertions)] 
+    #[cfg(debug_assertions)]
     #[allow(dead_code)]
     pub fn new(name: &'static str) -> Self {
         Self {
@@ -242,7 +242,7 @@ impl SpanTimer {
         }
     }
 
-    #[cfg(not(debug_assertions))] 
+    #[cfg(not(debug_assertions))]
     #[allow(dead_code)]
     pub fn new(_name: &'static str) -> Self {
         // Release ビルド時は計測しない
@@ -258,7 +258,7 @@ impl SpanTimer {
     }
 }
 
-#[cfg(debug_assertions)] 
+#[cfg(debug_assertions)]
 impl Drop for SpanTimer {
     fn drop(&mut self) {
         let elapsed = self.elapsed_us();
@@ -270,7 +270,7 @@ impl Drop for SpanTimer {
     }
 }
 
-#[cfg(not(debug_assertions))] 
+#[cfg(not(debug_assertions))]
 impl Drop for SpanTimer {
     fn drop(&mut self) {
         // Release ビルド時は何もしない
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn test_measurement_stats() {
         let mut stats = MeasurementStats::new("test".to_string());
-        
+
         stats.add_sample(100);
         stats.add_sample(200);
         stats.add_sample(300);
@@ -306,7 +306,7 @@ mod tests {
         let timer = SpanTimer::new("test_span");
         thread::sleep(Duration::from_millis(10));
         let elapsed = timer.elapsed_us();
-        
+
         // 10ms = 10000us 以上経過しているはず
         assert!(elapsed >= 10000);
     }
@@ -323,7 +323,7 @@ mod tests {
         // 標準出力モード（デバッグ用）
         let guard = init_logging("debug", false, None);
         assert!(guard.is_none());
-        
+
         tracing::info!("Test log message");
         // ログが出力されることを確認（エラーにならないこと）
     }
@@ -332,30 +332,30 @@ mod tests {
     fn test_init_logging_file() {
         // ファイル出力モード
         let temp_dir = std::env::temp_dir().join("royale_test_logs");
-        
+
         // グローバルsubscriberが既に設定されている場合はスキップ
         // （他のテストで設定済みの可能性がある）
         let guard = init_logging("info", false, Some(temp_dir.clone()));
-        
+
         if guard.is_none() {
             // 既に設定済み - スキップ
             return;
         }
-        
+
         assert!(temp_dir.exists());
-        
+
         tracing::info!("Test file log");
-        
+
         // guardをDropしてログをフラッシュ
         drop(guard);
-        
+
         // ログファイルが作成されていることを確認
         let log_files: Vec<_> = std::fs::read_dir(&temp_dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .collect();
         assert!(!log_files.is_empty(), "Log file should be created");
-        
+
         // クリーンアップ
         std::fs::remove_dir_all(temp_dir).ok();
     }

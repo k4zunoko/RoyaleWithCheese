@@ -63,9 +63,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     config.validate()?;
 
     tracing::info!("Configuration validated successfully");
-    tracing::info!("Capture: source={:?}, timeout={}ms, monitor={}", 
+    tracing::info!("Capture: source={:?}, timeout={}ms, monitor={}",
         config.capture.source,
-        config.capture.timeout_ms, 
+        config.capture.timeout_ms,
         config.capture.monitor_index
     );
 
@@ -124,11 +124,11 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
     } else {
         // Spout未接続時など、画面サイズが不明な場合はサイズのみ設定
         // 実際の位置は毎フレーム動的に計算される
-        tracing::warn!("Capture device size unknown (width={}, height={}), ROI position will be dynamically calculated", 
+        tracing::warn!("Capture device size unknown (width={}, height={}), ROI position will be dynamically calculated",
             device_info.width, device_info.height);
         Roi::new(0, 0, config.process.roi.width, config.process.roi.height)
     };
-    tracing::info!("Process: mode={}, ROI={}x{} (dynamically centered each frame)", 
+    tracing::info!("Process: mode={}, ROI={}x{} (dynamically centered each frame)",
         config.process.mode,
         roi.width,
         roi.height
@@ -205,7 +205,7 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
         config.communication.serial_number.clone(),
         config.communication.device_path.clone(),
     )?;
-    tracing::info!("HID adapter initialized: VID=0x{:04X}, PID=0x{:04X}", 
+    tracing::info!("HID adapter initialized: VID=0x{:04X}, PID=0x{:04X}",
         config.communication.vendor_id,
         config.communication.product_id
     );
@@ -255,4 +255,3 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
 
     Ok(())
 }
-
