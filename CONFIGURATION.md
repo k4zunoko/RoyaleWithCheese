@@ -6,8 +6,11 @@
 JSON Schemaによる検証により、設定の正確性が保証されています。
 
 **設定ファイルの場所**: `config.toml` (プロジェクトルート)  
-**スキーマファイル**: `schema/config.json`  
+**スキーマファイル**: `schema/config.json` (自動生成)  
 **サンプル**: `config.toml.example`
+
+⚠️ **注意**: このドキュメント（CONFIGURATION.md）は `cargo run --bin generate_schema` で自動生成されます。
+設定項目の説明を変更する場合は、`src/domain/config.rs`のdoc commentsを編集してください。
 
 ## 設定ファイルの読み込み
 
@@ -17,226 +20,111 @@ JSON Schemaによる検証により、設定の正確性が保証されていま
 
 ## 設定項目
 
-### [capture] - キャプチャ設定
-
-画面キャプチャの動作を制御します。
-
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `source` | enum | `"dda"` | キャプチャソース<br>• `"dda"`: Desktop Duplication API（画面全体をキャプチャ）<br>• `"spout"`: Spout DX11テクスチャ受信（送信側アプリケーションが必要）<br>• `"wgc"`: Windows Graphics Capture（低レイテンシモード、Win10 1803+） | `dda`/`spout`/`wgc` |
-| `timeout_ms` | u64 | `8` | キャプチャタイムアウト（ミリ秒） | > 0 |
-| `max_consecutive_timeouts` | u32 | `120` | 連続タイムアウト許容回数<br>この回数を超えたら再初期化を実行 | - |
-| `reinit_initial_delay_ms` | u64 | `100` | 再初期化時の初期待機時間（ミリ秒） | - |
-| `reinit_max_delay_ms` | u64 | `5000` | 再初期化時の最大待機時間（ミリ秒、指数バックオフの上限） | - |
-| `monitor_index` | u32 | `0` | メインモニタのインデックス<br>**DDAのみ有効**（通常は0） | - |
-| `spout_sender_name` | string? | `null` | Spout送信者名（オプション）<br>空文字列または省略で最初のアクティブ送信者に自動接続<br>**spoutソースのみ有効** | - |
-
-### [process] - 画像処理設定
-
-画像処理およびROI（Region of Interest）の設定。
-
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `mode` | string | `"fast-color"` | 処理モード<br>• `"fast-color"`: HSV色検知による高速処理<br>• `"yolo-ort"`: YOLO + ONNX Runtime による物体検出（将来実装） | - |
-| `min_detection_area` | u32 | `0` | 最小検出面積（ピクセル数、これ未満は無視） | - |
-| `detection_method` | enum | `"moments"` | 検出方法（fast-colorモードのみ使用）<br>• `"moments"`: モーメントによる重心計算（高精度）<br>• `"boundingbox"`: バウンディングボックスの中心（高速） | `moments`/`boundingbox` |
-
-### [process.roi] - ROI設定
-
-画面中心を基準として、指定したサイズの領域をキャプチャします。  
-x, y座標は実行時に画面解像度から自動計算されます。
-
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `width` | u32 | `960` | ROI幅（ピクセル） | 画面解像度以下 |
-| `height` | u32 | `540` | ROI高さ（ピクセル） | 画面解像度以下 |
-
-⚠️ **注意**: width/heightが画面解像度を超える場合は起動時にエラーになります。
-
-### [process.hsv_range] - HSV色空間レンジ
-
-fast-colorモードで使用するHSV色空間の検出範囲（OpenCV準拠）。
-
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `h_min` | u8 | `25` | H（色相）の最小値 | 0-180 |
-| `h_max` | u8 | `45` | H（色相）の最大値 | 0-180 |
-| `s_min` | u8 | `80` | S（彩度）の最小値 | 0-255 |
-| `s_max` | u8 | `255` | S（彩度）の最大値 | 0-255 |
-| `v_min` | u8 | `80` | V（明度）の最小値 | 0-255 |
-| `v_max` | u8 | `255` | V（明度）の最大値 | 0-255 |
-
-デフォルト設定は黄色系の検出を想定しています。
-
-### [process.coordinate_transform] - 座標変換設定
-
-検出座標の変換パラメータ。
-
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `sensitivity` | f32 | `1.0` | 感度（倍率、X/Y軸共通） | > 0.0 |
-| `x_clip_limit` | f32 | `10.0` | X軸のクリッピング限界値（ピクセル） | ≥ 0.0 |
-| `y_clip_limit` | f32 | `10.0` | Y軸のクリッピング限界値（ピクセル） | ≥ 0.0 |
-| `dead_zone` | f32 | `0.0` | デッドゾーン（ピクセル） | ≥ 0.0 |
-
-### [communication] - HID通信設定
-
-HIDデバイスとの通信パラメータ。
-
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `vendor_id` | u16 | `0x0000` | HIDデバイスのVendor ID（16進数で指定する場合は `0x1234` の形式） | - |
-| `product_id` | u16 | `0x0000` | HIDデバイスのProduct ID | - |
-| `serial_number` | string? | `null` | デバイスのシリアル番号（オプション） | - |
-| `device_path` | string? | `null` | デバイスパス（オプション、最も確実な識別方法）<br>例 (Windows): `"\\\\?\\hid#vid_2341&pid_8036#..."` | - |
-| `hid_send_interval_ms` | u64 | `4` | HIDレポート送信間隔（ミリ秒）<br>HIDスレッドで新しい検出結果を待つタイムアウト時間<br>例: 8ms ≈ 125Hz、7ms ≈ 143Hz、16ms ≈ 62Hz | - |
-
-💡 **ヒント**: `cargo test test_enumerate_hid_devices -- --nocapture` でVendor ID/Product IDを取得できます。
-
 ### [activation] - アクティベーション設定
 
-HID送信のアクティベーション条件。
+アクティベーション設定
 
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `max_distance_from_center` | f32 | `5.0` | ROI中心からの最大距離（ピクセル）<br>検出対象がROI中心からこの距離以内にある場合、アクティブ状態として記録される | - |
-| `active_window_ms` | u64 | `500` | アクティブウィンドウの持続時間（ミリ秒）<br>最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する | - |
-
-### [pipeline] - パイプライン設定
-
-処理パイプラインの動作制御。
-
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `enable_dirty_rect_optimization` | bool | `false` | DirtyRect最適化を有効にするか（**未実装**）<br>true の場合、ROI と交差しない DirtyRect は処理をスキップ<br>⚠️ 現在、win_desktop_duplication クレートから DirtyRect 情報を取得していないため機能しません | - |
-| `stats_interval_sec` | u64 | `10` | 統計情報の出力間隔（秒） | - |
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `active_window_ms` | uint64 | - | アクティブウィンドウの持続時間（ミリ秒）<br><br>最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する |
+| `max_distance_from_center` | float | - | ROI中心からの最大距離（ピクセル）<br><br>検出対象がROI中心からこの距離以内にある場合、アクティブ状態として記録される |
 
 ### [audio_feedback] - 音声フィードバック設定
 
-Insertキー押下時の音声フィードバック。
+音声フィードバック設定
 
-| 設定項目 | 型 | デフォルト値 | 説明 | 制約 |
-|---------|-----|------------|------|------|
-| `enabled` | bool | `true` | Insertキー押下時の音声フィードバックを有効にする | - |
-| `on_sound` | string | `"C:\\Windows\\Media\\Speech On.wav"` | 有効化時の音声ファイルパス（Windowsシステム音を使用） | - |
-| `off_sound` | string | `"C:\\Windows\\Media\\Speech Off.wav"` | 無効化時の音声ファイルパス | - |
-| `fallback_to_silent` | bool | `true` | 音声ファイルが見つからない場合は静かに失敗する（ログのみ） | - |
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `enabled` | bool | - | Insertキー押下時の音声フィードバックを有効にする |
+| `fallback_to_silent` | bool | - | 音声ファイルが見つからない場合は静かに失敗する（ログのみ） |
+| `off_sound` | string | - | 無効化時の音声ファイルパス |
+| `on_sound` | string | - | 有効化時の音声ファイルパス（Windowsシステム音を使用） |
 
----
+### [capture] - キャプチャ設定
 
-## 使用例
+キャプチャ設定
 
-### 基本設定（WGC + 低レイテンシ）
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `max_consecutive_timeouts` | uint32 | - | 連続タイムアウト許容回数<br><br>この回数を超えたら再初期化を実行 デフォルト: 120回 |
+| `monitor_index` | uint32 | - | メインモニタのインデックス（DDAのみ有効）<br><br>通常は0 |
+| `reinit_initial_delay_ms` | uint64 | - | 再初期化時の初期待機時間（ミリ秒）<br><br>デフォルト: 100ms |
+| `reinit_max_delay_ms` | uint64 | - | 再初期化時の最大待機時間（ミリ秒、指数バックオフの上限）<br><br>デフォルト: 5000ms |
+| `source` | CaptureSource | `"dda"` | キャプチャソース<br><br>選択肢: "dda", "spout", "wgc" デフォルト: "dda" |
+| `spout_sender_name` | string \| null | `null` | Spout送信者名（source = "spout" の場合のみ有効）<br><br>空文字列または省略で最初のアクティブ送信者に自動接続 |
+| `timeout_ms` | uint64 | - | キャプチャタイムアウト（ミリ秒）<br><br>デフォルト: 8ms |
 
-```toml
-[capture]
-source = "wgc"
-timeout_ms = 8
-max_consecutive_timeouts = 120
-reinit_initial_delay_ms = 100
-reinit_max_delay_ms = 5000
-monitor_index = 0
+### [communication] - HID通信設定
 
-[process]
-mode = "fast-color"
-min_detection_area = 0
-detection_method = "moments"
+HID通信設定
 
-[process.roi]
-width = 460
-height = 240
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `device_path` | string \| null | `null` | デバイスパス（オプション、最も確実な識別方法）<br><br>例 (Windows): "\\\\?\\hid#vid_2341&pid_8036#..." |
+| `hid_send_interval_ms` | uint64 | - | HIDレポート送信間隔（ミリ秒）<br><br>HIDスレッドで新しい検出結果を待つタイムアウト時間であり、HIDパケットの送信頻度を決定します。 新しい検出結果がない場合でも、この間隔で直前の値を送信し続けます。 例: 8ms = 約125Hz、7ms = 約143Hz、16ms = 約62Hz |
+| `product_id` | uint16 | - | HIDデバイスのProduct ID |
+| `serial_number` | string \| null | `null` | デバイスのシリアル番号（オプション） |
+| `vendor_id` | uint16 | - | HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）<br><br>`cargo test test_enumerate_hid_devices -- --nocapture` で取得できます |
 
-[process.hsv_range]
-h_min = 25
-h_max = 45
-s_min = 80
-s_max = 255
-v_min = 80
-v_max = 255
+### [pipeline] - パイプライン設定
 
-[process.coordinate_transform]
-sensitivity = 1.0
-x_clip_limit = 10.0
-y_clip_limit = 10.0
-dead_zone = 0.0
+パイプライン設定
 
-[communication]
-vendor_id = 0x0000
-product_id = 0x0000
-hid_send_interval_ms = 4
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `enable_dirty_rect_optimization` | bool | - | DirtyRect最適化を有効にするか（未実装）<br><br>true の場合、ROI と交差しない DirtyRect は処理をスキップ 注: 現在、win_desktop_duplication クレートから DirtyRect 情報を取得していないため機能しません |
+| `stats_interval_sec` | uint64 | - | 統計情報の出力間隔（秒） |
 
-[activation]
-max_distance_from_center = 5.0
-active_window_ms = 500
+### [process] - 画像処理設定
 
-[pipeline]
-enable_dirty_rect_optimization = false
-stats_interval_sec = 10
+画像処理設定
 
-[audio_feedback]
-enabled = true
-on_sound = "C:\\Windows\\Media\\Speech On.wav"
-off_sound = "C:\\Windows\\Media\\Speech Off.wav"
-fallback_to_silent = true
-```
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `coordinate_transform` | object | - | 座標変換設定 |
+| `detection_method` | DetectionMethod | `"moments"` | 検出方法（fast-colorモードのみ使用）<br><br>選択肢: "moments" (モーメントによる重心計算、高精度), "boundingbox" (バウンディングボックスの中心、高速) デフォルト: "moments" |
+| `hsv_range` | object | - | HSVレンジ設定（fast-colorモードのみ使用） |
+| `min_detection_area` | uint32 | - | 最小検出面積（ピクセル数、これ未満は無視）<br><br>デフォルト: 0 |
+| `mode` | string | - | 処理モード<br><br>選択肢: "fast-color" (HSV色検知), "yolo-ort" (YOLO物体検出、将来実装) デフォルト: "fast-color" |
+| `roi` | object | - | ROI（Region of Interest）設定 |
 
-### DDA設定（複数モニタ環境）
+#### [coordinate_transform] - 座標変換設定
 
-```toml
-[capture]
-source = "dda"
-monitor_index = 1
-timeout_ms = 8
-```
+座標変換設定
 
-### Spout受信設定
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `dead_zone` | float | - | デッドゾーン（ピクセル）<br><br>デフォルト: 0.0 |
+| `sensitivity` | float | - | 感度（倍率、X/Y軸共通）<br><br>デフォルト: 1.0 |
+| `x_clip_limit` | float | - | X軸のクリッピング限界値（ピクセル）<br><br>デフォルト: 10.0 |
+| `y_clip_limit` | float | - | Y軸のクリッピング限界値（ピクセル）<br><br>デフォルト: 10.0 |
 
-```toml
-[capture]
-source = "spout"
-spout_sender_name = "MyGame"
-```
+#### [hsv_range] - HSV色空間レンジ
 
----
+HSVレンジ設定
 
-## 注意事項
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `h_max` | uint8 | - | H（色相）の最大値<br><br>OpenCV準拠: H [0-180] |
+| `h_min` | uint8 | - | H（色相）の最小値<br><br>OpenCV準拠: H [0-180] |
+| `s_max` | uint8 | - | S（彩度）の最大値<br><br>OpenCV準拠: S [0-255] |
+| `s_min` | uint8 | - | S（彩度）の最小値<br><br>OpenCV準拠: S [0-255] |
+| `v_max` | uint8 | - | V（明度）の最大値<br><br>OpenCV準拠: V [0-255] |
+| `v_min` | uint8 | - | V（明度）の最小値<br><br>OpenCV準拠: V [0-255] |
 
-### ROI設定
+#### [roi] - ROI設定
 
-- **ROIは常に画面中心に配置されます**（プロジェクトの設計方針）
-- width/heightが画面解像度を超える場合は起動時エラー
-- 実行時に画面解像度から自動的にx, y座標が計算されます
+ROI設定（サイズのみ、位置は画面中心に自動配置）
 
-### キャプチャソース選択
+x, y座標は実行時に画面解像度から自動計算される。
+プロジェクトの設計方針として、ROIは常に画面中心に配置される。
 
-- **DDA**: 画面全体をキャプチャ、`monitor_index`で対象モニタ指定可能
-- **Spout**: 別アプリケーションからのDX11テクスチャ受信、送信側アプリケーションが必要
-- **WGC**: 低レイテンシモード（Win10 1803+）、処理レイテンシ0-1ms
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `height` | uint32 | - | ROI高さ（ピクセル）<br><br>注意: 画面解像度を超える場合は起動時にエラーになります |
+| `width` | uint32 | - | ROI幅（ピクセル）<br><br>注意: 画面解像度を超える場合は起動時にエラーになります |
 
-### 検証エラー
+## 参考
 
-設定ファイルの検証は`AppConfig::validate()`で行われます。  
-以下のケースでエラーが発生します:
-
-- ROI width/height が 0
-- HSV H範囲が 0-180 の外、またはmin > max
-- HSV S/V範囲で min > max
-- capture timeout_ms が 0
-- sensitivity が 0 以下
-- clip_limit が負の値
-- dead_zone が負の値
-
-検証エラー時はプログラムが起動時に終了します。
-
----
-
-## 関連ドキュメント
-
-- [CLI_CONTRACT.md](CLI_CONTRACT.md) — 実行時契約とconfig.tomlの動作
-- [DOMAIN_LAYER.md](DOMAIN_LAYER.md) — 設定の内部表現とDomain層の実装
-- `schema/config.json` — JSON Schema定義ファイル
-
----
-
-**更新履歴**:
-- 2026-01-30: 初版作成（schema/config.jsonから自動生成）
+- [docs/CLI_CONTRACT.md](docs/CLI_CONTRACT.md) - 実行時契約
+- [README.md](README.md) - クイックスタート

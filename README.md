@@ -51,6 +51,9 @@ cargo run --features performance-timing
 
 # 画像処理デバック
 cargo run --features opencv-debug-display
+
+# スキーマ生成（CONFIGURATION.md 更新用）
+cargo run --bin generate_schema
 ```
 
 ### ビルドオプション
