@@ -46,6 +46,17 @@ jobs:
           }
           Write-Host "✅ schema/config.json is up-to-date"
       
+      - name: Check if CONFIGURATION.md is up-to-date
+        shell: pwsh
+        run: |
+          $diff = git diff CONFIGURATION.md
+          if ($diff) {
+            Write-Host "❌ CONFIGURATION.md is out of sync! Run 'cargo run --bin generate_schema' and commit the changes."
+            Write-Host $diff
+            exit 1
+          }
+          Write-Host "✅ CONFIGURATION.md is up-to-date"
+      
       - name: Create config.toml for testing
         shell: pwsh
         run: Copy-Item config.toml.example config.toml
