@@ -20,7 +20,7 @@ JSON Schemaによる検証により、設定の正確性が保証されていま
 
 ## 設定項目
 
-### [activation] - アクティベーション設定
+### [activation]
 
 アクティベーション設定
 
@@ -29,7 +29,7 @@ JSON Schemaによる検証により、設定の正確性が保証されていま
 | `active_window_ms` | uint64 | - | アクティブウィンドウの持続時間（ミリ秒）<br><br>最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する |
 | `max_distance_from_center` | float | - | ROI中心からの最大距離（ピクセル）<br><br>検出対象がROI中心からこの距離以内にある場合、アクティブ状態として記録される |
 
-### [audio_feedback] - 音声フィードバック設定
+### [audio_feedback]
 
 音声フィードバック設定
 
@@ -40,7 +40,7 @@ JSON Schemaによる検証により、設定の正確性が保証されていま
 | `off_sound` | string | - | 無効化時の音声ファイルパス |
 | `on_sound` | string | - | 有効化時の音声ファイルパス（Windowsシステム音を使用） |
 
-### [capture] - キャプチャ設定
+### [capture]
 
 キャプチャ設定
 
@@ -54,7 +54,7 @@ JSON Schemaによる検証により、設定の正確性が保証されていま
 | `spout_sender_name` | string \| null | `null` | Spout送信者名（source = "spout" の場合のみ有効）<br><br>空文字列または省略で最初のアクティブ送信者に自動接続 |
 | `timeout_ms` | uint64 | - | キャプチャタイムアウト（ミリ秒）<br><br>デフォルト: 8ms |
 
-### [communication] - HID通信設定
+### [communication]
 
 HID通信設定
 
@@ -66,7 +66,7 @@ HID通信設定
 | `serial_number` | string \| null | `null` | デバイスのシリアル番号（オプション） |
 | `vendor_id` | uint16 | - | HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）<br><br>`cargo test test_enumerate_hid_devices -- --nocapture` で取得できます |
 
-### [pipeline] - パイプライン設定
+### [pipeline]
 
 パイプライン設定
 
@@ -75,7 +75,7 @@ HID通信設定
 | `enable_dirty_rect_optimization` | bool | - | DirtyRect最適化を有効にするか（未実装）<br><br>true の場合、ROI と交差しない DirtyRect は処理をスキップ 注: 現在、win_desktop_duplication クレートから DirtyRect 情報を取得していないため機能しません |
 | `stats_interval_sec` | uint64 | - | 統計情報の出力間隔（秒） |
 
-### [process] - 画像処理設定
+### [process]
 
 画像処理設定
 
@@ -88,7 +88,7 @@ HID通信設定
 | `mode` | string | - | 処理モード<br><br>選択肢: "fast-color" (HSV色検知), "yolo-ort" (YOLO物体検出、将来実装) デフォルト: "fast-color" |
 | `roi` | object | - | ROI（Region of Interest）設定 |
 
-#### [coordinate_transform] - 座標変換設定
+#### [coordinate_transform]
 
 座標変換設定
 
@@ -99,7 +99,7 @@ HID通信設定
 | `x_clip_limit` | float | - | X軸のクリッピング限界値（ピクセル）<br><br>デフォルト: 10.0 |
 | `y_clip_limit` | float | - | Y軸のクリッピング限界値（ピクセル）<br><br>デフォルト: 10.0 |
 
-#### [hsv_range] - HSV色空間レンジ
+#### [hsv_range]
 
 HSVレンジ設定
 
@@ -112,7 +112,7 @@ HSVレンジ設定
 | `v_max` | uint8 | - | V（明度）の最大値<br><br>OpenCV準拠: V [0-255] |
 | `v_min` | uint8 | - | V（明度）の最小値<br><br>OpenCV準拠: V [0-255] |
 
-#### [roi] - ROI設定
+#### [roi]
 
 ROI設定（サイズのみ、位置は画面中心に自動配置）
 

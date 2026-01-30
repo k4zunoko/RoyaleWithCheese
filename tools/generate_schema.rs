@@ -96,9 +96,8 @@ fn generate_property_section(
     schema: &Value,
     defs: &Map<String, Value>,
 ) {
-    // セクション名をフォーマット
-    let section_name = format_section_name(key);
-    md.push_str(&format!("### [{}] - {}\n\n", key, section_name));
+    // セクション見出し（キーのみ）
+    md.push_str(&format!("### [{}]\n\n", key));
 
     // description取得
     if let Some(desc) = schema.get("description") {
@@ -159,8 +158,7 @@ fn generate_properties_table(
                     // 定義が実際のオブジェクト（プロパティを持つ）かどうか確認
                     if let Some(def_schema) = defs.get(def_name) {
                         if def_schema.get("properties").is_some() {
-                            let subsection_name = format_section_name(prop_key);
-                            md.push_str(&format!("#### [{}] - {}\n\n", prop_key, subsection_name));
+                            md.push_str(&format!("#### [{}]\n\n", prop_key));
 
                             if let Some(desc) = def_schema.get("description") {
                                 md.push_str(&format!("{}\n\n", desc.as_str().unwrap_or("")));
@@ -301,20 +299,4 @@ fn get_description(schema: &Value) -> String {
     }
 
     "-".to_string()
-}
-
-/// セクション名をフォーマット
-fn format_section_name(key: &str) -> String {
-    match key {
-        "capture" => "キャプチャ設定".to_string(),
-        "process" => "画像処理設定".to_string(),
-        "communication" => "HID通信設定".to_string(),
-        "activation" => "アクティベーション設定".to_string(),
-        "audio_feedback" => "音声フィードバック設定".to_string(),
-        "pipeline" => "パイプライン設定".to_string(),
-        "roi" => "ROI設定".to_string(),
-        "hsv_range" => "HSV色空間レンジ".to_string(),
-        "coordinate_transform" => "座標変換設定".to_string(),
-        _ => key.to_string(),
-    }
 }
