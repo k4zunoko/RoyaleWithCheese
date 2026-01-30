@@ -46,5 +46,9 @@ jobs:
           }
           Write-Host "✅ schema/config.json is up-to-date"
       
+      - name: Create config.toml for testing
+        shell: pwsh
+        run: Copy-Item config.toml.example config.toml
+      
       - name: Validate config files load correctly
         run: cargo test test_config -- --nocapture
