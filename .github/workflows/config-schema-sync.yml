@@ -26,20 +26,25 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-schema-${{ hashFiles('**/Cargo.lock') }}
       
-      - name: Install LLVM (for OpenCV)
+      - name: Install LLVM (required for OpenCV Rust bindings)
         run: choco install llvm -y
-      
-      - name: Build project
-        run: cargo build --release
+        continue-on-error: true
       
       - name: Generate JSON Schema
         run: cargo run --bin generate_schema
       
       - name: Check if schema is up-to-date
+        shell: pwsh
         run: |
-          git diff --exit-code schema/config.json || (echo "❌ schema/config.json is out of sync! Run 'cargo run --bin generate_schema' and commit the changes." && exit 1)
+          $diff = git diff schema/config.json
+          if ($diff) {
+            Write-Host "❌ schema/config.json is out of sync! Run 'cargo run --bin generate_schema' and commit the changes."
+            Write-Host $diff
+            exit 1
+          }
+          Write-Host "✅ schema/config.json is up-to-date"
       
-      - name: Validate config.toml against schema
-        run: cargo test test_config_loads -- --nocapture
+      - name: Validate config files load correctly
+        run: cargo test test_config_loads test_config_example_loads -- --nocapture

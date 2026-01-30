@@ -24,7 +24,7 @@ RoyaleWithCheese は引数を取らない実行バイナリで、カレントデ
 
 - ファイル名は固定: `config.toml`
 - スキーマの実例: `config.toml.example`
-- **詳細な設定項目説明**: [CONFIGURATION.md](CONFIGURATION.md) を参照
+- **詳細な設定項目説明**: [../CONFIGURATION.md](../CONFIGURATION.md) を参照
 - 主な契約ポイント:
   - ROI は `width/height` のみ設定し、実行時に画面中心へ自動配置
   - `communication.vendor_id/product_id` が `0x0000` の場合、モック通信を選べる

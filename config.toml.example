@@ -1,6 +1,6 @@
 # RoyaleWithCheese 設定ファイル例
 # このファイルをコピーして config.toml として使用してください
-# 詳細な説明は docs/CONFIGURATION.md を参照してください
+# 詳細な説明は CONFIGURATION.md を参照してください
 
 [capture]
 source = "dda"

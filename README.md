@@ -5,6 +5,11 @@
 詳細な設計・仕様・運用情報は docs/ に集約しています：
 - docs/README.md
 
+## ドキュメント
+
+- **[CONFIGURATION.md](CONFIGURATION.md)** - 設定ファイル（config.toml）の詳細リファレンス
+- **[docs/README.md](docs/README.md)** - 設計・実装ドキュメントの索引（開発者向け）
+
 ## 特徴
 
 - **3種類のキャプチャ方式をサポート**

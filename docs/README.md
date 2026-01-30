@@ -9,8 +9,7 @@
 2. [DESIGN_PHILOSOPHY.md](DESIGN_PHILOSOPHY.md) — 設計原則（Clean Architecture / レイテンシ最適化）
 3. [REQUIREMENTS.md](REQUIREMENTS.md) — 要求仕様（機能/非機能、スコープ）
 4. [CLI_CONTRACT.md](CLI_CONTRACT.md) — 実行時のふるまい・設定ファイル契約
-5. [CONFIGURATION.md](CONFIGURATION.md) — 設定ファイル詳細リファレンス（config.toml）
-6. レイヤ別詳細
+5. レイヤ別詳細
    - [DOMAIN_LAYER.md](DOMAIN_LAYER.md)
    - [APPLICATION_LAYER.md](APPLICATION_LAYER.md)
    - Infrastructure層（キャプチャ実装）
@@ -18,14 +17,14 @@
      - [INFRASTRUCTURE_SPOUT.md](INFRASTRUCTURE_SPOUT.md) — Spoutテクスチャ受信（完了）
      - [INFRASTRUCTURE_WGC.md](INFRASTRUCTURE_WGC.md) — WGCキャプチャ実装（完了）
      - [WGC_PHASE1_REPORT.md](WGC_PHASE1_REPORT.md) — WGC Phase 1技術検証レポート
-7. 横断的トピック
+6. 横断的トピック
    - [ERROR_HANDLING.md](ERROR_HANDLING.md)
    - [TESTING_STRATEGY.md](TESTING_STRATEGY.md)
    - [LOGGING.md](LOGGING.md)
    - [RELEASE_BUILD.md](RELEASE_BUILD.md)
-8. 開発・調整
+7. 開発・調整
    - [VISUAL_DEBUG_GUIDE.md](VISUAL_DEBUG_GUIDE.md)
-9. 現状と今後
+8. 現状と今後
    - [ROADMAP.md](ROADMAP.md)
 
 ## ルートファイルとの関係
