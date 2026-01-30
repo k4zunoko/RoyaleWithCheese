@@ -1,0 +1,45 @@
+name: Config Schema Sync Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  check-schema-sync:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Install LLVM (for OpenCV)
+        run: choco install llvm -y
+      
+      - name: Build project
+        run: cargo build --release
+      
+      - name: Generate JSON Schema
+        run: cargo run --bin generate_schema
+      
+      - name: Check if schema is up-to-date
+        run: |
+          git diff --exit-code schema/config.json || (echo "❌ schema/config.json is out of sync! Run 'cargo run --bin generate_schema' and commit the changes." && exit 1)
+      
+      - name: Validate config.toml against schema
+        run: cargo test test_config_loads -- --nocapture

@@ -2,6 +2,7 @@
 name = "RoyaleWithCheese"
 version = "0.1.0"
 edition = "2021"
+default-run = "RoyaleWithCheese"
 
 [features]
 default = []
@@ -22,6 +23,7 @@ tracing-appender = "0.2"
 # 設定管理
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
+schemars = "1.0"
 
 # スレッド間通信
 crossbeam-channel = "0.5"
@@ -34,6 +36,9 @@ opencv = { version = "0.92", features = ["highgui"] }
 
 # HID通信
 hidapi = "2.6"
+
+# JSON (schema生成用)
+serde_json = "1.0"
 
 # Windows API (GPU ROI実装用 - win_desktop_duplicationと同じバージョン)
 windows = { version = "0.57", features = [
@@ -58,6 +63,10 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+[[bin]]
+name = "generate_schema"
+path = "tools/generate_schema.rs"
 
 [dev-dependencies]
 # テスト用

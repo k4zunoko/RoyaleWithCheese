@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AppConfig",
+  "description": "アプリケーション設定のルート構造",
+  "type": "object",
+  "properties": {
+    "activation": {
+      "description": "アクティベーション設定",
+      "$ref": "#/$defs/ActivationConfig"
+    },
+    "audio_feedback": {
+      "description": "音声フィードバック設定",
+      "$ref": "#/$defs/AudioFeedbackConfig"
+    },
+    "capture": {
+      "description": "キャプチャ設定",
+      "$ref": "#/$defs/CaptureConfig"
+    },
+    "communication": {
+      "description": "HID通信設定",
+      "$ref": "#/$defs/CommunicationConfig"
+    },
+    "pipeline": {
+      "description": "パイプライン設定",
+      "$ref": "#/$defs/PipelineConfig"
+    },
+    "process": {
+      "description": "画像処理設定",
+      "$ref": "#/$defs/ProcessConfig"
+    }
+  },
+  "required": [
+    "capture",
+    "process",
+    "communication",
+    "pipeline",
+    "activation",
+    "audio_feedback"
+  ],
+  "$defs": {
+    "ActivationConfig": {
+      "description": "HIDアクティベーション設定",
+      "type": "object",
+      "properties": {
+        "active_window_ms": {
+          "description": "アクティブウィンドウの持続時間（ミリ秒）\n\n最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "max_distance_from_center": {
+          "description": "ROI中心からの最大距離（ピクセル）\n\n検出対象がROI中心からこの距離以内にある場合、アクティブ状態として記録される",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "max_distance_from_center",
+        "active_window_ms"
+      ]
+    },
+    "AudioFeedbackConfig": {
+      "description": "音声フィードバック設定",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Insertキー押下時の音声フィードバックを有効にする",
+          "type": "boolean"
+        },
+        "fallback_to_silent": {
+          "description": "音声ファイルが見つからない場合は静かに失敗する（ログのみ）",
+          "type": "boolean"
+        },
+        "off_sound": {
+          "description": "無効化時の音声ファイルパス",
+          "type": "string"
+        },
+        "on_sound": {
+          "description": "有効化時の音声ファイルパス（Windowsシステム音を使用）",
+          "type": "string"
+        }
+      },
+      "required": [
+        "enabled",
+        "on_sound",
+        "off_sound",
+        "fallback_to_silent"
+      ]
+    },
+    "CaptureConfig": {
+      "description": "キャプチャ設定",
+      "type": "object",
+      "properties": {
+        "max_consecutive_timeouts": {
+          "description": "連続タイムアウト許容回数\n\nこの回数を超えたら再初期化を実行\nデフォルト: 120回",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "monitor_index": {
+          "description": "メインモニタのインデックス（DDAのみ有効）\n\n通常は0",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "reinit_initial_delay_ms": {
+          "description": "再初期化時の初期待機時間（ミリ秒）\n\nデフォルト: 100ms",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reinit_max_delay_ms": {
+          "description": "再初期化時の最大待機時間（ミリ秒、指数バックオフの上限）\n\nデフォルト: 5000ms",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "source": {
+          "description": "キャプチャソース\n\n選択肢: \"dda\", \"spout\", \"wgc\"\nデフォルト: \"dda\"",
+          "$ref": "#/$defs/CaptureSource",
+          "default": "dda"
+        },
+        "spout_sender_name": {
+          "description": "Spout送信者名（source = \"spout\" の場合のみ有効）\n\n空文字列または省略で最初のアクティブ送信者に自動接続",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "timeout_ms": {
+          "description": "キャプチャタイムアウト（ミリ秒）\n\nデフォルト: 8ms",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "timeout_ms",
+        "max_consecutive_timeouts",
+        "reinit_initial_delay_ms",
+        "reinit_max_delay_ms",
+        "monitor_index"
+      ]
+    },
+    "CaptureSource": {
+      "description": "キャプチャソース",
+      "oneOf": [
+        {
+          "description": "Desktop Duplication API（画面全体をキャプチャ）",
+          "type": "string",
+          "const": "dda"
+        },
+        {
+          "description": "Spout DX11テクスチャ受信（送信側アプリケーションが必要）",
+          "type": "string",
+          "const": "spout"
+        },
+        {
+          "description": "Windows Graphics Capture（低レイテンシモード、Win10 1803+）",
+          "type": "string",
+          "const": "wgc"
+        }
+      ]
+    },
+    "CommunicationConfig": {
+      "description": "通信設定",
+      "type": "object",
+      "properties": {
+        "device_path": {
+          "description": "デバイスパス（オプション、最も確実な識別方法）\n\n例 (Windows): \"\\\\\\\\?\\\\hid#vid_2341&pid_8036#...\"",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "hid_send_interval_ms": {
+          "description": "HIDレポート送信間隔（ミリ秒）\n\nHIDスレッドで新しい検出結果を待つタイムアウト時間であり、HIDパケットの送信頻度を決定します。\n新しい検出結果がない場合でも、この間隔で直前の値を送信し続けます。\n例: 8ms = 約125Hz、7ms = 約143Hz、16ms = 約62Hz",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "product_id": {
+          "description": "HIDデバイスのProduct ID",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "serial_number": {
+          "description": "デバイスのシリアル番号（オプション）",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "vendor_id": {
+          "description": "HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）\n\n`cargo test test_enumerate_hid_devices -- --nocapture` で取得できます",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "vendor_id",
+        "product_id",
+        "hid_send_interval_ms"
+      ]
+    },
+    "CoordinateTransformConfig": {
+      "description": "座標変換設定",
+      "type": "object",
+      "properties": {
+        "dead_zone": {
+          "description": "デッドゾーン（ピクセル）\n\nデフォルト: 0.0",
+          "type": "number",
+          "format": "float"
+        },
+        "sensitivity": {
+          "description": "感度（倍率、X/Y軸共通）\n\nデフォルト: 1.0",
+          "type": "number",
+          "format": "float"
+        },
+        "x_clip_limit": {
+          "description": "X軸のクリッピング限界値（ピクセル）\n\nデフォルト: 10.0",
+          "type": "number",
+          "format": "float"
+        },
+        "y_clip_limit": {
+          "description": "Y軸のクリッピング限界値（ピクセル）\n\nデフォルト: 10.0",
+          "type": "number",
+          "format": "float"
+        }
+      },
+      "required": [
+        "sensitivity",
+        "x_clip_limit",
+        "y_clip_limit",
+        "dead_zone"
+      ]
+    },
+    "DetectionMethod": {
+      "description": "検出方法",
+      "oneOf": [
+        {
+          "description": "モーメントによる重心計算（デフォルト、高精度）",
+          "type": "string",
+          "const": "moments"
+        },
+        {
+          "description": "バウンディングボックスの中心計算（高速）",
+          "type": "string",
+          "const": "boundingbox"
+        }
+      ]
+    },
+    "HsvRangeConfig": {
+      "description": "HSVレンジ設定",
+      "type": "object",
+      "properties": {
+        "h_max": {
+          "description": "H（色相）の最大値\n\nOpenCV準拠: H [0-180]",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "h_min": {
+          "description": "H（色相）の最小値\n\nOpenCV準拠: H [0-180]",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "s_max": {
+          "description": "S（彩度）の最大値\n\nOpenCV準拠: S [0-255]",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "s_min": {
+          "description": "S（彩度）の最小値\n\nOpenCV準拠: S [0-255]",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "v_max": {
+          "description": "V（明度）の最大値\n\nOpenCV準拠: V [0-255]",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "v_min": {
+          "description": "V（明度）の最小値\n\nOpenCV準拠: V [0-255]",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "required": [
+        "h_min",
+        "h_max",
+        "s_min",
+        "s_max",
+        "v_min",
+        "v_max"
+      ]
+    },
+    "PipelineConfig": {
+      "description": "パイプライン設定",
+      "type": "object",
+      "properties": {
+        "enable_dirty_rect_optimization": {
+          "description": "DirtyRect最適化を有効にするか（未実装）\n\ntrue の場合、ROI と交差しない DirtyRect は処理をスキップ\n注: 現在、win_desktop_duplication クレートから DirtyRect 情報を取得していないため機能しません",
+          "type": "boolean"
+        },
+        "stats_interval_sec": {
+          "description": "統計情報の出力間隔（秒）",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "enable_dirty_rect_optimization",
+        "stats_interval_sec"
+      ]
+    },
+    "ProcessConfig": {
+      "description": "処理設定",
+      "type": "object",
+      "properties": {
+        "coordinate_transform": {
+          "description": "座標変換設定",
+          "$ref": "#/$defs/CoordinateTransformConfig",
+          "default": {
+            "dead_zone": 0.0,
+            "sensitivity": 1.0,
+            "x_clip_limit": 3.4028234663852886e+38,
+            "y_clip_limit": 3.4028234663852886e+38
+          }
+        },
+        "detection_method": {
+          "description": "検出方法（fast-colorモードのみ使用）\n\n選択肢: \"moments\" (モーメントによる重心計算、高精度), \"boundingbox\" (バウンディングボックスの中心、高速)\nデフォルト: \"moments\"",
+          "$ref": "#/$defs/DetectionMethod",
+          "default": "moments"
+        },
+        "hsv_range": {
+          "description": "HSVレンジ設定（fast-colorモードのみ使用）",
+          "$ref": "#/$defs/HsvRangeConfig"
+        },
+        "min_detection_area": {
+          "description": "最小検出面積（ピクセル数、これ未満は無視）\n\nデフォルト: 0",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "mode": {
+          "description": "処理モード\n\n選択肢: \"fast-color\" (HSV色検知), \"yolo-ort\" (YOLO物体検出、将来実装)\nデフォルト: \"fast-color\"",
+          "type": "string"
+        },
+        "roi": {
+          "description": "ROI（Region of Interest）設定",
+          "$ref": "#/$defs/RoiConfig"
+        }
+      },
+      "required": [
+        "mode",
+        "roi",
+        "hsv_range",
+        "min_detection_area"
+      ]
+    },
+    "RoiConfig": {
+      "description": "ROI設定（サイズのみ、位置は画面中心に自動配置）\n\nx, y座標は実行時に画面解像度から自動計算される。\nプロジェクトの設計方針として、ROIは常に画面中心に配置される。",
+      "type": "object",
+      "properties": {
+        "height": {
+          "description": "ROI高さ（ピクセル）\n\n注意: 画面解像度を超える場合は起動時にエラーになります",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "width": {
+          "description": "ROI幅（ピクセル）\n\n注意: 画面解像度を超える場合は起動時にエラーになります",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ]
+    }
+  }
+}

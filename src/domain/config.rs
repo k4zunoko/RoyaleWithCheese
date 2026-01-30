@@ -2,6 +2,7 @@
 //!
 //! TOML設定ファイルの読み込みとDomain型への変換。
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::Duration;
@@ -9,58 +10,86 @@ use std::time::Duration;
 use crate::domain::{DomainError, DomainResult, HsvRange, Roi};
 
 /// 検出方法
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DetectionMethod {
-    /// モーメントによる重心計算（デフォルト）
+    /// モーメントによる重心計算（デフォルト、高精度）
     Moments,
-    /// バウンディングボックスの中心計算
+    /// バウンディングボックスの中心計算（高速）
     BoundingBox,
 }
 
 /// キャプチャソース
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum CaptureSource {
-    /// Desktop Duplication API
+    /// Desktop Duplication API（画面全体をキャプチャ）
     #[default]
     Dda,
-    /// Spout DX11テクスチャ受信
+    /// Spout DX11テクスチャ受信（送信側アプリケーションが必要）
     Spout,
-    /// Windows Graphics Capture (低レイテンシ、Win10 1803+)
+    /// Windows Graphics Capture（低レイテンシモード、Win10 1803+）
     Wgc,
 }
 
 /// アプリケーション設定のルート構造
 #[allow(dead_code)]
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AppConfig {
+    /// キャプチャ設定
     pub capture: CaptureConfig,
+    /// 画像処理設定
     pub process: ProcessConfig,
+    /// HID通信設定
     pub communication: CommunicationConfig,
+    /// パイプライン設定
     pub pipeline: PipelineConfig,
+    /// アクティベーション設定
     pub activation: ActivationConfig,
+    /// 音声フィードバック設定
     pub audio_feedback: AudioFeedbackConfig,
 }
 
 /// キャプチャ設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CaptureConfig {
-    /// キャプチャソース（"dda" または "spout"）
+    /// キャプチャソース
+    ///
+    /// 選択肢: "dda", "spout", "wgc"
+    /// デフォルト: "dda"
     #[serde(default)]
     pub source: CaptureSource,
-    /// Spout送信者名（source = "spout" の場合、Noneで自動選択）
+
+    /// Spout送信者名（source = "spout" の場合のみ有効）
+    ///
+    /// 空文字列または省略で最初のアクティブ送信者に自動接続
     #[serde(default)]
     pub spout_sender_name: Option<String>,
-    /// タイムアウト時間（ミリ秒）
+
+    /// キャプチャタイムアウト（ミリ秒）
+    ///
+    /// デフォルト: 8ms
     pub timeout_ms: u64,
+
     /// 連続タイムアウト許容回数
+    ///
+    /// この回数を超えたら再初期化を実行
+    /// デフォルト: 120回
     pub max_consecutive_timeouts: u32,
+
     /// 再初期化時の初期待機時間（ミリ秒）
+    ///
+    /// デフォルト: 100ms
     pub reinit_initial_delay_ms: u64,
-    /// 再初期化時の最大待機時間（ミリ秒）
+
+    /// 再初期化時の最大待機時間（ミリ秒、指数バックオフの上限）
+    ///
+    /// デフォルト: 5000ms
     pub reinit_max_delay_ms: u64,
-    /// メインモニタのインデックス（通常0、DDAのみ有効）
+
+    /// メインモニタのインデックス（DDAのみ有効）
+    ///
+    /// 通常は0
     pub monitor_index: u32,
 }
 
@@ -107,19 +136,32 @@ impl CaptureConfig {
 }
 
 /// 処理設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProcessConfig {
-    /// 処理モード（"fast-color" or "yolo-ort"）
+    /// 処理モード
+    ///
+    /// 選択肢: "fast-color" (HSV色検知), "yolo-ort" (YOLO物体検出、将来実装)
+    /// デフォルト: "fast-color"
     pub mode: String,
-    /// ROI設定
+
+    /// ROI（Region of Interest）設定
     pub roi: RoiConfig,
-    /// HSVレンジ設定（fast-colorモードのみ）
+
+    /// HSVレンジ設定（fast-colorモードのみ使用）
     pub hsv_range: HsvRangeConfig,
-    /// 最小検出面積（ピクセル）
+
+    /// 最小検出面積（ピクセル数、これ未満は無視）
+    ///
+    /// デフォルト: 0
     pub min_detection_area: u32,
-    /// 検出方法（moments/boundingbox）
+
+    /// 検出方法（fast-colorモードのみ使用）
+    ///
+    /// 選択肢: "moments" (モーメントによる重心計算、高精度), "boundingbox" (バウンディングボックスの中心、高速)
+    /// デフォルト: "moments"
     #[serde(default = "default_detection_method")]
     pub detection_method: DetectionMethod,
+
     /// 座標変換設定
     #[serde(default)]
     pub coordinate_transform: CoordinateTransformConfig,
@@ -153,9 +195,16 @@ impl Default for ProcessConfig {
 ///
 /// x, y座標は実行時に画面解像度から自動計算される。
 /// プロジェクトの設計方針として、ROIは常に画面中心に配置される。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RoiConfig {
+    /// ROI幅（ピクセル）
+    ///
+    /// 注意: 画面解像度を超える場合は起動時にエラーになります
     pub width: u32,
+
+    /// ROI高さ（ピクセル）
+    ///
+    /// 注意: 画面解像度を超える場合は起動時にエラーになります
     pub height: u32,
 }
 
@@ -213,13 +262,36 @@ impl Default for RoiConfig {
 }
 
 /// HSVレンジ設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct HsvRangeConfig {
+    /// H（色相）の最小値
+    ///
+    /// OpenCV準拠: H [0-180]
     pub h_min: u8,
+
+    /// H（色相）の最大値
+    ///
+    /// OpenCV準拠: H [0-180]
     pub h_max: u8,
+
+    /// S（彩度）の最小値
+    ///
+    /// OpenCV準拠: S [0-255]
     pub s_min: u8,
+
+    /// S（彩度）の最大値
+    ///
+    /// OpenCV準拠: S [0-255]
     pub s_max: u8,
+
+    /// V（明度）の最小値
+    ///
+    /// OpenCV準拠: V [0-255]
     pub v_min: u8,
+
+    /// V（明度）の最大値
+    ///
+    /// OpenCV準拠: V [0-255]
     pub v_max: u8,
 }
 
@@ -251,15 +323,26 @@ impl From<HsvRangeConfig> for HsvRange {
 }
 
 /// 座標変換設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CoordinateTransformConfig {
     /// 感度（倍率、X/Y軸共通）
+    ///
+    /// デフォルト: 1.0
     pub sensitivity: f32,
-    /// X軸のクリッピング限界値（±この値でクリップ、ピクセル）
+
+    /// X軸のクリッピング限界値（ピクセル）
+    ///
+    /// デフォルト: 10.0
     pub x_clip_limit: f32,
-    /// Y軸のクリッピング限界値（±この値でクリップ、ピクセル）
+
+    /// Y軸のクリッピング限界値（ピクセル）
+    ///
+    /// デフォルト: 10.0
     pub y_clip_limit: f32,
-    /// デッドゾーン（中心からの距離、ピクセル）
+
+    /// デッドゾーン（ピクセル）
+    ///
+    /// デフォルト: 0.0
     pub dead_zone: f32,
 }
 
@@ -275,32 +358,44 @@ impl Default for CoordinateTransformConfig {
 }
 
 /// 通信設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CommunicationConfig {
-    /// HIDデバイスのVendor ID
+    /// HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）
+    ///
+    /// `cargo test test_enumerate_hid_devices -- --nocapture` で取得できます
     pub vendor_id: u16,
+
     /// HIDデバイスのProduct ID
     pub product_id: u16,
-    /// デバイスのシリアル番号（オプション、VID/PIDだけで特定できない場合に使用）
+
+    /// デバイスのシリアル番号（オプション）
     #[serde(default)]
     pub serial_number: Option<String>,
+
     /// デバイスパス（オプション、最も確実な識別方法）
-    /// 例: "\\\\?\\hid#vid_2341&pid_8036#..." (Windows)
+    ///
+    /// 例 (Windows): "\\\\?\\hid#vid_2341&pid_8036#..."
     #[serde(default)]
     pub device_path: Option<String>,
+
     /// HIDレポート送信間隔（ミリ秒）
-    /// 新しい検出結果がない場合でも、この間隔で直前の値を送信し続ける
+    ///
+    /// HIDスレッドで新しい検出結果を待つタイムアウト時間であり、HIDパケットの送信頻度を決定します。
+    /// 新しい検出結果がない場合でも、この間隔で直前の値を送信し続けます。
+    /// 例: 8ms = 約125Hz、7ms = 約143Hz、16ms = 約62Hz
     pub hid_send_interval_ms: u64,
 }
 
 /// HIDアクティベーション設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ActivationConfig {
-    /// HID送信を実行するための最大距離（ROI中心からのピクセル距離）
-    /// 検出対象がROI中心からこの距離以内にある、またはマウス左クリックが押されている場合、
-    /// アクティブ状態として記録される
+    /// ROI中心からの最大距離（ピクセル）
+    ///
+    /// 検出対象がROI中心からこの距離以内にある場合、アクティブ状態として記録される
     pub max_distance_from_center: f32,
+
     /// アクティブウィンドウの持続時間（ミリ秒）
+    ///
     /// 最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する
     pub active_window_ms: u64,
 }
@@ -334,24 +429,31 @@ impl ActivationConfig {
 }
 
 /// パイプライン設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PipelineConfig {
-    /// DirtyRect最適化を有効にするか
+    /// DirtyRect最適化を有効にするか（未実装）
+    ///
+    /// true の場合、ROI と交差しない DirtyRect は処理をスキップ
+    /// 注: 現在、win_desktop_duplication クレートから DirtyRect 情報を取得していないため機能しません
     pub enable_dirty_rect_optimization: bool,
+
     /// 統計情報の出力間隔（秒）
     pub stats_interval_sec: u64,
 }
 
 /// 音声フィードバック設定
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AudioFeedbackConfig {
-    /// 音声フィードバックを有効にするか
+    /// Insertキー押下時の音声フィードバックを有効にする
     pub enabled: bool,
-    /// 有効化時の音声ファイルパス
+
+    /// 有効化時の音声ファイルパス（Windowsシステム音を使用）
     pub on_sound: String,
+
     /// 無効化時の音声ファイルパス
     pub off_sound: String,
-    /// 音声ファイルが見つからない場合は静かに失敗する
+
+    /// 音声ファイルが見つからない場合は静かに失敗する（ログのみ）
     pub fallback_to_silent: bool,
 }
 
@@ -567,5 +669,46 @@ mod tests {
         let hsv: HsvRange = hsv_config.into();
         assert_eq!(hsv.h_min, 10);
         assert_eq!(hsv.h_max, 20);
+    }
+
+    #[test]
+    fn test_config_loads() {
+        // config.tomlが正常に読み込めることを確認
+        let config = AppConfig::from_file("config.toml").expect("config.tomlが読み込めません");
+
+        // 基本的なバリデーション
+        config
+            .validate()
+            .expect("設定値のバリデーションに失敗しました");
+
+        // 各セクションが存在することを確認
+        assert!(
+            config.capture.timeout_ms > 0,
+            "timeout_msは0より大きい必要があります"
+        );
+        assert!(
+            config.process.roi.width > 0,
+            "ROI幅は0より大きい必要があります"
+        );
+        assert!(
+            config.process.roi.height > 0,
+            "ROI高さは0より大きい必要があります"
+        );
+        assert!(
+            config.process.coordinate_transform.sensitivity > 0.0,
+            "sensitivityは0より大きい必要があります"
+        );
+    }
+
+    #[test]
+    fn test_config_example_loads() {
+        // config.toml.exampleが正常に読み込めることを確認
+        let config = AppConfig::from_file("config.toml.example")
+            .expect("config.toml.exampleが読み込めません");
+
+        // 基本的なバリデーション
+        config
+            .validate()
+            .expect("設定値のバリデーションに失敗しました");
     }
 }

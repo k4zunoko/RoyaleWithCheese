@@ -1,59 +1,25 @@
 # RoyaleWithCheese 設定ファイル例
 # このファイルをコピーして config.toml として使用してください
+# 詳細な説明は docs/CONFIGURATION.md を参照してください
 
 [capture]
-# キャプチャソース:
-#   "dda"   - Desktop Duplication API（画面全体をキャプチャ）
-#   "spout" - Spout DX11テクスチャ受信（送信側アプリケーションが必要）
-#   "wgc"   - Windows Graphics Capture（低レイテンシモード、Win10 1803+）
 source = "dda"
-
-# Spout送信者名（source = "spout" の場合のみ有効）
-# 空文字列または省略で最初のアクティブ送信者に自動接続
-# 例: spout_sender_name = "MyGame"
-# spout_sender_name = ""
-
-# キャプチャタイムアウト（ミリ秒）
 timeout_ms = 8
-
-# 連続タイムアウト許容回数（この回数を超えたら再初期化）
 max_consecutive_timeouts = 120
-
-# 再初期化時の初期待機時間（ミリ秒）
 reinit_initial_delay_ms = 100
-
-# 再初期化時の最大待機時間（ミリ秒、指数バックオフの上限）
 reinit_max_delay_ms = 5000
-
-# メインモニタのインデックス（通常は0、DDAのみ有効）
 monitor_index = 0
 
 [process]
-# 処理モード（実行時に切り替え可能、ビルド不要）:
-#   "fast-color" - HSV色検知による高速処理（デフォルト）
-#   "yolo-ort"   - YOLO + ONNX Runtime による物体検出（将来実装）
 mode = "fast-color"
-
-# 最小検出面積（ピクセル数、これ未満は無視）
 min_detection_area = 0
-
-# 検出方法（fast-colorモードのみ使用）:
-#   "moments"     - モーメントによる重心計算（デフォルト、高精度）
-#   "boundingbox" - バウンディングボックスの中心（高速）
 detection_method = "moments"
 
 [process.roi]
-# ROI（Region of Interest）の設定
-# 画面中心を基準として、指定したサイズの領域をキャプチャします
-# x, y座標は実行時に画面解像度から自動計算されます
-# 注意: width/heightが画面解像度を超える場合は起動時にエラーになります
 width = 460
 height = 240
 
 [process.hsv_range]
-# HSV色空間のレンジ（fast-colorモードのみ使用）
-# OpenCV準拠: H [0-180], S [0-255], V [0-255]
-# デフォルト: 黄色系の検出
 h_min = 25
 h_max = 45
 s_min = 80
@@ -62,69 +28,26 @@ v_min = 80
 v_max = 255
 
 [process.coordinate_transform]
-# 感度（倍率、X/Y軸共通）
 sensitivity = 1.0
-
-# X軸のクリッピング限界値（ピクセル）
 x_clip_limit = 10.0
-
-# Y軸のクリッピング限界値（ピクセル）
 y_clip_limit = 10.0
-
-# デッドゾーン（ピクセル）
 dead_zone = 0.0
 
 [communication]
-# `cargo test test_enumerate_hid_devices -- --nocapture` で取得できます
-# HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）
 vendor_id = 0x0000
-
-# HIDデバイスのProduct ID
 product_id = 0x0000
-
-# デバイスのシリアル番号（オプション）
-# 例: serial_number = "12345ABCDE"
-# serial_number = ""
-
-# デバイスパス（オプション、最も確実な識別方法）
-# 例 (Windows): device_path = "\\\\?\\hid#vid_2341&pid_8036#..."
-# device_path = ""
-
-# HIDレポート送信間隔（ミリ秒）
-# HIDスレッドで新しい検出結果を待つタイムアウト時間であり、HIDパケットの送信頻度を決定します
-# 新しい検出結果がない場合でも、この間隔で直前の値を送信し続けます
-# 例: 8ms = 約125Hz、7ms = 約143Hz、16ms = 約62Hz
 hid_send_interval_ms = 4
 
 [pipeline]
-# DirtyRect最適化を有効にするか（未実装）
-# true の場合、ROI と交差しない DirtyRect は処理をスキップ
-# 注: 現在、win_desktop_duplication クレートから DirtyRect 情報を取得していないため機能しません
 enable_dirty_rect_optimization = false
-
-# 統計情報の出力間隔（秒）
 stats_interval_sec = 10
 
 [activation]
-# HID送信アクティベーション条件
-
-# ROI中心からの最大距離（ピクセル）
-# 検出対象がROI中心からこの距離以内にある場合、アクティブ状態として記録される
 max_distance_from_center = 5.0
-
-# アクティブウィンドウの持続時間（ミリ秒）
-# 最後にアクティブ条件を満たしてからこの時間内であればHID送信を許可する
 active_window_ms = 500
 
 [audio_feedback]
-# Insertキー押下時の音声フィードバックを有効にする
 enabled = true
-
-# 有効化時の音声ファイルパス（Windowsシステム音を使用）
 on_sound = "C:\\Windows\\Media\\Speech On.wav"
-
-# 無効化時の音声ファイルパス
 off_sound = "C:\\Windows\\Media\\Speech Off.wav"
-
-# 音声ファイルが見つからない場合は静かに失敗する（ログのみ）
 fallback_to_silent = true
