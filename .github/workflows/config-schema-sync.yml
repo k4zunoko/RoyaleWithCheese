@@ -47,4 +47,4 @@ jobs:
           Write-Host "✅ schema/config.json is up-to-date"
       
       - name: Validate config files load correctly
-        run: cargo test test_config_loads test_config_example_loads -- --nocapture
+        run: cargo test test_config -- --nocapture
