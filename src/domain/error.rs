@@ -59,6 +59,28 @@ pub enum DomainError {
     #[allow(dead_code)] // 将来のエラーハンドリング用
     #[error("Unexpected error: {0}")]
     Other(String),
+
+    // GPU-specific errors
+    /// GPU device/adapter not available
+    ///
+    /// GPU が利用できないエラー。CPU での処理へのフォールバックが可能。
+    /// Recoverable エラーとして扱われます。
+    #[error("GPU not available: {0}")]
+    GpuNotAvailable(String),
+
+    /// GPU compute shader error
+    ///
+    /// GPU コンピュートシェーダ実行時のエラー。
+    /// 致命的エラーとして扱われます。
+    #[error("GPU compute error: {0}")]
+    GpuCompute(String),
+
+    /// GPU texture operation error
+    ///
+    /// GPU テクスチャ操作エラー。
+    /// 致命的エラーとして扱われます。
+    #[error("GPU texture error: {0}")]
+    GpuTexture(String),
 }
 
 /// Domain層の統一Result型

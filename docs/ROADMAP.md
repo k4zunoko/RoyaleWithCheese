@@ -16,6 +16,16 @@
 
 ## 完了済みの大型タスク
 
+### GPU Processing 準備フェーズ (2026-01-31)
+GPU 側での画像処理に向けた抽象化レイヤーの整備:
+- ✅ `GpuFrame` 型: D3D11 GPU 常駐テクスチャを表現
+- ✅ `GpuProcessPort` トレイト: GPU 処理の抽象化
+- ✅ `ProcessorBackend::Gpu` バリアント追加
+- ✅ GPU エラーバリアント (`GpuNotAvailable`, `GpuCompute`, `GpuTexture`)
+- ✅ モジュール再構成 (`processing/cpu/`, `processing/gpu/`)
+- ✅ プレースホルダー `GpuColorProcessor`
+- ✅ GPU 設定オプション (`GpuConfig`)
+
 ### WGC (Windows Graphics Capture) キャプチャ実装 (2026-01-13)
 - ✅ windows crate v0.57を使用した直接実装
 - ✅ フレームプールバッファサイズ2で低レイテンシ化
@@ -42,6 +52,14 @@
 - **WGC**: Windows 10 1803以降が必須、セキュアデスクトップは取得不可
 
 ## 次のステップ（計画中）
+
+### GPU Processing 実装フェーズ (Phase 2)
+GPU 準備フェーズで整備した抽象化を使用した実装:
+- [ ] D3D11 compute shader による HSV 検出
+- [ ] GPU デバイス/キュー初期化
+- [ ] シェーダリソース管理
+- [ ] キャプチャパイプラインとの統合
+- [ ] パフォーマンスベンチマーク
 
 ### パフォーマンス検証
 - エンドツーエンドのレイテンシ計測（p95/p99等）と最適化

@@ -48,6 +48,10 @@ pub struct AppConfig {
     pub activation: ActivationConfig,
     /// 音声フィードバック設定
     pub audio_feedback: AudioFeedbackConfig,
+    /// GPU処理設定（プレースホルダー）
+    /// GPU processing settings (placeholder for future implementation)
+    #[serde(default)]
+    pub gpu: GpuConfig,
 }
 
 /// キャプチャ設定
@@ -477,6 +481,43 @@ impl Default for PipelineConfig {
     }
 }
 
+/// GPU処理設定
+///
+/// GPU-based processing configuration for D3D11 compute shaders.
+/// Currently a placeholder for future GPU processing implementation.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GpuConfig {
+    /// GPU処理を有効にするかどうか
+    /// Whether to enable GPU-based processing.
+    /// Default: false (use CPU processing)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// 使用するGPUデバイスのインデックス
+    /// GPU device index to use (0 = primary GPU).
+    /// Default: 0
+    #[serde(default)]
+    pub device_index: u32,
+
+    /// GPUが利用可能な場合に優先的に使用するか
+    /// Whether to prefer GPU processing when available.
+    /// If GPU fails, will fall back to CPU processing.
+    /// Default: false
+    #[serde(default)]
+    pub prefer_gpu: bool,
+}
+
+impl Default for GpuConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            device_index: 0,
+            prefer_gpu: false,
+        }
+    }
+}
+
 impl AppConfig {
     /// TOMLファイルから設定を読み込む
     #[allow(dead_code)]
@@ -710,5 +751,91 @@ mod tests {
         config
             .validate()
             .expect("設定値のバリデーションに失敗しました");
+    }
+
+    #[test]
+    fn test_gpu_config_defaults() {
+        let config = GpuConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.device_index, 0);
+        assert!(!config.prefer_gpu);
+    }
+
+    #[test]
+    fn test_gpu_config_parsing() {
+        let toml = r#"
+            enabled = true
+            device_index = 1
+            prefer_gpu = true
+        "#;
+        let config: GpuConfig = toml::from_str(toml).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.device_index, 1);
+        assert!(config.prefer_gpu);
+    }
+
+    #[test]
+    fn test_config_with_gpu_section() {
+        // Test that AppConfig can parse a [gpu] section
+        let toml = r#"
+            [capture]
+            source = "dda"
+            timeout_ms = 8
+            max_consecutive_timeouts = 120
+            reinit_initial_delay_ms = 100
+            reinit_max_delay_ms = 5000
+            monitor_index = 0
+
+            [process]
+            mode = "fast-color"
+            min_detection_area = 0
+            detection_method = "moments"
+
+            [process.roi]
+            width = 960
+            height = 540
+
+            [process.hsv_range]
+            h_min = 25
+            h_max = 45
+            s_min = 80
+            s_max = 255
+            v_min = 80
+            v_max = 255
+
+            [process.coordinate_transform]
+            sensitivity = 1.0
+            x_clip_limit = 10.0
+            y_clip_limit = 10.0
+            dead_zone = 0.0
+
+            [communication]
+            vendor_id = 0x0000
+            product_id = 0x0000
+            hid_send_interval_ms = 8
+
+            [pipeline]
+            enable_dirty_rect_optimization = false
+            stats_interval_sec = 10
+
+            [activation]
+            max_distance_from_center = 50.0
+            active_window_ms = 500
+
+            [audio_feedback]
+            enabled = true
+            on_sound = "C:\\Windows\\Media\\Speech On.wav"
+            off_sound = "C:\\Windows\\Media\\Speech Off.wav"
+            fallback_to_silent = true
+
+            [gpu]
+            enabled = false
+            device_index = 0
+            prefer_gpu = false
+        "#;
+        let config: AppConfig = toml::from_str(toml).unwrap();
+        assert!(!config.gpu.enabled);
+        assert_eq!(config.gpu.device_index, 0);
+        assert!(!config.gpu.prefer_gpu);
     }
 }

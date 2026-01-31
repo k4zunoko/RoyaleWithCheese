@@ -4,6 +4,8 @@
 //! すべての処理で共有される不変の型。
 
 use std::time::Instant;
+use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
+use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 
 /// ピクセル座標で指定されるROI（Region of Interest）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,6 +169,67 @@ impl Frame {
     }
 }
 
+/// GPU-resident texture frame for D3D11 compute processing.
+///
+/// Unlike `Frame` which holds CPU-accessible pixel data, `GpuFrame` holds
+/// a reference to a GPU texture that can be used directly in compute shaders.
+#[derive(Debug)]
+pub struct GpuFrame {
+    /// D3D11 texture reference (None if not available)
+    texture: Option<ID3D11Texture2D>,
+    /// Texture width in pixels
+    width: u32,
+    /// Texture height in pixels
+    height: u32,
+    /// Pixel format (e.g., DXGI_FORMAT_B8G8R8A8_UNORM)
+    format: DXGI_FORMAT,
+    /// Capture timestamp
+    timestamp: Instant,
+}
+
+impl GpuFrame {
+    /// Create a new GPU frame
+    pub fn new(
+        texture: Option<ID3D11Texture2D>,
+        width: u32,
+        height: u32,
+        format: DXGI_FORMAT,
+    ) -> Self {
+        Self {
+            texture,
+            width,
+            height,
+            format,
+            timestamp: Instant::now(),
+        }
+    }
+
+    /// Get reference to the D3D11 texture (if available)
+    pub fn texture(&self) -> Option<&ID3D11Texture2D> {
+        self.texture.as_ref()
+    }
+
+    /// Get texture width in pixels
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// Get texture height in pixels
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
+    /// Get pixel format
+    pub fn format(&self) -> DXGI_FORMAT {
+        self.format
+    }
+
+    /// Get capture timestamp
+    pub fn timestamp(&self) -> Instant {
+        self.timestamp
+    }
+}
+
 /// バウンディングボックス（外接矩形）
 ///
 /// BoundingBox検出メソッド使用時に検出対象の矩形情報を保持します。
@@ -292,11 +355,12 @@ impl TransformedCoordinates {
 }
 
 /// 処理バックエンドの種類
-#[allow(dead_code)] // ProcessPort::backendで使用されるが、そのメソッドが未呼び出し
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessorBackend {
-    /// CPU処理（OpenCV Mat使用）
+    /// CPU-based processing (OpenCV)
     Cpu,
+    /// GPU-based processing (D3D11 Compute Shaders)
+    Gpu,
 }
 
 #[cfg(test)]
@@ -411,5 +475,28 @@ mod tests {
         assert_eq!(result.center_x, 100.5);
         assert_eq!(result.center_y, 200.3);
         assert_eq!(result.coverage, 1500);
+    }
+
+    #[test]
+    fn test_gpu_frame_construction() {
+        // Test that GpuFrame can be constructed with required fields
+        // Use Option<ID3D11Texture2D> as None for testing without actual GPU
+        let frame = GpuFrame::new(None, 1920, 1080, Default::default());
+        assert_eq!(frame.width(), 1920);
+        assert_eq!(frame.height(), 1080);
+        assert!(frame.texture().is_none());
+    }
+
+    #[test]
+    fn test_gpu_frame_field_accessors() {
+        // Test width, height, format accessors
+        let frame = GpuFrame::new(None, 640, 480, Default::default());
+        assert_eq!(frame.width(), 640);
+        assert_eq!(frame.height(), 480);
+        assert!(frame.texture().is_none());
+
+        // Verify timestamp is set (just check it exists and is not zero)
+        let ts = frame.timestamp();
+        assert!(ts.elapsed().as_millis() < 1000); // Should be very recent
     }
 }

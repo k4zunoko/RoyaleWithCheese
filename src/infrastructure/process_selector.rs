@@ -6,7 +6,7 @@
 use crate::domain::{
     DetectionResult, DomainResult, Frame, HsvRange, ProcessPort, ProcessorBackend, Roi,
 };
-use crate::infrastructure::color_process::ColorProcessAdapter;
+use crate::infrastructure::processing::cpu::ColorProcessAdapter;
 
 /// 処理アダプタの選択
 pub enum ProcessSelector {

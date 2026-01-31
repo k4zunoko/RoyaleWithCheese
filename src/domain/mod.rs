@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod error;
+pub mod gpu_ports;
 pub mod ports;
 pub mod types;
 

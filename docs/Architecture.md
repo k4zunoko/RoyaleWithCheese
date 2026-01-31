@@ -102,3 +102,52 @@ Capture→Process、Process→HID は `bounded(1)` を使い、古いデータ�
 - `opencv-debug-display`: 視覚デバッグ表示
 
 使い方は [VISUAL_DEBUG_GUIDE.md](VISUAL_DEBUG_GUIDE.md) を参照してください。
+
+## Processing モジュール構成
+
+画像処理 Infrastructure は CPU/GPU 実装に分離されています:
+
+```
+src/infrastructure/processing/
+├── mod.rs              # モジュールエクスポート
+├── cpu/
+│   └── mod.rs          # ColorProcessAdapter (OpenCV ベース)
+└── gpu/
+    └── mod.rs          # GpuColorProcessor (プレースホルダー)
+```
+
+### 現在のデータフロー (CPU)
+
+```
+Capture (DDA/WGC/Spout)
+    ↓
+GPU Texture
+    ↓ CopySubresourceRegion (ROI のみ)
+Staging Texture
+    ↓ Map/Unmap
+Frame { data: Vec<u8> }
+    ↓
+ColorProcessAdapter (OpenCV)
+    ↓ BGRA→BGR→HSV 変換
+DetectionResult
+    ↓
+HID Thread
+```
+
+### 将来のデータフロー (GPU) - 未実装
+
+```
+Capture (DDA/WGC/Spout)
+    ↓
+GPU Texture
+    ↓ (GPU 常駐のまま)
+GpuFrame
+    ↓
+GpuColorProcessor
+    ↓ D3D11 Compute Shader (HSV 検出)
+DetectionResult (座標のみ CPU へ)
+    ↓
+HID Thread
+```
+
+**利点**: GPU→CPU コピーを最終座標のみに削減し、レイテンシを大幅に改善

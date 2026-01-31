@@ -66,6 +66,17 @@ HID通信設定
 | `serial_number` | string \| null | `null` | デバイスのシリアル番号（オプション） |
 | `vendor_id` | uint16 | - | HIDデバイスのVendor ID（16進数で指定する場合は 0x1234 の形式）<br><br>`cargo test test_enumerate_hid_devices -- --nocapture` で取得できます |
 
+### [gpu]
+
+GPU処理設定（プレースホルダー）
+GPU processing settings (placeholder for future implementation)
+
+| 設定項目 | 型 | デフォルト | 説明 |
+|---------|-----|---------|---------|
+| `device_index` | uint32 | `0` | 使用するGPUデバイスのインデックス GPU device index to use (0 = primary GPU). Default: 0 |
+| `enabled` | bool | `false` | GPU処理を有効にするかどうか Whether to enable GPU-based processing. Default: false (use CPU processing) |
+| `prefer_gpu` | bool | `false` | GPUが利用可能な場合に優先的に使用するか Whether to prefer GPU processing when available. If GPU fails, will fall back to CPU processing. Default: false |
+
 ### [pipeline]
 
 パイプライン設定

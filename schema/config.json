@@ -20,6 +20,15 @@
       "description": "HID通信設定",
       "$ref": "#/$defs/CommunicationConfig"
     },
+    "gpu": {
+      "description": "GPU処理設定（プレースホルダー）\nGPU processing settings (placeholder for future implementation)",
+      "$ref": "#/$defs/GpuConfig",
+      "default": {
+        "device_index": 0,
+        "enabled": false,
+        "prefer_gpu": false
+      }
+    },
     "pipeline": {
       "description": "パイプライン設定",
       "$ref": "#/$defs/PipelineConfig"
@@ -256,6 +265,30 @@
           "const": "boundingbox"
         }
       ]
+    },
+    "GpuConfig": {
+      "description": "GPU処理設定\n\nGPU-based processing configuration for D3D11 compute shaders.\nCurrently a placeholder for future GPU processing implementation.",
+      "type": "object",
+      "properties": {
+        "device_index": {
+          "description": "使用するGPUデバイスのインデックス\nGPU device index to use (0 = primary GPU).\nDefault: 0",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "enabled": {
+          "description": "GPU処理を有効にするかどうか\nWhether to enable GPU-based processing.\nDefault: false (use CPU processing)",
+          "type": "boolean",
+          "default": false
+        },
+        "prefer_gpu": {
+          "description": "GPUが利用可能な場合に優先的に使用するか\nWhether to prefer GPU processing when available.\nIf GPU fails, will fall back to CPU processing.\nDefault: false",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
     },
     "HsvRangeConfig": {
       "description": "HSVレンジ設定",

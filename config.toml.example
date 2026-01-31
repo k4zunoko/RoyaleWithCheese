@@ -51,3 +51,20 @@ enabled = true
 on_sound = "C:\\Windows\\Media\\Speech On.wav"
 off_sound = "C:\\Windows\\Media\\Speech Off.wav"
 fallback_to_silent = true
+
+# ============================================================================
+# GPU処理設定 (プレースホルダー - 将来の実装用)
+# GPU Processing Settings (Placeholder - for future implementation)
+# ============================================================================
+# [gpu]
+# # GPU処理を有効にする (現在未実装)
+# # Enable GPU-based processing (not yet implemented)
+# enabled = false
+#
+# # 使用するGPUデバイスのインデックス (0 = プライマリGPU)
+# # GPU device index to use (0 = primary GPU)
+# device_index = 0
+#
+# # GPUが利用可能な場合に優先的に使用する
+# # Prefer GPU processing when available (falls back to CPU if GPU fails)
+# prefer_gpu = false

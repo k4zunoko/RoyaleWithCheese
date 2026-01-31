@@ -286,14 +286,86 @@ pub fn detection_to_hid_report(result: &DetectionResult) -> Vec<u8> {
 
 ```rust
 pub enum ProcessorBackend {
-    Cpu,      // CPU処理（Mat使用）
-    OpenCl,   // OpenCL加速（UMat使用）
+    Cpu,  // CPU処理（OpenCV Mat使用）
+    Gpu,  // GPU処理（D3D11 Compute Shaders）
 }
 ```
 
 **設計判断**:
 - **初期化時に判定**: 実行時の分岐コストを避ける
 - **enumで表現**: 将来の拡張（CUDA, DirectML等）に対応可能
+
+## GPU Processing Types (GPU処理型)
+
+GPU処理の準備として追加された型・トレイト群です。実際のGPU compute shader実装は将来フェーズで行われます。
+
+### GpuFrame
+
+**目的**: GPU常駐テクスチャを表現（D3D11 compute処理用）
+
+```rust
+pub struct GpuFrame {
+    texture: Option<ID3D11Texture2D>,  // D3D11テクスチャ参照
+    width: u32,                         // テクスチャ幅
+    height: u32,                        // テクスチャ高さ
+    format: DXGI_FORMAT,                // ピクセルフォーマット
+    timestamp: Instant,                 // キャプチャ時刻
+}
+```
+
+**設計判断**:
+- **Frame との違い**: `Frame` が CPU アクセス可能なピクセルデータ (`Vec<u8>`) を保持するのに対し、`GpuFrame` は GPU 常駐テクスチャへの参照を保持
+- **Option\<ID3D11Texture2D\>**: テスト時に None を使用可能
+- **将来の利用**: GPU compute shader で直接処理し、最終座標のみを CPU にコピー
+
+### GpuProcessPort トレイト
+
+**目的**: GPU ベースの画像処理を抽象化（`src/domain/gpu_ports.rs`）
+
+```rust
+pub trait GpuProcessPort: Send + Sync {
+    fn process_gpu_frame(
+        &mut self,
+        frame: &GpuFrame,
+        hsv_range: &HsvRange,
+    ) -> DomainResult<DetectionResult>;
+    
+    fn backend(&self) -> ProcessorBackend;
+}
+```
+
+**設計判断**:
+- **ProcessPort との分離**: Clean Architecture に従い、CPU/GPU 処理を明確に分離
+- **Send + Sync**: スレッド間での安全な共有
+- **将来の実装**: D3D11 compute shader による HSV 検出
+
+### GPU エラーバリアント
+
+`DomainError` に追加された GPU 関連エラー:
+
+```rust
+// GPU-specific errors
+#[error("GPU not available: {0}")]
+GpuNotAvailable(String),      // リカバリ可能（CPU フォールバック可）
+
+#[error("GPU compute error: {0}")]
+GpuCompute(String),           // 致命的エラー
+
+#[error("GPU texture error: {0}")]
+GpuTexture(String),           // 致命的エラー
+```
+
+### GpuConfig (config.rs)
+
+GPU 処理設定（プレースホルダー）:
+
+```rust
+pub struct GpuConfig {
+    pub enabled: bool,        // GPU処理を有効にするか（デフォルト: false）
+    pub device_index: u32,    // 使用するGPUデバイス（デフォルト: 0）
+    pub prefer_gpu: bool,     // GPU優先使用（デフォルト: false）
+}
+```
 
 ## ports.rs - trait定義
 
