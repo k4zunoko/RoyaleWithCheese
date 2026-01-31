@@ -450,6 +450,9 @@ impl WgcCaptureAdapter {
 
 impl CapturePort for WgcCaptureAdapter {
     fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
+        #[cfg(feature = "performance-timing")]
+        let capture_start = Instant::now();
+
         // レイテンシ最小化: イベントハンドラで既に取得されたフレームを使用
         let frame_data = {
             let guard = self.latest_frame.lock().map_err(|e| {
@@ -465,12 +468,18 @@ impl CapturePort for WgcCaptureAdapter {
             }
         };
 
+        #[cfg(feature = "performance-timing")]
+        let lock_time = capture_start.elapsed();
+
         // ROI処理（レイテンシ最小化のため、ステージングテクスチャへ直接コピー）
         // ROIをクランプ
         let clamped_roi = match clamp_roi(roi, frame_data.width, frame_data.height) {
             Some(r) => r,
             std::option::Option::None => return Ok(None),
         };
+
+        #[cfg(feature = "performance-timing")]
+        let roi_calc_time = capture_start.elapsed() - lock_time;
 
         let staging = self.staging_manager.ensure_texture(
             &self.device,
@@ -479,8 +488,14 @@ impl CapturePort for WgcCaptureAdapter {
             windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
         )?;
 
+        #[cfg(feature = "performance-timing")]
+        let staging_time = capture_start.elapsed() - lock_time - roi_calc_time;
+
         // ROI領域をステージングテクスチャにコピー（最小コピー量）
         copy_roi_to_staging(&self.context, &frame_data.texture, &staging, &clamped_roi);
+
+        #[cfg(feature = "performance-timing")]
+        let gpu_copy_time = capture_start.elapsed() - lock_time - roi_calc_time - staging_time;
 
         // CPUメモリへコピー
         let data = copy_texture_to_cpu(
@@ -489,6 +504,24 @@ impl CapturePort for WgcCaptureAdapter {
             clamped_roi.width,
             clamped_roi.height,
         )?;
+
+        #[cfg(feature = "performance-timing")]
+        {
+            let cpu_transfer_time =
+                capture_start.elapsed() - lock_time - roi_calc_time - staging_time - gpu_copy_time;
+            let total_time = capture_start.elapsed();
+            tracing::debug!(
+                "WGC CPU Capture: Lock={:.2}ms | ROI={:.2}ms | Staging={:.2}ms | GPU_Copy={:.2}ms | CPU_Transfer={:.2}ms | Total={:.2}ms ({}x{})",
+                lock_time.as_secs_f64() * 1000.0,
+                roi_calc_time.as_secs_f64() * 1000.0,
+                staging_time.as_secs_f64() * 1000.0,
+                gpu_copy_time.as_secs_f64() * 1000.0,
+                cpu_transfer_time.as_secs_f64() * 1000.0,
+                total_time.as_secs_f64() * 1000.0,
+                clamped_roi.width,
+                clamped_roi.height
+            );
+        }
 
         Ok(Some(Frame {
             data,

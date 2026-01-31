@@ -5,7 +5,7 @@
 
 use crate::domain::{
     ports::{CapturePort, CommPort, InputPort, ProcessPort, VirtualKey},
-    types::{DetectionResult, Frame, HsvRange, Roi},
+    types::{DetectionResult, Frame, GpuFrame, HsvRange, Roi},
 };
 
 use crate::application::pipeline::ActivationConditions;
@@ -31,6 +31,13 @@ use opencv::{
 #[derive(Debug, Clone)]
 pub(crate) struct TimestampedFrame {
     pub frame: Frame,
+    pub captured_at: Instant,
+}
+
+/// GPUフレームとタイムスタンプのペア（zero-copy GPUパイプライン用）
+#[derive(Debug)]
+pub(crate) struct TimestampedGpuFrame {
+    pub gpu_frame: GpuFrame,
     pub captured_at: Instant,
 }
 

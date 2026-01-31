@@ -231,6 +231,19 @@ impl GpuColorAdapter {
         // In practice, we might want to do a test operation
         true
     }
+
+    /// Process a GPU frame directly (zero-copy)
+    ///
+    /// This method processes an already-uploaded GPU frame without any CPU transfer.
+    /// Use this when you have a GpuFrame from a capture adapter that supports GPU frames.
+    pub fn process_gpu_frame(
+        &mut self,
+        gpu_frame: &GpuFrame,
+        hsv_range: &HsvRange,
+    ) -> DomainResult<DetectionResult> {
+        // Directly process the GPU frame without any upload
+        self.processor.process_gpu_frame(gpu_frame, hsv_range)
+    }
 }
 
 impl ProcessPort for GpuColorAdapter {

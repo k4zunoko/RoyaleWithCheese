@@ -3,8 +3,10 @@
 //! ビルド時のfeatureフラグではなく、実行時に設定で処理方式を選択するための列挙型。
 //! vtableのオーバーヘッドを避けるため、trait objectではなくenumでディスパッチ。
 
+use crate::domain::gpu_ports::GpuProcessPort;
 use crate::domain::{
-    DetectionResult, DomainResult, Frame, HsvRange, ProcessPort, ProcessorBackend, Roi,
+    DetectionResult, DomainError, DomainResult, Frame, GpuFrame, HsvRange, ProcessPort,
+    ProcessorBackend, Roi,
 };
 use crate::infrastructure::processing::cpu::ColorProcessAdapter;
 use crate::infrastructure::processing::GpuColorAdapter;
@@ -74,5 +76,32 @@ impl ProcessSelector {
     /// Create a new GPU-based selector
     pub fn new_gpu(adapter: GpuColorAdapter) -> Self {
         ProcessSelector::FastColorGpu(adapter)
+    }
+
+    /// Process a GPU frame directly (zero-copy GPU pipeline)
+    ///
+    /// This method is only available when the selector is in GPU mode.
+    /// It processes the frame directly on GPU without CPU transfer.
+    pub fn process_gpu_frame(
+        &mut self,
+        gpu_frame: &GpuFrame,
+        hsv_range: &HsvRange,
+    ) -> DomainResult<DetectionResult> {
+        match self {
+            ProcessSelector::FastColorGpu(adapter) => {
+                adapter.process_gpu_frame(gpu_frame, hsv_range)
+            }
+            ProcessSelector::FastColor(_) => Err(DomainError::Process(
+                "CPU adapter cannot process GPU frames. Use process_frame() instead.".to_string(),
+            )),
+            ProcessSelector::YoloOrt => {
+                unimplemented!("YoloOrt is not yet implemented")
+            }
+        }
+    }
+
+    /// Check if this selector supports GPU frame processing
+    pub fn supports_gpu_processing(&self) -> bool {
+        matches!(self, ProcessSelector::FastColorGpu(_))
     }
 }
