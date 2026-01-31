@@ -376,8 +376,8 @@
           "default": {
             "dead_zone": 0.0,
             "sensitivity": 1.0,
-            "x_clip_limit": 3.4028234663852886e+38,
-            "y_clip_limit": 3.4028234663852886e+38
+            "x_clip_limit": 3.4028234663852886e38,
+            "y_clip_limit": 3.4028234663852886e38
           }
         },
         "detection_method": {
