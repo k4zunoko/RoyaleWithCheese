@@ -114,7 +114,7 @@ impl ColorProcessAdapter {
             .map_err(|e| DomainError::Process(format!("Failed to convert BGR to HSV: {:?}", e)))?;
 
         #[cfg(feature = "performance-timing")]
-        let hsv_time = start.elapsed();
+        let hsv_duration = start.elapsed();
 
         // HSVレンジでマスク生成
         let lower = Scalar::new(
@@ -135,7 +135,7 @@ impl ColorProcessAdapter {
             .map_err(|e| DomainError::Process(format!("Failed to create mask: {:?}", e)))?;
 
         #[cfg(feature = "performance-timing")]
-        let mask_time = hsv_time.elapsed();
+        let mask_start = Instant::now();
 
         // 検出方法に応じて処理を分岐
         let result = match self.detection_method {
@@ -158,17 +158,18 @@ impl ColorProcessAdapter {
 
         #[cfg(feature = "performance-timing")]
         {
-            let detection_time = mask_time.elapsed();
+            let detection_duration = mask_start.elapsed();
+            let mask_duration = mask_start.elapsed();
             let total_time = start.elapsed();
             tracing::debug!(
                 "Color process breakdown - HSV: {:.2}ms | Mask: {:.2}ms | Detection ({}): {:.2}ms | Total: {:.2}ms",
-                hsv_time.as_secs_f64() * 1000.0,
-                mask_time.as_secs_f64() * 1000.0,
+                hsv_duration.as_secs_f64() * 1000.0,
+                mask_duration.as_secs_f64() * 1000.0,
                 match self.detection_method {
                     DetectionMethod::Moments => "moments",
                     DetectionMethod::BoundingBox => "bbox",
                 },
-                detection_time.as_secs_f64() * 1000.0,
+                detection_duration.as_secs_f64() * 1000.0,
                 total_time.as_secs_f64() * 1000.0
             );
         }
@@ -315,12 +316,13 @@ impl ProcessPort for ColorProcessAdapter {
 
         #[cfg(feature = "performance-timing")]
         {
-            let processing_time = frame_to_mat_time.elapsed();
+            let mat_conversion_duration = frame_to_mat_time;
+            let color_detection_duration = start.elapsed() - mat_conversion_duration;
             let total_time = start.elapsed();
             tracing::debug!(
                 "Frame processing - Mat conversion: {:.2}ms | Color detection: {:.2}ms | Total: {:.2}ms ({}x{} px)",
-                frame_to_mat_time.as_secs_f64() * 1000.0,
-                processing_time.as_secs_f64() * 1000.0,
+                mat_conversion_duration.as_secs_f64() * 1000.0,
+                color_detection_duration.as_secs_f64() * 1000.0,
                 total_time.as_secs_f64() * 1000.0,
                 frame.width,
                 frame.height
