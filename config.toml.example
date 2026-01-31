@@ -53,18 +53,29 @@ off_sound = "C:\\Windows\\Media\\Speech Off.wav"
 fallback_to_silent = true
 
 # ============================================================================
-# GPU処理設定 (プレースホルダー - 将来の実装用)
-# GPU Processing Settings (Placeholder - for future implementation)
+# GPU処理設定
+# GPU Processing Settings
 # ============================================================================
-# [gpu]
-# # GPU処理を有効にする (現在未実装)
-# # Enable GPU-based processing (not yet implemented)
-# enabled = false
-#
-# # 使用するGPUデバイスのインデックス (0 = プライマリGPU)
-# # GPU device index to use (0 = primary GPU)
-# device_index = 0
-#
-# # GPUが利用可能な場合に優先的に使用する
-# # Prefer GPU processing when available (falls back to CPU if GPU fails)
-# prefer_gpu = false
+[gpu]
+# GPU処理を有効にする
+# Enable GPU-based processing using D3D11 compute shaders
+# 
+# trueの場合: GPU処理を試行し、失敗した場合はCPUに自動フォールバック
+# falseの場合: CPU処理のみを使用（デフォルト）
+# 
+# 注意: GPU処理はD3D11対応GPUが必要です。ない場合は自動的にCPUにフォールバックします。
+enabled = false
+
+# 使用するGPUデバイスのインデックス (0 = プライマリGPU)
+# GPU device index to use (0 = primary GPU)
+# 
+# 複数GPUがある場合に使用するGPUを指定します。
+# enabled = true の場合のみ有効です。
+device_index = 0
+
+# GPUが利用可能な場合に優先的に使用する (将来の拡張用)
+# Prefer GPU processing when available
+# 
+# 現在はenabledフラグと同じ動作です。
+# GPU失敗時は常にCPUへ自動フォールバックします。
+prefer_gpu = false

@@ -3,7 +3,7 @@
 //! Windows Desktop Duplication APIを使用した低レイテンシ画面キャプチャ。
 //! 144Hzモニタで毎秒144フレーム取得可能。
 
-use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, Roi};
+use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, GpuFrame, Roi};
 use crate::infrastructure::capture::common::{
     clamp_roi, copy_roi_to_staging, copy_texture_to_cpu, StagingTextureManager,
 };
@@ -266,6 +266,80 @@ impl CapturePort for DdaCaptureAdapter {
             timestamp: Instant::now(),
             dirty_rects,
         }))
+    }
+
+    fn capture_gpu_frame(&mut self, roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+        // ROIを画面中心に動的配置
+        let centered_roi = roi
+            .centered_in(self.device_info.width, self.device_info.height)
+            .ok_or_else(|| {
+                DomainError::Configuration(format!(
+                    "ROI size ({}x{}) exceeds display bounds ({}x{})",
+                    roi.width, roi.height, self.device_info.width, self.device_info.height
+                ))
+            })?;
+
+        // ROI境界検証とクランプ
+        let clamped_roi = clamp_roi(
+            &centered_roi,
+            self.device_info.width,
+            self.device_info.height,
+        )
+        .ok_or_else(|| {
+            DomainError::Capture(format!(
+                "ROI ({}, {}, {}x{}) is completely outside display bounds ({}x{})",
+                centered_roi.x,
+                centered_roi.y,
+                centered_roi.width,
+                centered_roi.height,
+                self.device_info.width,
+                self.device_info.height
+            ))
+        })?;
+
+        // フレーム取得
+        let tex = match self.acquire_frame()? {
+            Some(tex) => tex,
+            None => return Ok(None), // タイムアウト
+        };
+
+        // GPU上でROI領域だけを切り出して新しいテクスチャを作成
+        // ステージングテクスチャを確保
+        let roi_texture = self.staging_manager.ensure_texture(
+            &self.device,
+            clamped_roi.width,
+            clamped_roi.height,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+        )?;
+
+        // GPU上でROI領域をコピー
+        let src_resource: ID3D11Resource = tex.as_raw_ref().clone().cast().map_err(|e| {
+            DomainError::Capture(format!("Failed to cast texture to resource: {:?}", e))
+        })?;
+
+        copy_roi_to_staging(&self.context, &src_resource, &roi_texture, &clamped_roi);
+
+        // GpuFrameを作成して返す
+        // Note: roi_textureはID3D11Texture2DとしてGpuFrameに渡される
+        let gpu_texture: ID3D11Texture2D = roi_texture.cast().map_err(|e| {
+            DomainError::Capture(format!(
+                "Failed to cast staging texture to ID3D11Texture2D: {:?}",
+                e
+            ))
+        })?;
+
+        let gpu_frame = GpuFrame::new(
+            Some(gpu_texture),
+            clamped_roi.width,
+            clamped_roi.height,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+        );
+
+        Ok(Some(gpu_frame))
+    }
+
+    fn supports_gpu_frame(&self) -> bool {
+        true
     }
 
     fn reinitialize(&mut self) -> DomainResult<()> {

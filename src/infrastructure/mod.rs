@@ -4,6 +4,8 @@
 
 pub mod audio_feedback;
 pub mod capture;
+#[cfg(target_os = "windows")]
+pub mod gpu_device;
 pub mod hid_comm;
 pub mod input;
 pub mod process_selector;

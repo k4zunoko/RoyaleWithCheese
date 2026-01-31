@@ -3,7 +3,7 @@
 //! Spout送信されたDirectX 11テクスチャを受信し、
 //! CapturePort traitを実装します。
 
-use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, Roi};
+use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, GpuFrame, Roi};
 use crate::infrastructure::capture::common::{
     clamp_roi, copy_roi_to_staging, copy_texture_to_cpu, StagingTextureManager,
 };
@@ -331,6 +331,89 @@ impl CapturePort for SpoutCaptureAdapter {
             timestamp: Instant::now(),
             dirty_rects: vec![],
         }))
+    }
+
+    fn capture_gpu_frame(&mut self, roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+        // フレーム受信（Spout固有処理）
+        let (received_tex, spout_context, sender_info) = match self.receive_frame()? {
+            Some(data) => data,
+            None => return Ok(None),
+        };
+
+        // 送信者情報の変更を検出して状態を更新
+        self.update_sender_info(&sender_info);
+
+        // テクスチャからデバイスを取得（ステージング作成用）
+        let tex_device: ID3D11Device = unsafe {
+            received_tex.GetDevice().map_err(|e| {
+                DomainError::Capture(format!("Failed to get device from texture: {:?}", e))
+            })?
+        };
+
+        // ROIを画面中心に動的配置
+        let centered_roi = roi
+            .centered_in(self.device_info.width, self.device_info.height)
+            .ok_or_else(|| {
+                DomainError::Configuration(format!(
+                    "ROI size ({}x{}) exceeds texture bounds ({}x{})",
+                    roi.width, roi.height, self.device_info.width, self.device_info.height
+                ))
+            })?;
+
+        // ROIのクランプ
+        let clamped_roi = clamp_roi(
+            &centered_roi,
+            self.device_info.width,
+            self.device_info.height,
+        )
+        .ok_or_else(|| {
+            DomainError::Capture(format!(
+                "ROI ({}, {}, {}x{}) is outside texture bounds ({}x{})",
+                centered_roi.x,
+                centered_roi.y,
+                centered_roi.width,
+                centered_roi.height,
+                self.device_info.width,
+                self.device_info.height
+            ))
+        })?;
+
+        // ステージングテクスチャを確保
+        let tex_format = DXGI_FORMAT(sender_info.format as i32);
+        let staging_tex = self.staging_manager.ensure_texture(
+            &tex_device,
+            clamped_roi.width,
+            clamped_roi.height,
+            tex_format,
+        )?;
+
+        // SpoutDX側のコンテキストを使ってROI領域をステージングへコピー
+        let src_resource: ID3D11Resource = received_tex
+            .cast()
+            .map_err(|e| DomainError::Capture(format!("Cast error: {:?}", e)))?;
+
+        copy_roi_to_staging(&spout_context, &src_resource, &staging_tex, &clamped_roi);
+
+        // GpuFrameを作成
+        let gpu_texture: ID3D11Texture2D = staging_tex.cast().map_err(|e| {
+            DomainError::Capture(format!(
+                "Failed to cast staging texture to ID3D11Texture2D: {:?}",
+                e
+            ))
+        })?;
+
+        let gpu_frame = GpuFrame::new(
+            Some(gpu_texture),
+            clamped_roi.width,
+            clamped_roi.height,
+            tex_format,
+        );
+
+        Ok(Some(gpu_frame))
+    }
+
+    fn supports_gpu_frame(&self) -> bool {
+        true
     }
 
     fn reinitialize(&mut self) -> DomainResult<()> {

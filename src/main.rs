@@ -18,10 +18,12 @@ use crate::infrastructure::audio_feedback::WindowsAudioFeedback;
 use crate::infrastructure::capture::dda::DdaCaptureAdapter;
 use crate::infrastructure::capture::spout::SpoutCaptureAdapter;
 use crate::infrastructure::capture::wgc::WgcCaptureAdapter;
+use crate::infrastructure::gpu_device::create_d3d11_device;
 use crate::infrastructure::hid_comm::HidCommAdapter;
 use crate::infrastructure::input::WindowsInputAdapter;
 use crate::infrastructure::process_selector::ProcessSelector;
 use crate::infrastructure::processing::cpu::ColorProcessAdapter;
+use crate::infrastructure::processing::GpuColorAdapter;
 use crate::logging::init_logging;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -139,7 +141,7 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
         roi.height
     );
 
-    // 処理アダプタの初期化（config.process.modeに基づく）
+    // 処理アダプタの初期化（config.process.modeとconfig.gpu.enabledに基づく）
     tracing::info!(
         "Initializing process adapter with mode: {}",
         config.process.mode
@@ -150,11 +152,68 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
                 "Using fast-color (HSV color detection) mode with {:?} detection method",
                 config.process.detection_method
             );
-            let adapter = ColorProcessAdapter::new(
-                config.process.min_detection_area,
-                config.process.detection_method,
-            )?;
-            ProcessSelector::FastColor(adapter)
+
+            // GPU processing is enabled and requested
+            if config.gpu.enabled {
+                tracing::info!("GPU processing enabled in config, attempting to initialize...");
+
+                match create_d3d11_device() {
+                    Ok((device, context)) => {
+                        tracing::info!(
+                            "D3D11 device created successfully, initializing GPU color adapter"
+                        );
+
+                        match GpuColorAdapter::with_device_context(device, context) {
+                            Ok(gpu_adapter) => {
+                                tracing::info!("GPU color adapter initialized successfully - using GPU processing");
+                                ProcessSelector::FastColorGpu(gpu_adapter)
+                            }
+                            Err(e) => {
+                                tracing::warn!("Failed to create GPU color adapter: {:?}", e);
+                                tracing::info!("Falling back to CPU processing");
+
+                                // Fallback to CPU
+                                let adapter = ColorProcessAdapter::new(
+                                    config.process.min_detection_area,
+                                    config.process.detection_method,
+                                )?;
+                                ProcessSelector::FastColor(adapter)
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to create D3D11 device: {:?}", e);
+                        tracing::info!("Falling back to CPU processing");
+
+                        // Fallback to CPU
+                        let adapter = ColorProcessAdapter::new(
+                            config.process.min_detection_area,
+                            config.process.detection_method,
+                        )?;
+                        ProcessSelector::FastColor(adapter)
+                    }
+                }
+            } else {
+                tracing::info!("GPU processing disabled in config, using CPU processing");
+
+                // Use CPU processing (default)
+                let adapter = ColorProcessAdapter::new(
+                    config.process.min_detection_area,
+                    config.process.detection_method,
+                )?;
+                ProcessSelector::FastColor(adapter)
+            }
+        }
+        "fast-color-gpu" => {
+            // Force GPU mode with no fallback (for testing)
+            tracing::info!(
+                "Using fast-color-gpu mode (forced GPU, no fallback) with {:?} detection method",
+                config.process.detection_method
+            );
+
+            let (device, context) = create_d3d11_device()?;
+            let gpu_adapter = GpuColorAdapter::with_device_context(device, context)?;
+            ProcessSelector::FastColorGpu(gpu_adapter)
         }
         "yolo-ort" => {
             // 将来の実装: YOLO + ONNX Runtime
@@ -168,12 +227,15 @@ fn run_with_capture<C: CapturePort + Send + Sync + 'static>(
         }
         _ => {
             return Err(format!(
-                "Unknown process mode: '{}'. Supported modes are 'fast-color' or 'yolo-ort' (not yet implemented). \
+                "Unknown process mode: '{}'. Supported modes are 'fast-color', 'fast-color-gpu', or 'yolo-ort' (not yet implemented). \
                 Please check process.mode in config.toml.",
                 config.process.mode
             ).into());
         }
     };
+
+    // Log which backend is actually being used
+    tracing::info!("Processing backend: {}", process.backend_type());
 
     // 再初期化戦略の設定
     let recovery_strategy = RecoveryStrategy {

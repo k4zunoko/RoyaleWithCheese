@@ -3,6 +3,8 @@
 //! This module implements HSV detection on GPU textures and reads back only
 //! aggregate detection results (count and summed coordinates).
 
+pub mod adapter;
+
 use crate::domain::error::{DomainError, DomainResult};
 use crate::domain::gpu_ports::GpuProcessPort;
 use crate::domain::types::{DetectionResult, GpuFrame, HsvRange, ProcessorBackend};
