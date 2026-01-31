@@ -56,6 +56,8 @@ windows = { version = "0.57", features = [
     "Win32_System_WinRT_Direct3D11",
     "Win32_Graphics_Gdi",
     "Win32_System_WinRT",
+    # GPU Compute Shader 用
+    "Win32_Graphics_Direct3D_Fxc",  # D3DCompile for HLSL compilation
 ] }
 
 [profile.release]

@@ -8,7 +8,7 @@
 //! windows-capture クレートのバージョン不整合により、
 //! windows crate を直接使用してWGC APIを実装します。
 
-use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, Roi};
+use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, GpuFrame, Roi};
 use crate::infrastructure::capture::common::{
     clamp_roi, copy_roi_to_staging, copy_texture_to_cpu, StagingTextureManager,
 };
@@ -390,6 +390,62 @@ impl WgcCaptureAdapter {
 
         Ok((device, context))
     }
+
+    /// ROI領域を新しいGPUテクスチャにコピー
+    ///
+    /// GPU処理用にROI領域のみを切り出した新しいテクスチャを作成します。
+    fn create_roi_texture(
+        &self,
+        source: &ID3D11Texture2D,
+        roi: &Roi,
+    ) -> DomainResult<ID3D11Texture2D> {
+        // ROIサイズのテクスチャを作成
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: roi.width,
+            Height: roi.height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+
+        let mut roi_texture: Option<ID3D11Texture2D> = None;
+        unsafe {
+            self.device
+                .CreateTexture2D(&desc, None, Some(&mut roi_texture))
+                .map_err(|e| {
+                    DomainError::GpuTexture(format!("Failed to create ROI texture: {:?}", e))
+                })?;
+        }
+
+        let roi_texture = roi_texture.ok_or_else(|| {
+            DomainError::GpuTexture("ROI texture creation returned None".to_string())
+        })?;
+
+        // ソーステクスチャからROI領域をコピー
+        let src_box = D3D11_BOX {
+            left: roi.x,
+            top: roi.y,
+            front: 0,
+            right: roi.x + roi.width,
+            bottom: roi.y + roi.height,
+            back: 1,
+        };
+
+        unsafe {
+            self.context
+                .CopySubresourceRegion(&roi_texture, 0, 0, 0, 0, source, 0, Some(&src_box));
+        }
+
+        Ok(roi_texture)
+    }
 }
 
 impl CapturePort for WgcCaptureAdapter {
@@ -452,6 +508,44 @@ impl CapturePort for WgcCaptureAdapter {
 
     fn device_info(&self) -> DeviceInfo {
         self.device_info.clone()
+    }
+
+    fn capture_gpu_frame(&mut self, roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+        // レイテンシ最小化: イベントハンドラで既に取得されたフレームを使用
+        let frame_data = {
+            let guard = self.latest_frame.lock().map_err(|e| {
+                DomainError::Capture(format!("Failed to lock latest frame: {:?}", e))
+            })?;
+
+            match &*guard {
+                Some(data) => data.clone(),
+                std::option::Option::None => {
+                    // まだフレームが到着していない
+                    return Ok(None);
+                }
+            }
+        };
+
+        // ROIをクランプ
+        let clamped_roi = match clamp_roi(roi, frame_data.width, frame_data.height) {
+            Some(r) => r,
+            std::option::Option::None => return Ok(None),
+        };
+
+        // GPU処理用: ROI領域のみを新しいテクスチャにコピー
+        // Note: 現在はROIコピーを行うが、将来的にはシェーダー内でROI処理可能
+        let roi_texture = self.create_roi_texture(&frame_data.texture, &clamped_roi)?;
+
+        Ok(Some(GpuFrame::new(
+            Some(roi_texture),
+            clamped_roi.width,
+            clamped_roi.height,
+            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+        )))
+    }
+
+    fn supports_gpu_frame(&self) -> bool {
+        true
     }
 }
 

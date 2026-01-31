@@ -113,7 +113,9 @@ src/infrastructure/processing/
 ├── cpu/
 │   └── mod.rs          # ColorProcessAdapter (OpenCV ベース)
 └── gpu/
-    └── mod.rs          # GpuColorProcessor (プレースホルダー)
+    ├── mod.rs          # GpuColorProcessor (D3D11 Compute Shader)
+    └── shaders/
+        └── hsv_detect.hlsl  # HLSL Compute Shader
 ```
 
 ### 現在のデータフロー (CPU)
@@ -134,20 +136,37 @@ DetectionResult
 HID Thread
 ```
 
-### 将来のデータフロー (GPU) - 未実装
+### GPU データフロー (実装済み、統合待ち)
 
 ```
 Capture (DDA/WGC/Spout)
     ↓
 GPU Texture
     ↓ (GPU 常駐のまま)
-GpuFrame
+GpuFrame { texture: ID3D11Texture2D }
     ↓
 GpuColorProcessor
-    ↓ D3D11 Compute Shader (HSV 検出)
+    ↓ D3D11 Compute Shader (hsv_detect.hlsl)
+    │   - BGRA→HSV 変換 (GPU 上)
+    │   - 色範囲判定
+    │   - 並列リダクション (検出ピクセル数、座標合計)
+    ↓
+Staging Buffer (12 bytes: count, sum_x, sum_y)
+    ↓ Map/Unmap
 DetectionResult (座標のみ CPU へ)
     ↓
 HID Thread
 ```
 
-**利点**: GPU→CPU コピーを最終座標のみに削減し、レイテンシを大幅に改善
+**利点**: GPU→CPU コピーを 12 バイトの結果バッファのみに削減し、レイテンシを大幅に改善
+
+### GPU Compute Shader 詳細
+
+HLSL シェーダ (`hsv_detect.hlsl`) の処理フロー:
+
+1. **スレッドグループ**: 16x16 = 256 スレッド/グループ
+2. **BGRA→HSV 変換**: OpenCV 互換 (H: 0-180, S/V: 0-255)
+3. **範囲判定**: Hue ラップアラウンド対応 (赤色検出: h_min=170, h_max=10)
+4. **ローカル集約**: グループ共有メモリで検出数・座標合計を集計
+5. **グローバル集約**: Atomic 演算で全グループ結果を統合
+6. **結果読み戻し**: Staging Buffer 経由で CPU へ (12 バイト)

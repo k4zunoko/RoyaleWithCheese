@@ -16,15 +16,22 @@
 
 ## 完了済みの大型タスク
 
-### GPU Processing 準備フェーズ (2026-01-31)
-GPU 側での画像処理に向けた抽象化レイヤーの整備:
+### GPU Processing 実装フェーズ (2026-01-31)
+D3D11 Compute Shader による GPU 側 HSV 色検出の実装:
 - ✅ `GpuFrame` 型: D3D11 GPU 常駐テクスチャを表現
 - ✅ `GpuProcessPort` トレイト: GPU 処理の抽象化
 - ✅ `ProcessorBackend::Gpu` バリアント追加
 - ✅ GPU エラーバリアント (`GpuNotAvailable`, `GpuCompute`, `GpuTexture`)
 - ✅ モジュール再構成 (`processing/cpu/`, `processing/gpu/`)
-- ✅ プレースホルダー `GpuColorProcessor`
 - ✅ GPU 設定オプション (`GpuConfig`)
+- ✅ **HLSL Compute Shader** (`hsv_detect.hlsl`): BGRA→HSV変換、範囲検出、並列集約
+- ✅ **GpuColorProcessor**: D3D11 compute shader パイプライン完全実装
+  - ランタイム HLSL コンパイル (D3DCompile)
+  - Constant Buffer による HSV パラメータ転送
+  - Shader Resource View (SRV) によるテクスチャ入力
+  - Unordered Access View (UAV) による結果出力
+  - Staging Buffer による CPU 読み戻し
+- ✅ テスト: HARDWARE/WARP デバイスでの自動フォールバック
 
 ### WGC (Windows Graphics Capture) キャプチャ実装 (2026-01-13)
 - ✅ windows crate v0.57を使用した直接実装
@@ -53,13 +60,13 @@ GPU 側での画像処理に向けた抽象化レイヤーの整備:
 
 ## 次のステップ（計画中）
 
-### GPU Processing 実装フェーズ (Phase 2)
-GPU 準備フェーズで整備した抽象化を使用した実装:
-- [ ] D3D11 compute shader による HSV 検出
-- [ ] GPU デバイス/キュー初期化
-- [ ] シェーダリソース管理
-- [ ] キャプチャパイプラインとの統合
-- [ ] パフォーマンスベンチマーク
+### GPU Processing パイプライン統合 (Phase 3)
+GPU 処理の実運用統合:
+- [ ] キャプチャアダプタから `GpuFrame` を直接取得するパス追加
+- [ ] `config.toml` の `gpu.enabled` による CPU/GPU 切り替え
+- [ ] Application 層での GPU/CPU プロセッサ選択ロジック
+- [ ] 実 GPU テクスチャでのエンドツーエンドテスト
+- [ ] パフォーマンスベンチマーク (GPU vs CPU)
 
 ### パフォーマンス検証
 - エンドツーエンドのレイテンシ計測（p95/p99等）と最適化

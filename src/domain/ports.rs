@@ -4,8 +4,8 @@
 //! Infrastructure層がこれらを実装し、Application層がDIで注入する。
 
 use crate::domain::{
-    CoordinateTransformConfig, DetectionResult, DomainResult, Frame, HsvRange, ProcessorBackend,
-    Roi, TransformedCoordinates,
+    CoordinateTransformConfig, DetectionResult, DomainError, DomainResult, Frame, GpuFrame,
+    HsvRange, ProcessorBackend, Roi, TransformedCoordinates,
 };
 
 /// キャプチャポート: 画面フレームの取得を抽象化
@@ -22,6 +22,24 @@ pub trait CapturePort: Send + Sync {
     /// - `Ok(None)`: タイムアウト（フレーム更新なし）
     /// - `Err(DomainError)`: 致命的エラー（再初期化が必要）
     fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>>;
+
+    /// GPU常駐テクスチャとしてフレームをキャプチャする
+    ///
+    /// GPU処理パイプライン用。テクスチャをCPUにコピーせず、
+    /// GPU常駐のまま返します。GPU処理をサポートしない実装は
+    /// デフォルトでGpuNotAvailableエラーを返します。
+    ///
+    /// # Returns
+    /// - `Ok(Some(GpuFrame))`: GPU常駐テクスチャの取得成功
+    /// - `Ok(None)`: タイムアウト（フレーム更新なし）
+    /// - `Err(DomainError::GpuNotAvailable)`: GPU処理未サポート
+    /// - `Err(DomainError)`: 致命的エラー
+    #[allow(unused_variables)]
+    fn capture_gpu_frame(&mut self, roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+        Err(DomainError::GpuNotAvailable(
+            "GPU frame capture not supported by this adapter".to_string(),
+        ))
+    }
 
     /// フレームをキャプチャする（全画面、デフォルト実装）
     ///
@@ -46,6 +64,13 @@ pub trait CapturePort: Send + Sync {
 
     /// キャプチャデバイスの情報を取得
     fn device_info(&self) -> DeviceInfo;
+
+    /// GPU処理をサポートしているかを確認
+    ///
+    /// trueを返す場合、capture_gpu_frame()が有効なGpuFrameを返せます。
+    fn supports_gpu_frame(&self) -> bool {
+        false
+    }
 }
 
 /// デバイス情報
