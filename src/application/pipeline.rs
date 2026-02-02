@@ -137,72 +137,162 @@ where
     ///
     /// # Returns
     /// エラーが発生した場合のみ戻る
+    ///
+    /// # GPU パイプライン
+    /// ProcessSelectorがGPU処理をサポートしている場合（supports_gpu_processing() = true）:
+    /// - Capture: `capture_gpu_frame_thread()` - GPUテクスチャのみ転送
+    /// - Process: `process_gpu_frame_thread()` - GPU上で直接処理
+    /// - 結果: 12バイトのみCPU転送（検出結果 = count, sum_x, sum_y）
+    ///
+    /// # CPU パイプライン
+    /// それ以外の場合:
+    /// - Capture: `capture_thread()` - CPUフレーム転送
+    /// - Process: `process_thread()` - CPU上での処理
+    /// - 結果: フルフレーム CPU転送 + 検出結果
     pub fn run(mut self) -> DomainResult<()> {
-        let (capture_tx, capture_rx) = bounded::<threads::TimestampedFrame>(1);
         let (process_tx, process_rx) = bounded::<threads::TimestampedDetection>(1);
         let (stats_tx, stats_rx) = unbounded::<threads::StatData>();
 
-        // Capture Thread
-        let capture_handle = {
-            let capture = Arc::clone(&self.capture);
-            let tx = capture_tx;
-            let roi = self.roi;
-            std::thread::spawn(move || {
-                threads::capture_thread(capture, tx, roi);
-            })
+        // GPU パイプラインをサポートしているかチェック
+        let use_gpu_pipeline = {
+            let guard = self.process.lock().unwrap();
+            guard.supports_gpu_processing()
         };
 
-        // Process Thread
-        let process_handle = {
-            let process = Arc::clone(&self.process);
-            let roi = self.roi;
-            let hsv_range = self.hsv_range;
-            let rx = capture_rx;
-            let tx = process_tx;
-            let stats_tx_clone = stats_tx.clone();
-            std::thread::spawn(move || {
-                threads::process_thread(process, rx, tx, roi, hsv_range, stats_tx_clone);
-            })
-        };
+        if use_gpu_pipeline {
+            tracing::info!("GPU pipeline enabled: using zero-copy GPU processing");
 
-        // HID Thread
-        let hid_handle = {
-            let comm = Arc::clone(&self.comm);
-            let rx = process_rx;
-            let roi = self.roi;
-            let coordinate_transform = self.coordinate_transform.clone();
-            let stats_tx_clone = stats_tx.clone();
-            let hid_send_interval = self.config.hid_send_interval;
-            let runtime_state = self.runtime_state.clone();
-            let activation_conditions = self.activation_conditions.clone();
-            std::thread::spawn(move || {
-                threads::hid_thread(
-                    comm,
-                    rx,
-                    roi,
-                    coordinate_transform,
-                    stats_tx_clone,
-                    hid_send_interval,
-                    runtime_state,
-                    activation_conditions,
-                );
-            })
-        };
+            // GPU パイプライン
+            let (capture_gpu_tx, capture_gpu_rx) = bounded::<threads::TimestampedGpuFrame>(1);
 
-        // Stats/UI Thread（メインスレッドで実行）
-        threads::stats_thread(
-            stats_rx,
-            &mut self.stats,
-            &mut self.recovery,
-            &self.runtime_state,
-            &*self.input,
-            self.audio_feedback.as_ref(),
-        );
+            // GPU Capture Thread
+            let capture_handle = {
+                let capture = Arc::clone(&self.capture);
+                let tx = capture_gpu_tx;
+                let roi = self.roi;
+                std::thread::spawn(move || {
+                    threads::capture_gpu_frame_thread(capture, tx, roi);
+                })
+            };
 
-        // スレッドの終了を待つ
-        let _ = capture_handle.join();
-        let _ = process_handle.join();
-        let _ = hid_handle.join();
+            // GPU Process Thread
+            let process_handle = {
+                let process = Arc::clone(&self.process);
+                let hsv_range = self.hsv_range;
+                let rx = capture_gpu_rx;
+                let tx = process_tx;
+                let stats_tx_clone = stats_tx.clone();
+                std::thread::spawn(move || {
+                    threads::process_gpu_frame_thread(process, rx, tx, hsv_range, stats_tx_clone);
+                })
+            };
+
+            // HID Thread (same as CPU pipeline)
+            let hid_handle = {
+                let comm = Arc::clone(&self.comm);
+                let rx = process_rx;
+                let roi = self.roi;
+                let coordinate_transform = self.coordinate_transform.clone();
+                let stats_tx_clone = stats_tx.clone();
+                let hid_send_interval = self.config.hid_send_interval;
+                let runtime_state = self.runtime_state.clone();
+                let activation_conditions = self.activation_conditions.clone();
+                std::thread::spawn(move || {
+                    threads::hid_thread(
+                        comm,
+                        rx,
+                        roi,
+                        coordinate_transform,
+                        stats_tx_clone,
+                        hid_send_interval,
+                        runtime_state,
+                        activation_conditions,
+                    );
+                })
+            };
+
+            // Stats/UI Thread（メインスレッドで実行）
+            threads::stats_thread(
+                stats_rx,
+                &mut self.stats,
+                &mut self.recovery,
+                &self.runtime_state,
+                &*self.input,
+                self.audio_feedback.as_ref(),
+            );
+
+            // スレッドの終了を待つ
+            let _ = capture_handle.join();
+            let _ = process_handle.join();
+            let _ = hid_handle.join();
+        } else {
+            tracing::info!("CPU pipeline enabled: using traditional CPU processing");
+
+            // CPU パイプライン
+            let (capture_tx, capture_rx) = bounded::<threads::TimestampedFrame>(1);
+
+            // Capture Thread
+            let capture_handle = {
+                let capture = Arc::clone(&self.capture);
+                let tx = capture_tx;
+                let roi = self.roi;
+                std::thread::spawn(move || {
+                    threads::capture_thread(capture, tx, roi);
+                })
+            };
+
+            // Process Thread
+            let process_handle = {
+                let process = Arc::clone(&self.process);
+                let roi = self.roi;
+                let hsv_range = self.hsv_range;
+                let rx = capture_rx;
+                let tx = process_tx;
+                let stats_tx_clone = stats_tx.clone();
+                std::thread::spawn(move || {
+                    threads::process_thread(process, rx, tx, roi, hsv_range, stats_tx_clone);
+                })
+            };
+
+            // HID Thread
+            let hid_handle = {
+                let comm = Arc::clone(&self.comm);
+                let rx = process_rx;
+                let roi = self.roi;
+                let coordinate_transform = self.coordinate_transform.clone();
+                let stats_tx_clone = stats_tx.clone();
+                let hid_send_interval = self.config.hid_send_interval;
+                let runtime_state = self.runtime_state.clone();
+                let activation_conditions = self.activation_conditions.clone();
+                std::thread::spawn(move || {
+                    threads::hid_thread(
+                        comm,
+                        rx,
+                        roi,
+                        coordinate_transform,
+                        stats_tx_clone,
+                        hid_send_interval,
+                        runtime_state,
+                        activation_conditions,
+                    );
+                })
+            };
+
+            // Stats/UI Thread（メインスレッドで実行）
+            threads::stats_thread(
+                stats_rx,
+                &mut self.stats,
+                &mut self.recovery,
+                &self.runtime_state,
+                &*self.input,
+                self.audio_feedback.as_ref(),
+            );
+
+            // スレッドの終了を待つ
+            let _ = capture_handle.join();
+            let _ = process_handle.join();
+            let _ = hid_handle.join();
+        }
 
         Ok(())
     }

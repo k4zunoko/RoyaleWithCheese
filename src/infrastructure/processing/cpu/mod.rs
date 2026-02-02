@@ -335,6 +335,17 @@ impl ProcessPort for ColorProcessAdapter {
     fn backend(&self) -> ProcessorBackend {
         ProcessorBackend::Cpu
     }
+
+    fn process_gpu_frame(
+        &mut self,
+        _gpu_frame: &crate::domain::types::GpuFrame,
+        _hsv_range: &HsvRange,
+    ) -> DomainResult<DetectionResult> {
+        // CPU adapter doesn't support GPU frames
+        Err(DomainError::Process(
+            "CPU processor cannot process GPU frames. Use process_frame() instead.".to_string(),
+        ))
+    }
 }
 
 #[cfg(test)]

@@ -182,6 +182,72 @@ pub(crate) fn capture_thread<C: CapturePort>(
     }
 }
 
+/// Capture GPU スレッドのメインループ（ゼロコピーGPUパイプライン用）
+///
+/// # 特徴
+/// - `capture_gpu_frame()` を使用してGPUテクスチャのみ転送
+/// - CPU側には `TimestampedGpuFrame` を送信
+/// - ROI内のデータだけがGPUに保持され、CPU転送は12バイト（検出結果）のみ
+pub(crate) fn capture_gpu_frame_thread<C: CapturePort>(
+    capture: Arc<Mutex<C>>,
+    tx: Sender<TimestampedGpuFrame>,
+    roi: Roi,
+) {
+    tracing::info!(
+        "Capture GPU thread started with ROI: {}x{} at ({}, {})",
+        roi.width,
+        roi.height,
+        roi.x,
+        roi.y
+    );
+
+    #[cfg(debug_assertions)]
+    let mut frame_count = 0u64;
+
+    loop {
+        let captured_at = Instant::now();
+
+        let result = {
+            let mut guard = capture.lock().unwrap();
+            guard.capture_gpu_frame(&roi)
+        };
+
+        match result {
+            Ok(Some(gpu_frame)) => {
+                #[cfg(debug_assertions)]
+                {
+                    frame_count += 1;
+                    if frame_count.is_multiple_of(144) {
+                        // 144フレーム（約1秒@144Hz）に1回ログ出力
+                        tracing::debug!(
+                            "GPU frame captured: texture ready (count: {})",
+                            frame_count
+                        );
+                    }
+                }
+
+                let timestamped = TimestampedGpuFrame {
+                    gpu_frame,
+                    captured_at,
+                };
+                send_latest_only(&tx, timestamped);
+            }
+            Ok(None) => {
+                // Timeout - no new frame
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                tracing::warn!("GPU Capture error: {:?}", e);
+                #[cfg(not(debug_assertions))]
+                let _ = e;
+
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
+
 /// Processスレッドのメインループ
 pub(crate) fn process_thread<P: ProcessPort>(
     process: Arc<Mutex<P>>,
@@ -231,6 +297,73 @@ pub(crate) fn process_thread<P: ProcessPort>(
             Err(e) => {
                 #[cfg(debug_assertions)]
                 tracing::error!("Process error: {:?}", e);
+                #[cfg(not(debug_assertions))]
+                let _ = e;
+            }
+        }
+    }
+}
+
+/// Process GPU スレッドのメインループ（ゼロコピーGPUパイプライン用）
+///
+/// # 特徴
+/// - `process_gpu_frame()` を使用してGPUで直接処理
+/// - GPUテクスチャはそのままGPU上で処理、結果のみ12バイトCPU転送
+/// - CPU側には `TimestampedDetection` を送信
+///
+/// # 動作
+/// ProcessPort内にGpuProcessPortが含まれ、GPU処理が実行される
+/// 現在のGpuColorAdapterは内部で以下を実行:
+/// 1. 受け取ったGpuFrameをそのまま処理
+/// 2. 検出結果（count, sum_x, sum_y）をCPUに転送
+/// 3. 12バイトのみコピー
+pub(crate) fn process_gpu_frame_thread<P: ProcessPort>(
+    process: Arc<Mutex<P>>,
+    rx: Receiver<TimestampedGpuFrame>,
+    tx: Sender<TimestampedDetection>,
+    hsv_range: HsvRange,
+    _stats_tx: Sender<StatData>,
+) {
+    tracing::info!("Process GPU thread started");
+
+    #[cfg(debug_assertions)]
+    let mut process_count = 0u64;
+
+    while let Ok(timestamped) = rx.recv() {
+        let result = {
+            let mut guard = process.lock().unwrap();
+            guard.process_gpu_frame(&timestamped.gpu_frame, &hsv_range)
+        };
+
+        match result {
+            Ok(detection_result) => {
+                let processed_at = Instant::now();
+                let detection = TimestampedDetection {
+                    result: detection_result,
+                    captured_at: timestamped.captured_at,
+                    processed_at,
+                };
+
+                #[cfg(debug_assertions)]
+                {
+                    process_count += 1;
+                    if process_count.is_multiple_of(144) {
+                        // 144フレーム（約1秒@144Hz）に1回ログ出力
+                        let latency = processed_at.duration_since(timestamped.captured_at);
+                        tracing::debug!(
+                            "GPU frame processed: detected={}, latency={:?}ms, count={}",
+                            detection_result.detected,
+                            latency.as_millis(),
+                            process_count
+                        );
+                    }
+                }
+
+                send_latest_only(&tx, detection);
+            }
+            Err(e) => {
+                #[cfg(debug_assertions)]
+                tracing::error!("GPU Process error: {:?}", e);
                 #[cfg(not(debug_assertions))]
                 let _ = e;
             }

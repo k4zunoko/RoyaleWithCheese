@@ -110,6 +110,39 @@ pub trait ProcessPort: Send + Sync {
     fn stats(&self) -> ProcessStats {
         ProcessStats::default()
     }
+
+    /// GPU処理がサポートされているかチェック（オプション、デフォルトはfalse）
+    ///
+    /// # Returns
+    /// - `true`: このprocessorはGPU処理をサポートしており、ゼロコピーGPUパイプラインが使用可能
+    /// - `false`: CPU処理のみ、従来のパイプラインを使用
+    fn supports_gpu_processing(&self) -> bool {
+        false
+    }
+
+    /// GPU フレームを直接処理する（オプション、デフォルトはエラー）
+    ///
+    /// ゼロコピーGPUパイプラインでのみ使用。
+    /// `supports_gpu_processing()` が `true` を返すprocessorのみがこれを実装すべき。
+    ///
+    /// # Arguments
+    /// - `gpu_frame`: GPU上のテクスチャフレーム
+    /// - `hsv_range`: HSV検知の場合のレンジ
+    ///
+    /// # Returns
+    /// - `Ok(DetectionResult)`: 検出結果
+    /// - `Err(DomainError)`: GPU処理非サポート、または処理エラー
+    fn process_gpu_frame(
+        &mut self,
+        _gpu_frame: &crate::domain::types::GpuFrame,
+        _hsv_range: &HsvRange,
+    ) -> DomainResult<DetectionResult> {
+        Err(DomainError::Process(
+            "GPU frame processing is not supported by this processor. \
+             Use process_frame() instead or ensure the processor supports GPU processing."
+                .to_string(),
+        ))
+    }
 }
 
 /// 処理統計情報

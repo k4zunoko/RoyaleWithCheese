@@ -46,6 +46,26 @@ impl ProcessPort for ProcessSelector {
             ProcessSelector::YoloOrt => ProcessorBackend::Cpu, // 将来の実装: YOLOのバックエンドを返す
         }
     }
+
+    fn supports_gpu_processing(&self) -> bool {
+        matches!(self, ProcessSelector::FastColorGpu(_))
+    }
+
+    fn process_gpu_frame(
+        &mut self,
+        gpu_frame: &GpuFrame,
+        hsv_range: &HsvRange,
+    ) -> DomainResult<DetectionResult> {
+        match self {
+            ProcessSelector::FastColorGpu(adapter) => {
+                adapter.process_gpu_frame(gpu_frame, hsv_range)
+            }
+            ProcessSelector::FastColor(adapter) => adapter.process_gpu_frame(gpu_frame, hsv_range),
+            ProcessSelector::YoloOrt => {
+                unimplemented!("YoloOrt is not yet implemented")
+            }
+        }
+    }
 }
 
 impl ProcessSelector {
@@ -98,10 +118,5 @@ impl ProcessSelector {
                 unimplemented!("YoloOrt is not yet implemented")
             }
         }
-    }
-
-    /// Check if this selector supports GPU frame processing
-    pub fn supports_gpu_processing(&self) -> bool {
-        matches!(self, ProcessSelector::FastColorGpu(_))
     }
 }

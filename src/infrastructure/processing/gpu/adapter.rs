@@ -265,6 +265,16 @@ impl ProcessPort for GpuColorAdapter {
     fn backend(&self) -> ProcessorBackend {
         ProcessorBackend::Gpu
     }
+
+    fn process_gpu_frame(
+        &mut self,
+        gpu_frame: &GpuFrame,
+        hsv_range: &HsvRange,
+    ) -> DomainResult<DetectionResult> {
+        // Directly process the GPU frame without any upload
+        // This is the zero-copy GPU pipeline path
+        self.processor.process_gpu_frame(gpu_frame, hsv_range)
+    }
 }
 
 #[cfg(test)]
