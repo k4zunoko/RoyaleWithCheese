@@ -1,0 +1,28 @@
+warning: field `output` is never read
+  --> src\infrastructure\capture\dda.rs:21:5
+   |
+19 | pub struct DdaCaptureAdapter {
+   |            ----------------- field in this struct
+20 |     dupl: DesktopDuplicationApi,
+21 |     output: Display,
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: crate `RoyaleWithCheese` should have a snake case name
+  |
+  = help: convert the identifier to snake case: `royale_with_cheese`
+  = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `RoyaleWithCheese` (lib) generated 2 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.68s
+     Running tests\pipeline_integration.rs (target\debug\deps\pipeline_integration-b7e4ae8bea030157.exe)
+
+running 4 tests
+test mock_pipeline_frame_drop_behavior_and_metrics_updated ... ok
+test mock_pipeline_frame_flow ... ok
+test mock_pipeline_runs_and_stops ... ok
+test real_hardware_pipeline_smoke_test ... ignored, requires real display capture backend and HID device
+
+test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.80s
+

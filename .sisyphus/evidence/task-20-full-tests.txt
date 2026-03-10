@@ -1,0 +1,229 @@
+warning: field `output` is never read
+  --> src\infrastructure\capture\dda.rs:21:5
+   |
+19 | pub struct DdaCaptureAdapter {
+   |            ----------------- field in this struct
+20 |     dupl: DesktopDuplicationApi,
+21 |     output: Display,
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: crate `RoyaleWithCheese` should have a snake case name
+  |
+  = help: convert the identifier to snake case: `royale_with_cheese`
+  = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `RoyaleWithCheese` (lib) generated 2 warnings
+warning: unused import: `std::fs`
+   --> src\domain\config.rs:411:9
+    |
+411 |     use std::fs;
+    |         ^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `create_temp_toml` is never used
+   --> src\domain\config.rs:414:8
+    |
+414 |     fn create_temp_toml(content: &str) -> (tempfile::NamedTempFile, std::path::PathBuf) {
+    |        ^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `output` is never read
+  --> src\infrastructure\capture\dda.rs:21:5
+   |
+19 | pub struct DdaCaptureAdapter {
+   |            ----------------- field in this struct
+20 |     dupl: DesktopDuplicationApi,
+21 |     output: Display,
+   |     ^^^^^^
+
+warning: `RoyaleWithCheese` (lib test) generated 3 warnings (run `cargo fix --lib -p RoyaleWithCheese --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.64s
+     Running unittests src\lib.rs (target\debug\deps\RoyaleWithCheese-6187498b8cab31b0.exe)
+
+running 166 tests
+test application::metrics::tests::test_concurrent_reads_and_writes ... ok
+test application::metrics::tests::test_duration_conversion ... ok
+test application::metrics::tests::test_metrics_snapshot_display ... ok
+test application::metrics::tests::test_new_initializes_to_zero ... ok
+test application::metrics::tests::test_record_capture ... ok
+test application::metrics::tests::test_record_frame_drop ... ok
+test application::metrics::tests::test_record_hid_error ... ok
+test application::metrics::tests::test_record_hid_send ... ok
+test application::metrics::tests::test_record_process ... ok
+test application::metrics::tests::test_snapshot_returns_copy ... ok
+test application::metrics::tests::test_thread_safety_4threads_1000events ... ok
+test application::pipeline::tests::channel_topology_uses_expected_capacities ... ok
+test application::pipeline::tests::pipeline_construction_succeeds ... ok
+test application::pipeline::tests::pipeline_run_stops_cleanly ... ok
+test application::pipeline::tests::process_port_trait_accepts_mock_types ... ok
+test application::pipeline::tests::process_selector_fast_color_backend_is_cpu ... ok
+test application::recovery::tests::backoff_capped_at_max_backoff_ms ... ok
+test application::recovery::tests::backoff_does_not_overflow_at_extreme_failure_count ... ok
+test application::recovery::tests::exponential_backoff_doubles_each_retry ... ok
+test application::recovery::tests::record_failure_sets_last_attempt ... ok
+test application::recovery::tests::record_success_resets_consecutive_failures ... ok
+test application::recovery::tests::should_attempt_returns_false_when_max_retries_exceeded ... ok
+test application::recovery::tests::should_attempt_returns_true_initially ... ok
+test application::runtime_state::tests::arc_shared_toggle_visible_across_clones ... ok
+test application::runtime_state::tests::mouse_state_tracks_updates ... ok
+test application::runtime_state::tests::new_starts_active ... ok
+test application::runtime_state::tests::toggle_flips_active ... ok
+test application::threads::tests::capture_thread_sends_frame_to_channel ... ok
+test application::threads::tests::capture_thread_stops_on_signal ... ok
+test application::threads::tests::hid_thread_sends_hid_report ... ok
+test application::threads::tests::process_config_mapping_helpers_match_expected_values ... ok
+test application::threads::tests::process_selector_fast_color_backend_is_cpu ... ok
+test application::threads::tests::process_thread_processes_received_frame ... ok
+test application::threads::tests::send_latest_only_drops_when_full ... ok
+test domain::config::tests::test_config_clone ... ok
+test domain::config::tests::test_config_debug_format ... ok
+test domain::config::tests::test_default_config_capture_section ... ok
+test domain::config::tests::test_default_config_communication ... ok
+test domain::config::tests::test_default_config_gpu_disabled ... ok
+test domain::config::tests::test_default_config_hsv_range ... ok
+test domain::config::tests::test_default_config_roi ... ok
+test domain::config::tests::test_default_config_validates ... ok
+test domain::config::tests::test_parse_minimal_valid_toml ... ok
+test domain::config::tests::test_parse_wgc_source ... ok
+test domain::config::tests::test_validate_activation_active_window_zero ... ok
+test domain::config::tests::test_validate_activation_max_distance_zero ... ok
+test domain::config::tests::test_validate_capture_reinit_max_equals_initial ... ok
+test domain::config::tests::test_validate_capture_reinit_max_greater_than_initial ... ok
+test domain::config::tests::test_validate_capture_reinit_max_less_than_initial ... ok
+test domain::config::tests::test_validate_capture_timeout_zero ... ok
+test domain::config::tests::test_validate_communication_hid_send_interval_zero ... ok
+test domain::config::tests::test_validate_communication_product_id_zero ... ok
+test domain::config::tests::test_validate_communication_vendor_id_zero ... ok
+test domain::config::tests::test_validate_coordinate_transform_sensitivity_zero ... ok
+test domain::config::tests::test_validate_coordinate_transform_x_clip_zero ... ok
+test domain::config::tests::test_validate_coordinate_transform_y_clip_zero ... ok
+test domain::config::tests::test_validate_gpu_device_index_too_high ... ok
+test domain::config::tests::test_validate_gpu_device_index_valid ... ok
+test domain::config::tests::test_validate_hsv_h_high_exceeds_180 ... ok
+test domain::config::tests::test_validate_hsv_h_low_greater_than_h_high ... ok
+test domain::config::tests::test_validate_hsv_s_low_greater_than_s_high ... ok
+test domain::config::tests::test_validate_hsv_v_low_greater_than_v_high ... ok
+test domain::config::tests::test_validate_invalid_capture_source ... ok
+test domain::config::tests::test_validate_pipeline_stats_interval_zero ... ok
+test domain::config::tests::test_validate_roi_both_positive ... ok
+test domain::config::tests::test_validate_roi_height_zero ... ok
+test domain::config::tests::test_validate_roi_width_zero ... ok
+test domain::error::tests::test_capture_error_display ... ok
+test domain::error::tests::test_communication_error_display ... ok
+test domain::error::tests::test_configuration_error_display ... ok
+test domain::error::tests::test_device_not_available_display ... ok
+test domain::error::tests::test_domain_result_err ... ok
+test domain::error::tests::test_domain_result_ok ... ok
+test domain::error::tests::test_domain_result_string ... ok
+test domain::error::tests::test_gpu_compute_error_display ... ok
+test domain::error::tests::test_gpu_not_available_display ... ok
+test domain::error::tests::test_gpu_texture_error_display ... ok
+test domain::error::tests::test_initialization_error_display ... ok
+test domain::error::tests::test_is_not_recoverable_capture ... ok
+test domain::error::tests::test_is_not_recoverable_communication ... ok
+test domain::error::tests::test_is_not_recoverable_configuration ... ok
+test domain::error::tests::test_is_not_recoverable_gpu_compute ... ok
+test domain::error::tests::test_is_not_recoverable_gpu_texture ... ok
+test domain::error::tests::test_is_not_recoverable_initialization ... ok
+test domain::error::tests::test_is_not_recoverable_process ... ok
+test domain::error::tests::test_is_not_recoverable_reinitialization_required ... ok
+test domain::error::tests::test_is_not_recoverable_timeout ... ok
+test domain::error::tests::test_is_recoverable_device_not_available ... ok
+test domain::error::tests::test_is_recoverable_gpu_not_available ... ok
+test domain::error::tests::test_process_error_display ... ok
+test domain::error::tests::test_reinitialization_required_display ... ok
+test domain::error::tests::test_timeout_error_display ... ok
+test domain::ports::tests::apply_coordinate_transform_returns_zero_when_not_detected ... ok
+test domain::ports::tests::apply_coordinate_transform_uses_roi_center_and_sensitivity ... ok
+test domain::ports::tests::capture_port_default_gpu_method_returns_not_available ... ok
+test domain::ports::tests::capture_port_mock_returns_frame_and_device_info ... ok
+test domain::ports::tests::capture_port_reinitialize_and_gpu_support ... ok
+test domain::ports::tests::comm_port_mock_records_bytes_and_reconnects ... ok
+test domain::ports::tests::coordinates_to_hid_report_returns_zero_payload_when_not_detected ... ok
+test domain::ports::tests::coordinates_to_hid_report_uses_hardware_contract_bytes ... ok
+test domain::ports::tests::detection_to_hid_report_encodes_absolute_coordinates_big_endian ... ok
+test domain::ports::tests::input_port_mock_returns_key_and_input_state ... ok
+test domain::ports::tests::process_port_default_gpu_method_returns_not_available ... ok
+test domain::ports::tests::process_port_mock_processes_cpu_and_gpu_frames ... ok
+test domain::types::tests::bounding_box_new ... ok
+test domain::types::tests::detection_result_detected ... ok
+test domain::types::tests::detection_result_not_detected ... ok
+test domain::types::tests::device_info_new ... ok
+test domain::types::tests::frame_new ... ok
+test domain::types::tests::gpu_frame_new ... ok
+test domain::types::tests::hsv_range_new ... ok
+test domain::types::tests::input_state_default ... ok
+test domain::types::tests::processor_backend_equality ... ok
+test domain::types::tests::roi_area ... ok
+test domain::types::tests::roi_center ... ok
+test domain::types::tests::roi_centered_in_roi_larger_than_screen ... ok
+test domain::types::tests::roi_centered_in_roi_taller_than_screen ... ok
+test domain::types::tests::roi_centered_in_roi_wider_than_screen ... ok
+test domain::types::tests::roi_centered_in_standard ... ok
+test domain::types::tests::roi_intersects_diagonal ... ok
+test domain::types::tests::roi_intersects_non_overlapping_horizontal ... ok
+test domain::types::tests::roi_intersects_non_overlapping_vertical ... ok
+test domain::types::tests::roi_intersects_overlapping ... ok
+test domain::types::tests::roi_intersects_touching_edge_no_overlap ... ok
+test domain::types::tests::roi_new ... ok
+test domain::types::tests::transformed_coordinates_new ... ok
+test domain::types::tests::virtual_key_equality ... ok
+test domain::types::tests::virtual_key_to_vk_code ... ok
+test infrastructure::capture::common::tests::clamp_roi_returns_zero_when_outside ... ok
+test infrastructure::capture::common::tests::clamp_roi_truncates_to_bounds ... ok
+test infrastructure::capture::common::tests::staging_texture_manager_default_is_empty ... ok
+test infrastructure::capture::dda::tests::capture_frame_returns_roi_sized_frame ... ignored
+test infrastructure::capture::dda::tests::device_info_has_non_zero_dimensions ... ok
+test infrastructure::capture::dda::tests::supports_gpu_frame_is_true ... ok
+test infrastructure::capture::wgc::tests::device_info_has_dimensions ... ignored
+test infrastructure::capture::wgc::tests::reinitialize_returns_ok ... ignored
+test infrastructure::capture::wgc::tests::supports_gpu_frame_is_true_on_initialized_adapter ... ignored
+test infrastructure::capture::wgc::tests::wgc_adapter_implements_capture_port ... ok
+test infrastructure::gpu_device::tests::create_d3d11_device_returns_result ... ok
+test infrastructure::hid_comm::tests::hid_adapter_construction_with_valid_config ... ok
+test infrastructure::hid_comm::tests::hid_adapter_is_connected_false_when_no_device ... ok
+test infrastructure::hid_comm::tests::hid_adapter_reconnect_requires_actual_device ... ignored
+test infrastructure::hid_comm::tests::hid_adapter_send_returns_error_when_not_connected ... ok
+test infrastructure::input::tests::windows_input_adapter_construction ... ok
+test infrastructure::input::tests::windows_input_adapter_implements_send_sync ... ok
+test infrastructure::input::tests::windows_input_adapter_input_port_trait_object ... ok
+test infrastructure::input::tests::windows_input_adapter_key_held_bit_encoding ... ok
+test infrastructure::input::tests::windows_input_adapter_key_released_bit_encoding ... ok
+test infrastructure::processing::cpu::tests::backend_returns_cpu ... ok
+test infrastructure::processing::cpu::tests::process_frame_detects_solid_color_and_returns_center ... FAILED
+test infrastructure::processing::cpu::tests::process_frame_returns_not_detected_when_no_color_match ... ok
+test infrastructure::processing::cpu::tests::supports_gpu_processing_returns_false ... ok
+test infrastructure::processing::gpu::adapter::tests::backend_returns_gpu ... ok
+test infrastructure::processing::gpu::adapter::tests::create_srv_rejects_non_bgra_texture ... ignored, Requires D3D11 runtime and GPU/WARP availability
+test infrastructure::processing::gpu::adapter::tests::d3dcompile_failure_returns_gpu_compute_error ... ok
+test infrastructure::processing::gpu::adapter::tests::process_frame_executes_compute_path ... ignored, Requires D3D11 runtime and GPU/WARP availability
+test infrastructure::processing::gpu::adapter::tests::process_gpu_frame_without_texture_returns_not_available ... ignored, Requires D3D11 runtime and GPU/WARP availability
+test infrastructure::processing::gpu::adapter::tests::supports_gpu_processing_returns_true ... ok
+test infrastructure::processing::selector::tests::process_selector_fastcolor_backend_returns_cpu ... ok
+test infrastructure::processing::selector::tests::process_selector_fastcolor_dispatches_to_adapter ... ok
+test infrastructure::processing::selector::tests::process_selector_fastcolor_supports_gpu_processing_returns_false ... ok
+test infrastructure::processing::selector::tests::process_selector_fastcolorgpu_backend_returns_gpu ... ok
+test infrastructure::processing::selector::tests::process_selector_fastcolorgpu_dispatches_to_adapter ... ok
+test infrastructure::processing::selector::tests::process_selector_fastcolorgpu_supports_gpu_processing_returns_true ... ok
+test infrastructure::processing::selector::tests::process_selector_process_gpu_frame_fastcolor ... ok
+test infrastructure::processing::selector::tests::process_selector_process_gpu_frame_fastcolorgpu ... ok
+
+failures:
+
+---- infrastructure::processing::cpu::tests::process_frame_detects_solid_color_and_returns_center stdout ----
+
+thread 'infrastructure::processing::cpu::tests::process_frame_detects_solid_color_and_returns_center' (14204) panicked at src\infrastructure\processing\cpu\mod.rs:153:9:
+coverage=0.003921569
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    infrastructure::processing::cpu::tests::process_frame_detects_solid_color_and_returns_center
+
+test result: FAILED. 157 passed; 1 failed; 8 ignored; 0 measured; 0 filtered out; finished in 1.77s
+
+error: test failed, to rerun pass `--lib`

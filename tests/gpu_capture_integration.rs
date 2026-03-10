@@ -7,9 +7,7 @@ use RoyaleWithCheese::domain::{
     ports::CapturePort,
     types::{GpuFrame, Roi},
 };
-use RoyaleWithCheese::infrastructure::capture::{
-    dda::DdaCaptureAdapter, spout::SpoutCaptureAdapter,
-};
+use RoyaleWithCheese::infrastructure::capture::dda::DdaCaptureAdapter;
 
 /// GPUデバイスが利用可能かチェック
 fn gpu_available() -> bool {
@@ -38,26 +36,6 @@ fn test_dda_supports_gpu_frame() {
 }
 
 #[test]
-#[ignore = "Requires GPU"]
-fn test_spout_supports_gpu_frame() {
-    if !gpu_available() {
-        println!("Skipping test: No GPU available");
-        return;
-    }
-
-    let adapter = SpoutCaptureAdapter::new(None);
-    if let Ok(adapter) = adapter {
-        assert!(
-            adapter.supports_gpu_frame(),
-            "Spout should support GPU frames"
-        );
-        println!("✓ Spout supports_gpu_frame() = true");
-    } else {
-        println!("⚠ Could not create Spout adapter");
-    }
-}
-
-#[test]
 #[ignore = "Requires GPU, display, and active DDA session"]
 fn test_dda_capture_gpu_frame() {
     if !gpu_available() {
@@ -80,15 +58,11 @@ fn test_dda_capture_gpu_frame() {
         Ok(Some(gpu_frame)) => {
             println!(
                 "✓ DDA captured GPU frame: {}x{}",
-                gpu_frame.width(),
-                gpu_frame.height()
+                gpu_frame.width, gpu_frame.height
             );
-            assert!(
-                gpu_frame.texture().is_some(),
-                "GPU frame should have texture"
-            );
-            assert_eq!(gpu_frame.width(), 640);
-            assert_eq!(gpu_frame.height(), 480);
+            assert!(gpu_frame.texture.is_some(), "GPU frame should have texture");
+            assert_eq!(gpu_frame.width, 640);
+            assert_eq!(gpu_frame.height, 480);
         }
         Ok(None) => {
             println!(
@@ -103,50 +77,7 @@ fn test_dda_capture_gpu_frame() {
 }
 
 #[test]
-#[ignore = "Requires GPU and active Spout sender"]
-fn test_spout_capture_gpu_frame() {
-    if !gpu_available() {
-        println!("Skipping test: No GPU available");
-        return;
-    }
-
-    let mut adapter = match SpoutCaptureAdapter::new(None) {
-        Ok(a) => a,
-        Err(e) => {
-            println!("⚠ Could not create Spout adapter: {:?}", e);
-            return;
-        }
-    };
-
-    let roi = Roi::new(0, 0, 640, 480);
-
-    // Attempt to capture a GPU frame
-    match adapter.capture_gpu_frame(&roi) {
-        Ok(Some(gpu_frame)) => {
-            println!(
-                "✓ Spout captured GPU frame: {}x{}",
-                gpu_frame.width(),
-                gpu_frame.height()
-            );
-            assert!(
-                gpu_frame.texture().is_some(),
-                "GPU frame should have texture"
-            );
-        }
-        Ok(None) => {
-            println!("⚠ Spout capture returned None (no sender or no new frame)");
-        }
-        Err(e) => {
-            println!("✗ Spout capture failed: {:?}", e);
-        }
-    }
-}
-
-#[test]
 fn test_gpu_frame_properties() {
-    use std::time::Instant;
-    use RoyaleWithCheese::domain::types::Frame;
-
     // Create a simple GPU frame with no texture (for testing)
     // In real usage, this would come from capture_gpu_frame()
     let gpu_frame = GpuFrame::new(
@@ -156,9 +87,9 @@ fn test_gpu_frame_properties() {
         windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
     );
 
-    assert_eq!(gpu_frame.width(), 1920);
-    assert_eq!(gpu_frame.height(), 1080);
-    assert!(gpu_frame.texture().is_none()); // No actual texture in this test
+    assert_eq!(gpu_frame.width, 1920);
+    assert_eq!(gpu_frame.height, 1080);
+    assert!(gpu_frame.texture.is_none()); // No actual texture in this test
 
     println!("✓ GpuFrame properties accessible");
 }
