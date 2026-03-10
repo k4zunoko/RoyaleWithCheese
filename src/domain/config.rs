@@ -201,7 +201,7 @@ impl AppConfig {
     /// * `Err(DomainError::Configuration)` - 検証失敗
     pub fn validate(&self) -> DomainResult<()> {
         // キャプチャ設定の検証
-        let valid_sources = vec!["dda", "wgc"];
+        let valid_sources = ["dda", "wgc"];
         if !valid_sources.contains(&self.capture.source.as_str()) {
             return Err(DomainError::Configuration(format!(
                 "Invalid capture source: {}. Must be one of: {}",
@@ -336,10 +336,14 @@ impl AppConfig {
         Ok(())
     }
 
-    /// デフォルト設定を取得する
+}
+
+
+
+impl Default for AppConfig {
     ///
     /// すべてのデフォルト値は validate() を通過します。
-    pub fn default() -> Self {
+    fn default() -> Self {
         Self {
             capture: CaptureConfig {
                 source: "dda".to_string(),

@@ -18,6 +18,7 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SA
 
 pub struct DdaCaptureAdapter {
     dupl: DesktopDuplicationApi,
+    #[allow(dead_code)]
     output: Display,
     device: ID3D11Device4,
     context: ID3D11DeviceContext4,

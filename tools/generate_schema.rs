@@ -149,7 +149,7 @@ fn generate_properties_table(
                 field_name, type_str_escaped, default, description
             ));
         }
-        md.push_str("\n");
+        md.push('\n');
 
         // ネストされたオブジェクト（$ref を持つプロパティ）をサブセクションとして処理
         for (prop_key, prop_schema) in props {

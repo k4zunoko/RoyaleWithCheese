@@ -65,7 +65,7 @@ impl RecoveryStrategy {
     /// Formula: `initial_backoff_ms * 2^consecutive_failures`, capped at
     /// `max_backoff_ms`.  Uses saturating arithmetic to avoid overflow.
     pub fn next_backoff_ms(&self, state: &RecoveryState) -> u64 {
-        let exponent = state.consecutive_failures as u32;
+        let exponent = state.consecutive_failures;
         // 2^exponent, capped — checked_shl returns None on overflow.
         let multiplier: u64 = 1_u64.checked_shl(exponent).unwrap_or(u64::MAX);
         let backoff = self.initial_backoff_ms.saturating_mul(multiplier);
