@@ -1,206 +1,306 @@
 # RoyaleWithCheese
 
-**Windows 向け低レイテンシ画面キャプチャ → HSV 処理 → HID 出力パイプライン（Rust 実装）**
+Windows 向けのリアルタイム画面キャプチャ／画像処理／USB HID 出力パイプラインです。  
+画面上の指定色をフレームごとに検出し、その座標を USB HID デバイスへ送信することで、外部デバイスによるカーソル操作を実現します。
 
 ---
 
-## プロジェクト概要
+## 動作要件
 
-RoyaleWithCheese は、Windows 環境でリアルタイム画面解析と USB HID デバイスへの出力を低レイテンシで実現する Rust 製アプリケーションです。
+| 要件 | バージョン |
+|---|---|
+| OS | Windows 10 1803 以降 (WGC 使用時) / Windows 10 以降 (DDA 使用時) |
+| Rust ツールチェーン | 1.75 以降 (`rustup` 推奨) |
+| LLVM / Clang | `third_party/llvm/` に同梱 |
+| OpenCV | `third_party/opencv/` に同梱 |
+| GPU (任意) | D3D11 対応 GPU（GPU 処理を使用する場合） |
+| USB HID デバイス | 送信先デバイスが接続されていること |
 
-- **画面キャプチャ**: DDA または WGC バックエンドで画面の指定領域（ROI）を取得
-- **HSV 色検知**: OpenCV を用いた高速 HSV カラーマスク処理でターゲットを検出
-- **HID 出力**: 検出結果を USB HID レポートとしてデバイスへ送出
-- **マルチスレッドパイプライン**: Capture → Process → HID → Stats の 4 スレッド構成
+> **注意**: ネイティブライブラリは `third_party/` 以下にバンドルされています。  
+> `.cargo/config.toml` で `LIBCLANG_PATH`、`OPENCV_INCLUDE_PATHS` 等が自動設定されるため、環境変数の手動設定は不要です。
 
 ---
 
-## アーキテクチャ概要
+## セットアップ
 
-```
-src/
-├── main.rs              # エントリーポイント・DI 構成ルート
-├── lib.rs               # モジュールエクスポート
-├── logging.rs           # ロギング初期化
-├── domain/              # ドメイン層（ビジネスロジック・型・設定）
-│   ├── config.rs        # AppConfig TOML ロード・バリデーション
-│   ├── types.rs         # Roi, Frame, DetectionResult など
-│   ├── ports.rs         # CapturePort / ProcessPort / CommPort / InputPort
-│   └── error.rs         # DomainError
-├── application/         # アプリケーション層（パイプライン制御）
-│   ├── pipeline.rs      # PipelineRunner（スレッド起動・結合）
-│   ├── threads.rs       # capture / process / hid / stats スレッド実装
-│   ├── recovery.rs      # 指数バックオフ再起動ロジック
-│   ├── runtime_state.rs # アトミックフラグ（アクティブ・マウス状態）
-│   └── metrics.rs       # lock-free AtomicU64 パフォーマンス指標
-└── infrastructure/      # インフラ層（外部システムアダプター）
-    ├── capture/         # dda.rs / wgc.rs / common.rs
-    ├── processing/      # cpu/ gpu/ selector.rs
-    ├── hid_comm.rs      # USB HID 送信アダプター
-    └── input.rs         # Windows 入力状態読み取りアダプター
+### 1. リポジトリのクローン
+
+```powershell
+git clone <repository-url>
+cd RoyaleWithCheese
 ```
 
-**レイヤー依存の方向**: `infrastructure` → `application` → `domain`（逆方向なし）
+### 2. 設定ファイルの作成
+
+```powershell
+Copy-Item config.toml.example config.toml
+```
+
+`config.toml` を開き、少なくとも以下の項目をご自身の環境に合わせて変更してください：
+
+```toml
+[communication]
+vendor_id = 0xXXXX   # 使用する HID デバイスの Vendor ID
+product_id = 0xYYYY  # 使用する HID デバイスの Product ID
+```
+
+VID/PID の確認方法はデバイスマネージャー → 該当デバイス → プロパティ → 詳細 → ハードウェア ID で確認できます（形式: `USB\VID_xxxx&PID_yyyy`）。
 
 ---
 
-## キャプチャバックエンド
+## ビルド
 
-`config.toml` の `[capture]` セクションで `source` を指定します。
+```powershell
+# デバッグビルド（開発・検証用）
+cargo build
 
-| 値 | 名称 | 説明 |
-|---|---|---|
-| `"dda"` | Desktop Duplication API | 画面全体を汎用的に取得（デフォルト） |
-| `"wgc"` | Windows Graphics Capture | 低レイテンシモード（Windows 10 1803+、推奨） |
+# リリースビルド（本番実行用・最適化済み）
+cargo build --release
+```
+
+ビルド成果物は `target/debug/` または `target/release/` に生成されます。
+
+---
+
+## 実行
+
+### 基本起動
+
+```powershell
+# デバッグビルドで実行
+cargo run
+
+# リリースビルドで実行（推奨）
+cargo run --release
+
+# ビルド済みバイナリを直接実行
+.\target\release\RoyaleWithCheese.exe
+```
+
+起動時に `config.toml` が存在しない場合、またはパースに失敗した場合は警告ログを出力してデフォルト値で起動します。
+
+### ログレベルの制御
+
+`RUST_LOG` 環境変数でログレベルを制御できます：
+
+```powershell
+# 詳細なデバッグログ（開発時）
+$env:RUST_LOG = "debug"
+cargo run
+
+# 警告以上のみ表示（本番相当）
+$env:RUST_LOG = "warn"
+.\target\release\RoyaleWithCheese.exe
+```
+
+| ビルド | デフォルトレベル |
+|---|---|
+| デバッグビルド | `debug` |
+| リリースビルド | `warn` |
+| リリース + `performance-timing` フィーチャ | `info` |
+
+---
+
+## Cargo フィーチャ
+
+```powershell
+# パフォーマンス計測ログを有効化（フレームごとの処理時間を INFO レベルで出力）
+cargo build --release --features performance-timing
+
+# OpenCV デバッグウィンドウを有効化（処理中の画像をリアルタイム表示）
+cargo build --features opencv-debug-display
+```
+
+| フィーチャ | 説明 |
+|---|---|
+| `performance-timing` | キャプチャ・処理・HID 送信の各ステージの処理時間をログ出力 |
+| `opencv-debug-display` | OpenCV ウィンドウで処理中のフレームとマスク画像をリアルタイム表示（開発・チューニング用） |
+
+---
+
+## 設定
+
+設定は `config.toml`（TOML 形式）で管理します。起動時に読み込まれ、起動後の変更は反映されません。
+
+### 主要セクション早見表
+
+| セクション | 役割 |
+|---|---|
+| `[capture]` | 画面キャプチャ方式・タイムアウト・再初期化の設定 |
+| `[process]` | 処理モード・検出方法の選択 |
+| `[process.roi]` | 処理対象とする矩形領域（画面中央に自動配置） |
+| `[process.hsv_range]` | 検出対象の HSV 色範囲 |
+| `[process.coordinate_transform]` | 感度・クリップリミット・デッドゾーン |
+| `[communication]` | USB HID デバイスの VID/PID・送信間隔 |
+| `[pipeline]` | ダーティレクト最適化・統計情報出力間隔 |
+| `[activation]` | マウス移動の活性化条件 |
+| `[audio_feedback]` | 活性化・非活性化時の効果音 |
+| `[gpu]` | D3D11 GPU 処理の有効化・デバイス選択 |
+| `[debug]` | デバッグモードの有効化 |
+
+詳細な各パラメータの説明は **[CONFIGURATION.md](CONFIGURATION.md)** を参照してください。
+
+### キャプチャソースの選択
 
 ```toml
 [capture]
-source = "wgc"   # "dda" または "wgc"
+source = "wgc"   # 推奨: 低レイテンシ (Windows 10 1803+)
+# source = "dda" # 互換性重視
 ```
 
----
+### GPU 処理の有効化
 
-## 処理モードと GPU パス
-
-`config.toml` の `[process]` セクションと `[gpu]` セクションで制御します。
-
-### 処理モード選択ロジック（`src/main.rs`）
-
-| 条件 | 動作 |
-|---|---|
-| `process.mode = "fast-color-gpu"` | GPU アダプターを直接初期化。GPU が利用不可の場合はエラーで終了 |
-| `process.mode = "fast-color"` + `gpu.enabled = true` | GPU を優先的に使用。初期化に失敗した場合は CPU へ自動フォールバック（警告ログ出力） |
-| `process.mode = "fast-color"` + `gpu.enabled = false`（デフォルト） | CPU（OpenCV）処理のみ使用 |
+GPU 処理には 2 通りの方法があります：
 
 ```toml
+# 方法 1: gpu.enabled フラグ（GPU 失敗時は CPU に自動フォールバック）
 [process]
-mode = "fast-color"   # 通常はこれで十分
+mode = "fast-color"
 
 [gpu]
-enabled = false       # true にすると GPU 優先 + CPU フォールバック
+enabled = true
+device_index = 0   # プライマリ GPU
+
+# 方法 2: モードで直接指定（GPU 初期化失敗時はエラー終了）
+[process]
+mode = "fast-color-gpu"
+
+[gpu]
+enabled = false   # mode で直接指定するため不要
 ```
+
+### HSV 色範囲の調整
+
+検出対象の色に合わせて HSV 範囲を調整します。OpenCV の HSV 色空間は H: 0–180、S/V: 0–255 です。
+
+```toml
+[process.hsv_range]
+# 例: 黄色系
+h_low = 25
+h_high = 45
+s_low = 80
+s_high = 255
+v_low = 80
+v_high = 255
+```
+
+`opencv-debug-display` フィーチャを有効にしてビルドすると、実際の検出状況をリアルタイムで確認できます。
 
 ---
 
-## クイックスタート
+## テスト
 
 ```powershell
-# 1. 設定ファイルを作成（必須：HID デバイスの VID/PID を書き換えること）
-Copy-Item config.toml.example config.toml
+# 全ユニットテストを実行
+cargo test --lib
 
-# 2. config.toml を編集し vendor_id / product_id を実デバイス値に設定
-# [communication]
-# vendor_id = 0xXXXX
-# product_id = 0xYYYY
+# 全統合テストを実行
+cargo test --tests
 
-# 3. リリースビルド
-cargo build --release
+# 全テストを実行
+cargo test
 
-# 4. 実行
-./target/release/RoyaleWithCheese.exe
-```
+# 特定のテストを実行
+cargo test domain::config::tests::test_default_config_validates -- --exact --nocapture
 
-> **注意**: `config.toml` が存在しない、または TOML のパースに失敗した場合、アプリケーションは **警告ログを出力してデフォルト設定で起動** します（終了しません）。デフォルト設定では `vendor_id = 0x1234` / `product_id = 0x5678` が使用されますが、これはプレースホルダーです。実際のデバイスに合わせて必ず書き換えてください。
+# 特定の統合テストファイルを実行
+cargo test --test pipeline_integration
 
----
-
-## ビルドオプション
-
-```powershell
-# パフォーマンス計測ログ付きビルド
-cargo build --features performance-timing
-
-# OpenCV デバッグ表示付きビルド（処理中間結果をウィンドウ表示）
-cargo build --features opencv-debug-display
-
-# パフォーマンス計測付きで即時実行
-cargo run --features performance-timing
-```
-
----
-
-## テストコマンド
-
-```powershell
-# 単体テスト（全テスト、シングルスレッド実行）
-cargo test --lib -- --test-threads=1
-
-# パイプライン統合テスト（モックアダプター使用、ハードウェア不要）
-cargo test --test pipeline_integration -- --test-threads=1
-
-# GPU 処理統合テスト（GPU 必須、#[ignore] テスト）
-cargo test --test gpu_integration -- --ignored --nocapture --test-threads=1
-
-# DDA + GPU キャプチャ統合テスト（GPU + ディスプレイ必須、#[ignore] テスト）
-cargo test --test gpu_capture_integration -- --ignored --nocapture --test-threads=1
-
-# 実ハードウェアパイプラインスモークテスト（HID デバイス + ディスプレイ必須）
+# ハードウェア依存テスト（GPU/ディスプレイが必要）
 cargo test real_hardware_pipeline_smoke_test -- --ignored --nocapture --test-threads=1
 ```
 
----
-
-## 設定リファレンス
-
-設定ファイルは **TOML 形式**で、実行ファイルと同じディレクトリの `config.toml` から読み込まれます。
-
-| ファイル | 用途 |
-|---|---|
-| [`config.toml.example`](config.toml.example) | コピーして使うテンプレート。全設定項目が記載済み |
-| [`CONFIGURATION.md`](CONFIGURATION.md) | 全設定項目の詳細リファレンス（型・デフォルト値・バリデーション条件） |
-
-### 主要設定セクション
-
-| セクション | 内容 |
-|---|---|
-| `[capture]` | キャプチャソース（`dda` / `wgc`）・タイムアウト・再初期化設定 |
-| `[process]` | 処理モード・最小検出面積・検出方法 |
-| `[process.roi]` | 処理対象領域のサイズ（幅 × 高さ、デフォルト 460 × 240 px） |
-| `[process.hsv_range]` | HSV カラー検知の色相・彩度・明度の範囲 |
-| `[process.coordinate_transform]` | 座標変換の感度・クリップ量・デッドゾーン |
-| `[communication]` | HID デバイスの VID / PID・送信間隔 |
-| `[pipeline]` | ダーティレクト最適化・統計ログ間隔 |
-| `[activation]` | 中心距離閾値・アクティブウィンドウ時間 |
-| `[audio_feedback]` | 活性化音・非活性化音の WAV ファイルパス |
-| `[gpu]` | GPU 処理の有効化・デバイスインデックス |
-| `[debug]` | デバッグモード有効化 |
+> ハードウェア依存テストは `#[ignore]` が付与されており、通常のテスト実行では除外されます。  
+> GPU/ディスプレイが接続されていない環境では実行しないでください。
 
 ---
 
-## リポジトリ構成
+## 検証フロー
 
-```
-RoyaleWithCheese/
-├── src/                  # Rust ソースコード（上記アーキテクチャ参照）
-├── tests/                # 統合テスト
-├── tools/                # 開発用ツール
-├── scripts/              # ビルド補助スクリプト
-├── third_party/          # OpenCV DLL など外部バイナリ
-├── Cargo.toml            # クレート定義・依存関係
-├── Cargo.lock            # 依存関係ロックファイル
-├── build.rs              # ビルドスクリプト（OpenCV DLL コピー）
-├── config.toml.example   # 設定ファイルテンプレート
-└── CONFIGURATION.md      # 設定リファレンスドキュメント
+変更後は以下のコマンドで品質確認を行ってください：
+
+```powershell
+cargo fmt -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 ```
 
 ---
 
-## 技術スタック
+## アーキテクチャ
 
-| 項目 | 詳細 |
-|---|---|
-| 言語 | Rust 2021 edition |
-| プラットフォーム | Windows 10 1803+ 専用 |
-| 画像処理 | OpenCV 4.x（`opencv` crate v0.92） |
-| D3D11 / WGC | `windows` crate v0.57 |
-| HID 通信 | `hidapi` crate v2.6 |
-| スレッド間通信 | `crossbeam-channel`（bounded、所有権移転モデル） |
-| ロギング | `tracing` + `tracing-subscriber` |
-| 設定 | `serde` + `toml` + `schemars` |
+```
+src/
+├── main.rs               # エントリーポイント・アダプタ配線
+├── logging.rs            # tracing ロギング初期化
+├── domain/               # コア型・ポート・設定・エラーモデル（抽象層）
+│   ├── config.rs         # AppConfig (全設定構造体 + 検証)
+│   ├── ports.rs          # CapturePort / ProcessPort / CommPort / InputPort
+│   ├── types.rs          # Roi / Frame / GpuFrame / DetectionResult など
+│   └── error.rs          # DomainError / DomainResult
+├── application/          # パイプラインオーケストレーション層
+│   ├── pipeline.rs       # PipelineRunner (スレッド管理・チャンネル配線)
+│   ├── threads.rs        # 各スレッドのループ実装
+│   ├── metrics.rs        # PipelineMetrics (フレームレート等の計測)
+│   ├── recovery.rs       # キャプチャ再初期化ロジック
+│   └── runtime_state.rs  # RuntimeState (Arc<AtomicBool> による制御フラグ)
+└── infrastructure/       # 具体的なアダプタ実装層
+    ├── capture/
+    │   ├── dda.rs        # Desktop Duplication API アダプタ
+    │   └── wgc.rs        # Windows Graphics Capture アダプタ
+    ├── processing/
+    │   ├── cpu/          # OpenCV HSV 色検出 (CPU)
+    │   ├── gpu/          # D3D11 コンピュートシェーダ (GPU)
+    │   └── selector.rs   # ProcessSelector (CPU/GPU 列挙ディスパッチ)
+    ├── hid_comm.rs       # HidCommAdapter (hidapi)
+    ├── input.rs          # WindowsInputAdapter (Win32 GetAsyncKeyState)
+    └── gpu_device.rs     # D3D11 デバイス共有ユーティリティ
+tests/
+├── pipeline_integration.rs     # モックベースのパイプライン統合テスト
+├── gpu_integration.rs          # GPU アダプタ統合テスト
+└── gpu_capture_integration.rs  # GPU キャプチャ統合テスト
+```
+
+### データフロー
+
+```
+[キャプチャスレッド]
+    DdaCaptureAdapter / WgcCaptureAdapter
+        ↓ Frame (crossbeam-channel)
+[処理スレッド]
+    ProcessSelector (CPU: ColorProcessAdapter / GPU: GpuColorAdapter)
+        ↓ DetectionResult
+[HID 送信スレッド]
+    HidCommAdapter → USB HID デバイス
+        ↓
+[統計スレッド] (performance-timing フィーチャ時)
+    PipelineMetrics → ログ出力
+```
 
 ---
 
-## ライセンス・注意事項
+## トラブルシューティング
 
-本プロジェクトは個人用途の実験的ツールです。  
-USB HID デバイスへの書き込みを伴うため、使用するデバイスの仕様を十分確認したうえでご利用ください。
+### 起動時に `HID init failed` が出る
+
+`config.toml` の `vendor_id` / `product_id` が実際のデバイスと一致していない可能性があります。  
+デバイスマネージャーで VID/PID を確認し、正しい値を設定してください（`0x0000` は無効です）。
+
+### キャプチャが始まらない / タイムアウトが多発する
+
+- `capture.source = "wgc"` を試してください（低レイテンシ）
+- `capture.timeout_ms` を少し大きくしてください（例: `16`）
+- WGC を使用する場合は Windows 10 1803 以降が必要です
+
+### 検出ができない
+
+- `opencv-debug-display` フィーチャを有効にしてビルドし、実際の色範囲を確認してください
+- `process.hsv_range` の H/S/V 範囲を調整してください
+- `process.roi` のサイズが小さすぎないか確認してください（画面外の場合は左上原点にフォールバックします）
+
+### GPU 処理が有効にならない
+
+- D3D11 対応 GPU が接続されているか確認してください
+- `gpu.enabled = true` または `process.mode = "fast-color-gpu"` を設定してください
+- 複数 GPU がある場合、`gpu.device_index` で対象 GPU を指定してください（0 = プライマリ）
+- GPU 初期化に失敗した場合、`mode = "fast-color"` + `gpu.enabled = true` の組み合わせでは自動的に CPU にフォールバックします

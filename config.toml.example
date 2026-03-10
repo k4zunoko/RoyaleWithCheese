@@ -11,6 +11,8 @@ reinit_max_delay_ms = 5000
 monitor_index = 0
 
 [process]
+# 処理モード: "fast-color" (CPU) または "fast-color-gpu" (GPU直接指定)
+# gpu.enabled = true にすると fast-color でも自動的に GPU にアップグレードされます
 mode = "fast-color"
 min_detection_area = 0
 detection_method = "moments"
@@ -34,9 +36,10 @@ y_clip_limit = 10.0
 dead_zone = 0.0
 
 [communication]
-vendor_id = 0x0000
-product_id = 0x0000
-hid_send_interval_ms = 4
+# 注意: 実際のデバイスの VID/PID に必ず変更してください (0 は無効)
+vendor_id = 0x1234
+product_id = 0x5678
+hid_send_interval_ms = 8
 
 [pipeline]
 enable_dirty_rect_optimization = false

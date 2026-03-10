@@ -87,22 +87,12 @@ monitor_index = 0
 ### mode
 - **型**: 文字列
 - **デフォルト**: `"fast-color"`
-- **有効な値**: `"fast-color"`
-- **説明**: 画像処理のモード。現在は `"fast-color"` のみサポート。HSV色検知を使用した高速検出。
+- **有効な値**: `"fast-color"`, `"fast-color-gpu"`
+- **説明**: 画像処理のモード。
+  - `"fast-color"` - CPU (OpenCV) による HSV 色検知。`gpu.enabled = true` の場合、GPU が利用可能であれば自動的にアップグレードされ、失敗時は CPU にフォールバックします。
+  - `"fast-color-gpu"` - D3D11 コンピュートシェーダによる GPU 処理を直接指定します。`gpu.enabled` の値に関わらず GPU を使用します。GPU が初期化できない場合はエラーで終了します。
 
 ### min_detection_area
-- **型**: 整数 (u32)
-- **デフォルト**: `0`
-- **単位**: ピクセル²（四角形の面積）
-- **有効な値**: `0` 以上
-- **説明**: 検出対象とする最小面積。この値より小さい領域は無視されます。ノイズ除去に使用。
-
-### detection_method
-- **型**: 文字列
-- **デフォルト**: `"moments"`
-- **有効な値**: `"moments"`
-- **説明**: 検出した領域の代表点を求める方法。現在は `"moments"` （画像モーメント）のみサポート。
-
 ### 設定例
 
 ```toml
@@ -482,7 +472,7 @@ dead_zone = 0.0
 [communication]
 vendor_id = 0x1234
 product_id = 0x5678
-hid_send_interval_ms = 4
+hid_send_interval_ms = 8
 
 [pipeline]
 enable_dirty_rect_optimization = false
