@@ -20,12 +20,12 @@ width = 460
 height = 240
 
 [process.hsv_range]
-h_min = 25
-h_max = 45
-s_min = 80
-s_max = 255
-v_min = 80
-v_max = 255
+h_low = 25
+h_high = 45
+s_low = 80
+s_high = 255
+v_low = 80
+v_high = 255
 
 [process.coordinate_transform]
 sensitivity = 1.0
@@ -79,3 +79,6 @@ device_index = 0
 # 現在はenabledフラグと同じ動作です。
 # GPU失敗時は常にCPUへ自動フォールバックします。
 prefer_gpu = false
+
+[debug]
+enabled = false
