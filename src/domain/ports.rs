@@ -405,13 +405,7 @@ mod tests {
     fn apply_coordinate_transform_returns_zero_when_not_detected() {
         let result = DetectionResult::not_detected();
         let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 1.5,
-            x_clip_limit: 100.0,
-            y_clip_limit: 100.0,
-            dead_zone: 0.0,
-        };
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
+        let coords = apply_coordinate_transform(&result, &roi, 1.5);
         assert!(!coords.detected);
         assert_eq!(coords.delta_x, 0.0);
         assert_eq!(coords.delta_y, 0.0);
@@ -421,47 +415,9 @@ mod tests {
     fn apply_coordinate_transform_uses_roi_center_and_sensitivity() {
         let result = DetectionResult::detected(60.0, 30.0, 0.5);
         let roi = Roi::new(300, 400, 100, 80);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 2.0,
-            x_clip_limit: 100.0,
-            y_clip_limit: 100.0,
-            dead_zone: 0.0,
-        };
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0);
         assert!(coords.detected);
         assert_eq!(coords.delta_x, 20.0);
-        assert_eq!(coords.delta_y, -20.0);
-    }
-
-    #[test]
-    fn apply_coordinate_transform_applies_dead_zone() {
-        let result = DetectionResult::detected(52.0, 53.0, 0.5);
-        let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 2.0,
-            x_clip_limit: 100.0,
-            y_clip_limit: 100.0,
-            dead_zone: 5.0,
-        };
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
-        assert!(coords.detected);
-        assert_eq!(coords.delta_x, 0.0);
-        assert_eq!(coords.delta_y, 0.0);
-    }
-
-    #[test]
-    fn apply_coordinate_transform_applies_clip_limits() {
-        let result = DetectionResult::detected(90.0, 10.0, 0.5);
-        let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 2.0,
-            x_clip_limit: 30.0,
-            y_clip_limit: 20.0,
-            dead_zone: 0.0,
-        };
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
-        assert!(coords.detected);
-        assert_eq!(coords.delta_x, 30.0);
         assert_eq!(coords.delta_y, -20.0);
     }
 
