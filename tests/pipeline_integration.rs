@@ -6,7 +6,9 @@ use std::thread;
 use std::time::Duration;
 
 use RoyaleWithCheese::{
-    application::{metrics::PipelineMetrics, pipeline::PipelineRunner},
+    application::{
+        metrics::PipelineMetrics, pipeline::PipelineRunner, runtime_state::RuntimeState,
+    },
     domain::{
         config::AppConfig,
         error::{DomainError, DomainResult},
@@ -145,6 +147,7 @@ fn mock_pipeline_runs_and_stops() {
     let metrics = PipelineMetrics::new();
     let send_count = Arc::new(AtomicU64::new(0));
     let input: Arc<dyn InputPort> = Arc::new(MockInput);
+    let runtime_state = Arc::new(RuntimeState::new());
 
     let capture = StopAwareCapture::continuous(Arc::clone(&stop), bgra_frame(460, 240, 0, 255, 0));
     let comm = CountingComm {
@@ -158,6 +161,7 @@ fn mock_pipeline_runs_and_stops() {
         input,
         AppConfig::default(),
         Arc::clone(&metrics),
+        runtime_state,
     );
 
     run_pipeline_with_external_stop(runner, stop, 150);
@@ -172,6 +176,7 @@ fn mock_pipeline_frame_flow() {
     let metrics = PipelineMetrics::new();
     let send_count = Arc::new(AtomicU64::new(0));
     let input: Arc<dyn InputPort> = Arc::new(MockInput);
+    let runtime_state = Arc::new(RuntimeState::new());
 
     let capture =
         StopAwareCapture::with_budget(Arc::clone(&stop), bgra_frame(460, 240, 0, 255, 0), 8);
@@ -186,6 +191,7 @@ fn mock_pipeline_frame_flow() {
         input,
         AppConfig::default(),
         Arc::clone(&metrics),
+        runtime_state,
     );
 
     run_pipeline_with_external_stop(runner, stop, 200);
@@ -207,6 +213,7 @@ fn mock_pipeline_frame_drop_behavior_and_metrics_updated() {
     let stop = Arc::new(AtomicBool::new(false));
     let metrics = PipelineMetrics::new();
     let input: Arc<dyn InputPort> = Arc::new(MockInput);
+    let runtime_state = Arc::new(RuntimeState::new());
 
     let capture = StopAwareCapture::continuous(Arc::clone(&stop), bgra_frame(460, 240, 0, 255, 0));
     let comm = CountingComm {
@@ -220,6 +227,7 @@ fn mock_pipeline_frame_drop_behavior_and_metrics_updated() {
         input,
         AppConfig::default(),
         Arc::clone(&metrics),
+        runtime_state,
     );
 
     run_pipeline_with_external_stop(runner, stop, 250);

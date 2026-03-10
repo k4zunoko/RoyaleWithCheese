@@ -2,7 +2,10 @@
 
 use crate::application::metrics::PipelineMetrics;
 use crate::application::pipeline::{StatData, TimestampedDetection, TimestampedFrame};
+use crate::application::recovery::{RecoveryState, RecoveryStrategy};
+use crate::application::runtime_state::RuntimeState;
 use crate::domain::config::{CaptureConfig, CommunicationConfig, PipelineConfig, ProcessConfig};
+use crate::domain::error::DomainResult;
 use crate::domain::ports::{
     apply_coordinate_transform, coordinates_to_hid_report, CapturePort, CommPort, ProcessPort,
 };
@@ -11,6 +14,7 @@ use crate::infrastructure::processing::selector::ProcessSelector;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[inline]
@@ -42,18 +46,29 @@ fn send_latest_only<T>(tx: &Sender<T>, item: T, metrics: &PipelineMetrics) {
     }
 }
 
+pub struct ProcessThreadContext {
+    pub runtime_state: Arc<RuntimeState>,
+    pub config: ProcessConfig,
+}
+
 pub fn capture_thread(
     mut capture: Box<dyn CapturePort + 'static>,
     tx: Sender<TimestampedFrame>,
     metrics: Arc<PipelineMetrics>,
+    runtime_state: Arc<RuntimeState>,
     stop: Arc<AtomicBool>,
     _config: CaptureConfig,
     roi: Roi,
 ) {
+    let mut recovery = RecoveryState::new();
+    let strategy = RecoveryStrategy::new(100, 3200, 5);
+
     while !stop.load(Ordering::Relaxed) {
+        let _active = runtime_state.is_active();
         let t0 = Instant::now();
         match capture.capture_frame(&roi) {
             Ok(Some(frame)) => {
+                strategy.record_success(&mut recovery);
                 let captured_at = Instant::now();
                 send_latest_only(&tx, TimestampedFrame { frame, captured_at }, &metrics);
                 metrics.record_capture(t0.elapsed());
@@ -61,6 +76,16 @@ pub fn capture_thread(
             Ok(None) => {}
             Err(error) if error.is_recoverable() => {
                 tracing::warn!(%error, "recoverable capture error");
+                strategy.record_failure(&mut recovery);
+                let backoff_ms = strategy.next_backoff_ms(&recovery);
+                thread::sleep(Duration::from_millis(backoff_ms));
+                if let Err(reinit_error) = capture.reinitialize() {
+                    tracing::warn!(%reinit_error, "capture reinitialize failed during recovery");
+                }
+                if !strategy.should_attempt(&recovery) {
+                    tracing::error!("capture recovery retries exceeded; stopping capture thread");
+                    break;
+                }
             }
             Err(error) => {
                 tracing::error!(%error, "non-recoverable capture error");
@@ -77,12 +102,15 @@ pub fn process_thread(
     stats_tx: Sender<StatData>,
     metrics: Arc<PipelineMetrics>,
     stop: Arc<AtomicBool>,
-    config: ProcessConfig,
+    context: ProcessThreadContext,
 ) {
+    let runtime_state = context.runtime_state;
+    let config = context.config;
     let roi = process_roi_from_config(&config);
     let hsv_range = hsv_range_from_config(&config);
 
     while !stop.load(Ordering::Relaxed) {
+        let _active = runtime_state.is_active();
         match rx.recv_timeout(Duration::from_millis(10)) {
             Ok(timestamped_frame) => {
                 let t0 = Instant::now();
@@ -126,24 +154,18 @@ fn send_detection_report(
     roi: &Roi,
     sensitivity: f64,
     metrics: &PipelineMetrics,
-) -> bool {
+) -> DomainResult<()> {
     let t0 = Instant::now();
     let transformed = apply_coordinate_transform(detection, roi, sensitivity);
     let report = coordinates_to_hid_report(&transformed);
     match comm.send(&report) {
         Ok(_) => {
             metrics.record_hid_send(t0.elapsed());
-            true
+            Ok(())
         }
         Err(error) => {
             metrics.record_hid_error();
-            if error.is_recoverable() {
-                tracing::warn!(%error, "recoverable hid send error");
-                true
-            } else {
-                tracing::error!(%error, "non-recoverable hid send error");
-                false
-            }
+            Err(error)
         }
     }
 }
@@ -152,6 +174,7 @@ pub fn hid_thread(
     mut comm: Box<dyn CommPort + 'static>,
     rx: Receiver<TimestampedDetection>,
     metrics: Arc<PipelineMetrics>,
+    runtime_state: Arc<RuntimeState>,
     stop: Arc<AtomicBool>,
     config: CommunicationConfig,
     roi: Roi,
@@ -160,19 +183,42 @@ pub fn hid_thread(
     // CommunicationConfig has no sensitivity; use neutral multiplier.
     let sensitivity = 1.0_f64;
     let mut last_detection: Option<DetectionResult> = None;
+    let mut recovery = RecoveryState::new();
+    let strategy = RecoveryStrategy::new(100, 3200, 5);
 
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(hid_send_interval) {
             Ok(timestamped_detection) => {
                 last_detection = Some(timestamped_detection.result.clone());
-                if !send_detection_report(
+                if !runtime_state.is_active() {
+                    continue;
+                }
+
+                match send_detection_report(
                     &mut *comm,
                     &timestamped_detection.result,
                     &roi,
                     sensitivity,
                     &metrics,
                 ) {
-                    break;
+                    Ok(()) => strategy.record_success(&mut recovery),
+                    Err(error) if error.is_recoverable() => {
+                        tracing::warn!(%error, "recoverable hid send error");
+                        strategy.record_failure(&mut recovery);
+                        let backoff_ms = strategy.next_backoff_ms(&recovery);
+                        thread::sleep(Duration::from_millis(backoff_ms));
+                        if let Err(reconnect_error) = comm.reconnect() {
+                            tracing::warn!(%reconnect_error, "hid reconnect failed during recovery");
+                        }
+                        if !strategy.should_attempt(&recovery) {
+                            tracing::error!("hid recovery retries exceeded; stopping hid thread");
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "non-recoverable hid send error");
+                        break;
+                    }
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
@@ -180,8 +226,29 @@ pub fn hid_thread(
                     .as_ref()
                     .cloned()
                     .unwrap_or_else(DetectionResult::not_detected);
-                if !send_detection_report(&mut *comm, &detection, &roi, sensitivity, &metrics) {
-                    break;
+                if !runtime_state.is_active() {
+                    continue;
+                }
+
+                match send_detection_report(&mut *comm, &detection, &roi, sensitivity, &metrics) {
+                    Ok(()) => strategy.record_success(&mut recovery),
+                    Err(error) if error.is_recoverable() => {
+                        tracing::warn!(%error, "recoverable hid send error");
+                        strategy.record_failure(&mut recovery);
+                        let backoff_ms = strategy.next_backoff_ms(&recovery);
+                        thread::sleep(Duration::from_millis(backoff_ms));
+                        if let Err(reconnect_error) = comm.reconnect() {
+                            tracing::warn!(%reconnect_error, "hid reconnect failed during recovery");
+                        }
+                        if !strategy.should_attempt(&recovery) {
+                            tracing::error!("hid recovery retries exceeded; stopping hid thread");
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "non-recoverable hid send error");
+                        break;
+                    }
                 }
             }
             Err(RecvTimeoutError::Disconnected) => break,
@@ -192,11 +259,13 @@ pub fn hid_thread(
 pub fn stats_thread(
     stats_rx: Receiver<StatData>,
     metrics: Arc<PipelineMetrics>,
+    runtime_state: Arc<RuntimeState>,
     stop: Arc<AtomicBool>,
     config: PipelineConfig,
 ) {
     let stats_interval = Duration::from_secs(config.stats_interval_sec as u64);
     while !stop.load(Ordering::Relaxed) {
+        let _active = runtime_state.is_active();
         match stats_rx.recv_timeout(stats_interval) {
             Ok(_stat) => {}
             Err(RecvTimeoutError::Timeout) => {
@@ -211,6 +280,7 @@ pub fn stats_thread(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::runtime_state::RuntimeState;
     use crate::domain::config::AppConfig;
     use crate::domain::error::DomainResult;
     use crate::domain::ports::CapturePort;
@@ -296,6 +366,7 @@ mod tests {
     #[test]
     fn capture_thread_sends_frame_to_channel() {
         let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
         let roi = Roi::new(0, 0, 1, 1);
@@ -303,8 +374,17 @@ mod tests {
         let capture_config = AppConfig::default().capture;
 
         let stop_for_thread = Arc::clone(&stop);
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
         let handle = thread::spawn(move || {
-            capture_thread(capture, tx, metrics, stop_for_thread, capture_config, roi)
+            capture_thread(
+                capture,
+                tx,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                capture_config,
+                roi,
+            )
         });
 
         let msg = rx
@@ -320,6 +400,7 @@ mod tests {
     #[test]
     fn process_thread_processes_received_frame() {
         let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (capture_tx, capture_rx) = bounded(1);
         let (process_tx, process_rx) = bounded(1);
@@ -328,6 +409,7 @@ mod tests {
         let process_config = AppConfig::default().process;
 
         let stop_for_thread = Arc::clone(&stop);
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
         let handle = thread::spawn(move || {
             process_thread(
                 process,
@@ -336,7 +418,10 @@ mod tests {
                 stats_tx,
                 metrics,
                 stop_for_thread,
-                process_config,
+                ProcessThreadContext {
+                    runtime_state: runtime_state_for_thread,
+                    config: process_config,
+                },
             )
         });
 
@@ -360,6 +445,7 @@ mod tests {
     #[test]
     fn hid_thread_sends_hid_report() {
         let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
@@ -372,8 +458,18 @@ mod tests {
         let roi = Roi::new(0, 0, 460, 240);
 
         let stop_for_thread = Arc::clone(&stop);
-        let handle =
-            thread::spawn(move || hid_thread(comm, rx, metrics, stop_for_thread, config, roi));
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                config,
+                roi,
+            )
+        });
 
         tx.send(TimestampedDetection {
             result: DetectionResult::detected(10.0, 10.0, 0.5),
@@ -407,6 +503,7 @@ mod tests {
     #[test]
     fn capture_thread_stops_on_signal() {
         let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, _rx) = bounded(1);
         let roi = Roi::new(0, 0, 1, 1);
@@ -415,8 +512,17 @@ mod tests {
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let stop_for_thread = Arc::clone(&stop);
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
         let handle = thread::spawn(move || {
-            capture_thread(capture, tx, metrics, stop_for_thread, capture_config, roi);
+            capture_thread(
+                capture,
+                tx,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                capture_config,
+                roi,
+            );
             let _ = done_tx.send(());
         });
 

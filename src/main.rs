@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use RoyaleWithCheese::application::metrics::PipelineMetrics;
 use RoyaleWithCheese::application::pipeline::PipelineRunner;
+use RoyaleWithCheese::application::runtime_state::RuntimeState;
 use RoyaleWithCheese::domain::config::AppConfig;
 use RoyaleWithCheese::domain::ports::CapturePort;
 use RoyaleWithCheese::domain::types::Roi;
@@ -42,6 +43,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("HID init failed: {e}"))?;
     let input = Arc::new(WindowsInputAdapter::new());
     let metrics = PipelineMetrics::new();
+    let runtime_state = Arc::new(RuntimeState::new());
 
     // ── Process adapter ───────────────────────────────────────────────────────
     let process: ProcessSelector = match config.process.mode.as_str() {
@@ -62,8 +64,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
-                let adapter = ColorProcessAdapter::new()
-                    .map_err(|e| format!("CPU init failed: {e}"))?;
+                let adapter =
+                    ColorProcessAdapter::new().map_err(|e| format!("CPU init failed: {e}"))?;
                 ProcessSelector::FastColor(adapter)
             }
         }
@@ -72,10 +74,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ── Capture adapter — branch on source, passing concrete type to runner ─
     match config.capture.source.as_str() {
         "wgc" => {
-            let capture =
-                WgcCaptureAdapter::new(config.capture.monitor_index as usize)
-                    .map_err(|e| format!("WGC init failed: {e}"))?;
-            run_with_capture(capture, process, comm, input, config, metrics)
+            let capture = WgcCaptureAdapter::new(config.capture.monitor_index as usize)
+                .map_err(|e| format!("WGC init failed: {e}"))?;
+            run_with_capture(
+                capture,
+                process,
+                comm,
+                input,
+                config,
+                metrics,
+                runtime_state,
+            )
         }
         _ => {
             // Default: "dda"
@@ -85,7 +94,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 config.capture.timeout_ms,
             )
             .map_err(|e| format!("DDA init failed: {e}"))?;
-            run_with_capture(capture, process, comm, input, config, metrics)
+            run_with_capture(
+                capture,
+                process,
+                comm,
+                input,
+                config,
+                metrics,
+                runtime_state,
+            )
         }
     }
 }
@@ -98,6 +115,7 @@ fn run_with_capture<C: CapturePort + 'static>(
     input: Arc<WindowsInputAdapter>,
     config: AppConfig,
     metrics: Arc<PipelineMetrics>,
+    runtime_state: Arc<RuntimeState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let device_info = capture.device_info();
     tracing::info!(
@@ -122,7 +140,15 @@ fn run_with_capture<C: CapturePort + 'static>(
 
     tracing::info!(x = roi.x, y = roi.y, w = roi.width, h = roi.height, "ROI");
 
-    let runner = PipelineRunner::new(capture, process, comm, input, config, metrics);
+    let runner = PipelineRunner::new(
+        capture,
+        process,
+        comm,
+        input,
+        config,
+        metrics,
+        runtime_state,
+    );
     runner.run()?;
     Ok(())
 }

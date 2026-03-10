@@ -1,6 +1,7 @@
 //! Pipeline orchestrator and channel wiring.
 
 use crate::application::metrics::PipelineMetrics;
+use crate::application::runtime_state::RuntimeState;
 use crate::domain::config::AppConfig;
 use crate::domain::error::{DomainError, DomainResult};
 use crate::domain::ports::{CapturePort, CommPort, InputPort};
@@ -42,6 +43,7 @@ pub struct PipelineRunner {
     input: Arc<dyn InputPort>,
     config: AppConfig,
     metrics: Arc<PipelineMetrics>,
+    runtime_state: Arc<RuntimeState>,
 }
 
 impl PipelineRunner {
@@ -53,6 +55,7 @@ impl PipelineRunner {
         input: Arc<dyn InputPort>,
         config: AppConfig,
         metrics: Arc<PipelineMetrics>,
+        runtime_state: Arc<RuntimeState>,
     ) -> Self {
         Self {
             capture: Box::new(capture),
@@ -61,6 +64,7 @@ impl PipelineRunner {
             input,
             config,
             metrics,
+            runtime_state,
         }
     }
 
@@ -79,6 +83,7 @@ impl PipelineRunner {
             input: _input, // InputPort is not needed on the hot path threads
             config,
             metrics,
+            runtime_state,
         } = self;
 
         // Compute the capture / HID ROI centered on the screen.
@@ -92,6 +97,7 @@ impl PipelineRunner {
         // ── Capture thread ────────────────────────────────────────────────────
         let capture_stop = Arc::clone(&stop);
         let capture_metrics = Arc::clone(&metrics);
+        let capture_runtime_state = Arc::clone(&runtime_state);
         let capture_config = config.capture.clone();
         let capture_roi = roi;
         handles.push(thread::spawn(move || {
@@ -99,6 +105,7 @@ impl PipelineRunner {
                 capture,
                 capture_tx,
                 capture_metrics,
+                capture_runtime_state,
                 capture_stop,
                 capture_config,
                 capture_roi,
@@ -108,6 +115,7 @@ impl PipelineRunner {
         // ── Process thread ────────────────────────────────────────────────────
         let process_stop = Arc::clone(&stop);
         let process_metrics = Arc::clone(&metrics);
+        let process_runtime_state = Arc::clone(&runtime_state);
         let process_stats_tx = stats_tx;
         let process_config = config.process.clone();
         handles.push(thread::spawn(move || {
@@ -118,13 +126,17 @@ impl PipelineRunner {
                 process_stats_tx,
                 process_metrics,
                 process_stop,
-                process_config,
+                crate::application::threads::ProcessThreadContext {
+                    runtime_state: process_runtime_state,
+                    config: process_config,
+                },
             );
         }));
 
         // ── HID thread ────────────────────────────────────────────────────────
         let hid_stop = Arc::clone(&stop);
         let hid_metrics = Arc::clone(&metrics);
+        let hid_runtime_state = Arc::clone(&runtime_state);
         let communication_config = config.communication.clone();
         let hid_roi = roi;
         handles.push(thread::spawn(move || {
@@ -132,6 +144,7 @@ impl PipelineRunner {
                 comm,
                 process_rx,
                 hid_metrics,
+                hid_runtime_state,
                 hid_stop,
                 communication_config,
                 hid_roi,
@@ -141,11 +154,13 @@ impl PipelineRunner {
         // ── Stats thread ──────────────────────────────────────────────────────
         let stats_stop = Arc::clone(&stop);
         let stats_metrics = Arc::clone(&metrics);
+        let stats_runtime_state = Arc::clone(&runtime_state);
         let pipeline_config = config.pipeline.clone();
         handles.push(thread::spawn(move || {
             crate::application::threads::stats_thread(
                 stats_rx,
                 stats_metrics,
+                stats_runtime_state,
                 stats_stop,
                 pipeline_config,
             );
@@ -175,6 +190,7 @@ impl PipelineRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::runtime_state::RuntimeState;
     use crate::domain::ports::ProcessPort;
     use crate::domain::types::{
         DeviceInfo, GpuFrame, HsvRange, InputState, ProcessorBackend, Roi, VirtualKey,
@@ -245,6 +261,7 @@ mod tests {
         let input: Arc<dyn InputPort> = Arc::new(MockInput);
         let config = AppConfig::default();
         let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
 
         let _runner = PipelineRunner::new(
             MockCapture,
@@ -253,6 +270,7 @@ mod tests {
             input,
             config,
             metrics,
+            runtime_state,
         );
     }
 
@@ -261,6 +279,7 @@ mod tests {
         let input: Arc<dyn InputPort> = Arc::new(MockInput);
         let config = AppConfig::default();
         let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
 
         let runner = PipelineRunner::new(
             MockCapture,
@@ -269,6 +288,7 @@ mod tests {
             input,
             config,
             metrics,
+            runtime_state,
         );
 
         // MockComm::send fails with Communication error once actually called.
@@ -309,6 +329,7 @@ mod tests {
     #[allow(dead_code)]
     fn _run_consumes_self_compile_time_check() {
         let input: Arc<dyn InputPort> = Arc::new(MockInput);
+        let runtime_state = Arc::new(RuntimeState::new());
         let runner = PipelineRunner::new(
             MockCapture,
             build_process_selector(),
@@ -316,6 +337,7 @@ mod tests {
             input,
             AppConfig::default(),
             PipelineMetrics::new(),
+            runtime_state,
         );
         let _ = runner.run();
         // runner.run(); // This would fail to compile because run(self) consumes ownership.
