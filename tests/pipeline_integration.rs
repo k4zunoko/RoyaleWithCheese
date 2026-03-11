@@ -10,7 +10,10 @@ use RoyaleWithCheese::{
         metrics::PipelineMetrics, pipeline::PipelineRunner, runtime_state::RuntimeState,
     },
     domain::{
-        config::AppConfig,
+        config::{
+            AppConfig, CaptureConfig, CommunicationConfig, CoordinateTransformConfig, DebugConfig,
+            HsvRangeConfig, PipelineConfig, ProcessConfig, ProcessMode, RoiConfig,
+        },
         error::{DomainError, DomainResult},
         ports::{CapturePort, CommPort, InputPort},
         types::{DeviceInfo, Frame, InputState, Roi, VirtualKey},
@@ -121,6 +124,45 @@ fn bgra_frame(width: u32, height: u32, b: u8, g: u8, r: u8) -> Frame {
     Frame::new(data, width, height)
 }
 
+fn test_config() -> AppConfig {
+    AppConfig {
+        capture: CaptureConfig {
+            source: "dda".to_string(),
+            timeout_ms: 8,
+            monitor_index: 0,
+        },
+        process: ProcessConfig {
+            mode: ProcessMode::FastColor,
+            roi: RoiConfig {
+                width: 460,
+                height: 240,
+            },
+            hsv_range: HsvRangeConfig {
+                h_low: 25,
+                h_high: 45,
+                s_low: 80,
+                s_high: 255,
+                v_low: 80,
+                v_high: 255,
+            },
+            coordinate_transform: CoordinateTransformConfig {
+                sensitivity: 1.0,
+                x_clip_limit: 10.0,
+                y_clip_limit: 10.0,
+            },
+        },
+        communication: CommunicationConfig {
+            vendor_id: 0x1234,
+            product_id: 0x5678,
+            hid_send_interval_ms: 8,
+        },
+        pipeline: PipelineConfig {
+            stats_interval_sec: 10,
+        },
+        debug: DebugConfig { enabled: false },
+    }
+}
+
 fn run_pipeline_with_external_stop(runner: PipelineRunner, stop: Arc<AtomicBool>, runtime_ms: u64) {
     let (done_tx, done_rx) = mpsc::channel();
 
@@ -159,7 +201,7 @@ fn mock_pipeline_runs_and_stops() {
         build_selector(),
         comm,
         input,
-        AppConfig::default(),
+        test_config(),
         Arc::clone(&metrics),
         runtime_state,
     );
@@ -167,7 +209,7 @@ fn mock_pipeline_runs_and_stops() {
     run_pipeline_with_external_stop(runner, stop, 150);
 
     let snapshot = metrics.snapshot();
-    assert!(snapshot.frames_captured <= u64::MAX);
+    assert!(snapshot.frames_captured > 0, "expected captured frames > 0");
 }
 
 #[test]
@@ -189,7 +231,7 @@ fn mock_pipeline_frame_flow() {
         build_selector(),
         comm,
         input,
-        AppConfig::default(),
+        test_config(),
         Arc::clone(&metrics),
         runtime_state,
     );
@@ -225,7 +267,7 @@ fn mock_pipeline_frame_drop_behavior_and_metrics_updated() {
         build_selector(),
         comm,
         input,
-        AppConfig::default(),
+        test_config(),
         Arc::clone(&metrics),
         runtime_state,
     );
@@ -245,5 +287,4 @@ fn real_hardware_pipeline_smoke_test() {
     // cargo test real_hardware_pipeline_smoke_test -- --ignored --nocapture --test-threads=1
     //
     // This is intentionally ignored in CI/local default test runs.
-    assert!(true);
 }
