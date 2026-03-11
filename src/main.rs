@@ -26,12 +26,8 @@ mod logging;
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     logging::init_logging();
 
-    // Load configuration — fall back to defaults if config.toml is absent.
-    let config = AppConfig::from_file("config.toml").unwrap_or_else(|err| {
-        tracing::warn!(%err, "config.toml not found or invalid, using defaults");
-        AppConfig::default()
-    });
-    config.validate()?;
+    // Load configuration — fail fast if config.toml is absent or invalid.
+    let config = AppConfig::from_file("config.toml")?;
 
     tracing::info!(
         source = %config.capture.source,
