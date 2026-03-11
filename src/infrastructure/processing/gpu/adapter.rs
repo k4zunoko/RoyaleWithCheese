@@ -626,7 +626,7 @@ mod tests {
         let result = adapter
             .process_frame(&frame, &roi, &hsv)
             .expect("processing should succeed");
-        assert!(!result.detected || result.detected);
+        assert!(result.coverage >= 0.0);
     }
 
     #[test]

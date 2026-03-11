@@ -69,6 +69,7 @@ impl ProcessPort for ProcessSelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::error::DomainError;
     use crate::domain::types::{HsvRange, Roi};
     use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 
@@ -145,10 +146,7 @@ mod tests {
             .expect("process_frame should succeed");
 
         // Result depends on GPU compute shader execution
-        assert!(
-            !result.detected || result.detected,
-            "Result should be valid DetectionResult"
-        );
+        assert!(result.coverage >= 0.0, "coverage should be non-negative");
     }
 
     #[test]
@@ -196,9 +194,6 @@ mod tests {
 
         let result = selector.process_gpu_frame(&gpu_frame, &green_hsv());
         // Result should be valid (may or may not detect, depending on GPU compute)
-        assert!(
-            !result.is_err() || result.is_err(),
-            "process_gpu_frame should return a valid result"
-        );
+        assert!(result.is_ok() || matches!(result, Err(DomainError::GpuNotAvailable(_))));
     }
 }

@@ -47,11 +47,7 @@ mod tests {
 
     #[test]
     fn windows_input_adapter_construction() {
-        let adapter = WindowsInputAdapter::new();
-        let adapter_default = WindowsInputAdapter::default();
-        // Test that both constructions work (no panic)
-        drop(adapter);
-        drop(adapter_default);
+        let _adapter = WindowsInputAdapter::new();
     }
 
     #[test]
