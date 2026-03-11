@@ -61,10 +61,9 @@ pub struct CoordinateTransformConfig {
 }
 
 /// 処理モード
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ProcessMode {
-    #[default]
     FastColor,
     FastColorGpu,
 }
@@ -113,7 +112,6 @@ pub struct PipelineConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DebugConfig {
     /// デバッグモードを有効にするか
-    #[serde(default)]
     pub enabled: bool,
 }
 
@@ -257,49 +255,6 @@ impl AppConfig {
     }
 }
 
-impl Default for AppConfig {
-    ///
-    /// すべてのデフォルト値は validate() を通過します。
-    fn default() -> Self {
-        Self {
-            capture: CaptureConfig {
-                source: "dda".to_string(),
-                timeout_ms: 8,
-                monitor_index: 0,
-            },
-            process: ProcessConfig {
-                mode: ProcessMode::FastColor,
-                roi: RoiConfig {
-                    width: 460,
-                    height: 240,
-                },
-                hsv_range: HsvRangeConfig {
-                    h_low: 25,
-                    h_high: 45,
-                    s_low: 80,
-                    s_high: 255,
-                    v_low: 80,
-                    v_high: 255,
-                },
-                coordinate_transform: CoordinateTransformConfig {
-                    sensitivity: 1.0,
-                    x_clip_limit: 10.0,
-                    y_clip_limit: 10.0,
-                },
-            },
-            communication: CommunicationConfig {
-                vendor_id: 0x1234,
-                product_id: 0x5678,
-                hid_send_interval_ms: 8,
-            },
-            pipeline: PipelineConfig {
-                stats_interval_sec: 10,
-            },
-            debug: DebugConfig { enabled: false },
-        }
-    }
-}
-
 // ============================================================================
 // Tests
 // ============================================================================
@@ -307,49 +262,45 @@ impl Default for AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
-    // Helper: Create a temporary test config TOML file
-    fn create_temp_toml(content: &str) -> (tempfile::NamedTempFile, std::path::PathBuf) {
-        use std::io::Write;
-        let mut file = tempfile::NamedTempFile::new().unwrap();
-        file.write_all(content.as_bytes()).unwrap();
-        file.flush().unwrap();
-        let path = file.path().to_path_buf();
-        (file, path)
+    fn valid_config() -> AppConfig {
+        let config: AppConfig = toml::from_str(include_str!("../../config.toml.example"))
+            .expect("valid example config");
+        config.validate().expect("example config should validate");
+        config
     }
 
-    // ========== Test: Default Configuration ==========
+    // ========== Test: Valid Example Configuration ==========
 
     #[test]
-    fn test_default_config_validates() {
-        let config = AppConfig::default();
+    fn test_example_config_validates() {
+        let config = valid_config();
         assert!(config.validate().is_ok());
     }
 
     #[test]
-    fn test_default_config_capture_section() {
-        let config = AppConfig::default();
+    fn test_example_config_capture_section() {
+        let config = valid_config();
         assert_eq!(config.capture.source, "dda");
         assert_eq!(config.capture.timeout_ms, 8);
     }
 
     #[test]
-    fn test_default_config_process_mode() {
-        let config = AppConfig::default();
+    fn test_example_config_process_mode() {
+        let config = valid_config();
         assert_eq!(config.process.mode, ProcessMode::FastColor);
     }
 
     #[test]
-    fn test_default_config_roi() {
-        let config = AppConfig::default();
+    fn test_example_config_roi() {
+        let config = valid_config();
         assert_eq!(config.process.roi.width, 460);
         assert_eq!(config.process.roi.height, 240);
     }
 
     #[test]
-    fn test_default_config_hsv_range() {
-        let config = AppConfig::default();
+    fn test_example_config_hsv_range() {
+        let config = valid_config();
         assert_eq!(config.process.hsv_range.h_low, 25);
         assert_eq!(config.process.hsv_range.h_high, 45);
         assert_eq!(config.process.hsv_range.s_low, 80);
@@ -359,8 +310,8 @@ mod tests {
     }
 
     #[test]
-    fn test_default_config_communication() {
-        let config = AppConfig::default();
+    fn test_example_config_communication() {
+        let config = valid_config();
         assert_eq!(config.communication.vendor_id, 0x1234);
         assert_eq!(config.communication.product_id, 0x5678);
         assert_eq!(config.communication.hid_send_interval_ms, 8);
@@ -506,7 +457,7 @@ enabled = false
 
     #[test]
     fn test_validate_invalid_capture_source() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.capture.source = "spout".to_string();
         let result = config.validate();
         assert!(result.is_err());
@@ -516,7 +467,7 @@ enabled = false
 
     #[test]
     fn test_validate_capture_timeout_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.capture.timeout_ms = 0;
         let result = config.validate();
         assert!(result.is_err());
@@ -530,7 +481,7 @@ enabled = false
 
     #[test]
     fn test_validate_roi_width_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.roi.width = 0;
         let result = config.validate();
         assert!(result.is_err());
@@ -542,7 +493,7 @@ enabled = false
 
     #[test]
     fn test_validate_roi_height_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.roi.height = 0;
         let result = config.validate();
         assert!(result.is_err());
@@ -550,7 +501,7 @@ enabled = false
 
     #[test]
     fn test_validate_roi_both_positive() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.roi.width = 1;
         config.process.roi.height = 1;
         assert!(config.validate().is_ok());
@@ -560,7 +511,7 @@ enabled = false
 
     #[test]
     fn test_validate_hsv_h_low_greater_than_h_high() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.hsv_range.h_low = 50;
         config.process.hsv_range.h_high = 40;
         let result = config.validate();
@@ -573,7 +524,7 @@ enabled = false
 
     #[test]
     fn test_validate_hsv_s_low_greater_than_s_high() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.hsv_range.s_low = 200;
         config.process.hsv_range.s_high = 100;
         let result = config.validate();
@@ -586,7 +537,7 @@ enabled = false
 
     #[test]
     fn test_validate_hsv_v_low_greater_than_v_high() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.hsv_range.v_low = 200;
         config.process.hsv_range.v_high = 100;
         let result = config.validate();
@@ -599,7 +550,7 @@ enabled = false
 
     #[test]
     fn test_validate_hsv_h_high_exceeds_180() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.hsv_range.h_high = 181;
         let result = config.validate();
         assert!(result.is_err());
@@ -613,7 +564,7 @@ enabled = false
 
     #[test]
     fn test_validate_communication_vendor_id_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.communication.vendor_id = 0;
         let result = config.validate();
         assert!(result.is_err());
@@ -625,7 +576,7 @@ enabled = false
 
     #[test]
     fn test_validate_communication_product_id_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.communication.product_id = 0;
         let result = config.validate();
         assert!(result.is_err());
@@ -633,7 +584,7 @@ enabled = false
 
     #[test]
     fn test_validate_communication_hid_send_interval_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.communication.hid_send_interval_ms = 0;
         let result = config.validate();
         assert!(result.is_err());
@@ -647,7 +598,7 @@ enabled = false
 
     #[test]
     fn test_validate_coordinate_transform_x_clip_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.coordinate_transform.x_clip_limit = 0.0;
         let result = config.validate();
         assert!(result.is_err());
@@ -659,7 +610,7 @@ enabled = false
 
     #[test]
     fn test_validate_coordinate_transform_y_clip_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.coordinate_transform.y_clip_limit = 0.0;
         let result = config.validate();
         assert!(result.is_err());
@@ -667,7 +618,7 @@ enabled = false
 
     #[test]
     fn test_validate_coordinate_transform_sensitivity_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.process.coordinate_transform.sensitivity = 0.0;
         let result = config.validate();
         assert!(result.is_err());
@@ -681,7 +632,7 @@ enabled = false
 
     #[test]
     fn test_validate_pipeline_stats_interval_zero() {
-        let mut config = AppConfig::default();
+        let mut config = valid_config();
         config.pipeline.stats_interval_sec = 0;
         let result = config.validate();
         assert!(result.is_err());
@@ -695,7 +646,7 @@ enabled = false
 
     #[test]
     fn test_config_clone() {
-        let config = AppConfig::default();
+        let config = valid_config();
         let cloned = config.clone();
         assert_eq!(config.capture.source, cloned.capture.source);
         assert_eq!(config.process.roi.width, cloned.process.roi.width);
@@ -703,7 +654,7 @@ enabled = false
 
     #[test]
     fn test_config_debug_format() {
-        let config = AppConfig::default();
+        let config = valid_config();
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("AppConfig"));
         assert!(debug_str.contains("dda"));

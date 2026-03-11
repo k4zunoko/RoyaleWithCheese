@@ -164,8 +164,10 @@ mod tests {
     #[test]
     fn test_domain_result_ok() {
         let result: DomainResult<i32> = Ok(42);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
+        match result {
+            Ok(value) => assert_eq!(value, 42),
+            Err(error) => panic!("expected Ok(42), got {error}"),
+        }
     }
 
     #[test]
@@ -177,8 +179,10 @@ mod tests {
     #[test]
     fn test_domain_result_string() {
         let result: DomainResult<String> = Ok("hello".to_string());
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "hello");
+        match result {
+            Ok(value) => assert_eq!(value, "hello"),
+            Err(error) => panic!("expected Ok(hello), got {error}"),
+        }
     }
 
     // ========== Test: is_recoverable() ==========
