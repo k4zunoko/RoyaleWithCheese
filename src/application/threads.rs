@@ -281,7 +281,10 @@ pub fn stats_thread(
 mod tests {
     use super::*;
     use crate::application::runtime_state::RuntimeState;
-    use crate::domain::config::AppConfig;
+    use crate::domain::config::{
+        CaptureConfig, CommunicationConfig, CoordinateTransformConfig, HsvRangeConfig,
+        ProcessConfig, ProcessMode, RoiConfig,
+    };
     use crate::domain::error::DomainResult;
     use crate::domain::ports::CapturePort;
     use crate::domain::types::{DeviceInfo, Frame, GpuFrame, HsvRange, ProcessorBackend, Roi};
@@ -363,6 +366,45 @@ mod tests {
         ProcessSelector::FastColor(adapter)
     }
 
+    fn test_capture_config() -> CaptureConfig {
+        CaptureConfig {
+            source: "dda".to_string(),
+            timeout_ms: 8,
+            monitor_index: 0,
+        }
+    }
+
+    fn test_process_config() -> ProcessConfig {
+        ProcessConfig {
+            mode: ProcessMode::FastColor,
+            roi: RoiConfig {
+                width: 460,
+                height: 240,
+            },
+            hsv_range: HsvRangeConfig {
+                h_low: 25,
+                h_high: 45,
+                s_low: 80,
+                s_high: 255,
+                v_low: 80,
+                v_high: 255,
+            },
+            coordinate_transform: CoordinateTransformConfig {
+                sensitivity: 1.0,
+                x_clip_limit: 10.0,
+                y_clip_limit: 10.0,
+            },
+        }
+    }
+
+    fn test_communication_config() -> CommunicationConfig {
+        CommunicationConfig {
+            vendor_id: 0x1234,
+            product_id: 0x5678,
+            hid_send_interval_ms: 8,
+        }
+    }
+
     #[test]
     fn capture_thread_sends_frame_to_channel() {
         let metrics = PipelineMetrics::new();
@@ -371,7 +413,7 @@ mod tests {
         let (tx, rx) = bounded(1);
         let roi = Roi::new(0, 0, 1, 1);
         let capture = Box::new(SingleFrameCapture { sent_once: false });
-        let capture_config = AppConfig::default().capture;
+        let capture_config = test_capture_config();
 
         let stop_for_thread = Arc::clone(&stop);
         let runtime_state_for_thread = Arc::clone(&runtime_state);
@@ -406,7 +448,7 @@ mod tests {
         let (process_tx, process_rx) = bounded(1);
         let (stats_tx, _stats_rx) = bounded(4);
         let process = build_process_selector();
-        let process_config = AppConfig::default().process;
+        let process_config = test_process_config();
 
         let stop_for_thread = Arc::clone(&stop);
         let runtime_state_for_thread = Arc::clone(&runtime_state);
@@ -454,7 +496,7 @@ mod tests {
             send_count: Arc::clone(&send_count),
             notify_tx,
         });
-        let config = AppConfig::default().communication;
+        let config = test_communication_config();
         let roi = Roi::new(0, 0, 460, 240);
 
         let stop_for_thread = Arc::clone(&stop);
@@ -508,7 +550,7 @@ mod tests {
         let (tx, _rx) = bounded(1);
         let roi = Roi::new(0, 0, 1, 1);
         let capture = Box::new(NoneCapture);
-        let capture_config = AppConfig::default().capture;
+        let capture_config = test_capture_config();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
 
         let stop_for_thread = Arc::clone(&stop);
@@ -535,7 +577,7 @@ mod tests {
 
     #[test]
     fn process_config_mapping_helpers_match_expected_values() {
-        let config = AppConfig::default().process;
+        let config = test_process_config();
         let roi = process_roi_from_config(&config);
         let hsv = hsv_range_from_config(&config);
         assert_eq!(roi, Roi::new(0, 0, config.roi.width, config.roi.height));

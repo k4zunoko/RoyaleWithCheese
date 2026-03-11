@@ -191,6 +191,10 @@ impl PipelineRunner {
 mod tests {
     use super::*;
     use crate::application::runtime_state::RuntimeState;
+    use crate::domain::config::{
+        AppConfig, CaptureConfig, CommunicationConfig, CoordinateTransformConfig, DebugConfig,
+        HsvRangeConfig, PipelineConfig, ProcessConfig, ProcessMode, RoiConfig,
+    };
     use crate::domain::ports::ProcessPort;
     use crate::domain::types::{
         DeviceInfo, GpuFrame, HsvRange, InputState, ProcessorBackend, Roi, VirtualKey,
@@ -256,10 +260,49 @@ mod tests {
         ProcessSelector::FastColor(adapter)
     }
 
+    fn test_config() -> AppConfig {
+        AppConfig {
+            capture: CaptureConfig {
+                source: "dda".to_string(),
+                timeout_ms: 8,
+                monitor_index: 0,
+            },
+            process: ProcessConfig {
+                mode: ProcessMode::FastColor,
+                roi: RoiConfig {
+                    width: 460,
+                    height: 240,
+                },
+                hsv_range: HsvRangeConfig {
+                    h_low: 25,
+                    h_high: 45,
+                    s_low: 80,
+                    s_high: 255,
+                    v_low: 80,
+                    v_high: 255,
+                },
+                coordinate_transform: CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 10.0,
+                    y_clip_limit: 10.0,
+                },
+            },
+            communication: CommunicationConfig {
+                vendor_id: 0x1234,
+                product_id: 0x5678,
+                hid_send_interval_ms: 8,
+            },
+            pipeline: PipelineConfig {
+                stats_interval_sec: 10,
+            },
+            debug: DebugConfig { enabled: false },
+        }
+    }
+
     #[test]
     fn pipeline_construction_succeeds() {
         let input: Arc<dyn InputPort> = Arc::new(MockInput);
-        let config = AppConfig::default();
+        let config = test_config();
         let metrics = PipelineMetrics::new();
         let runtime_state = Arc::new(RuntimeState::new());
 
@@ -277,7 +320,7 @@ mod tests {
     #[test]
     fn pipeline_run_stops_cleanly() {
         let input: Arc<dyn InputPort> = Arc::new(MockInput);
-        let config = AppConfig::default();
+        let config = test_config();
         let metrics = PipelineMetrics::new();
         let runtime_state = Arc::new(RuntimeState::new());
 
@@ -335,7 +378,7 @@ mod tests {
             build_process_selector(),
             MockComm,
             input,
-            AppConfig::default(),
+            test_config(),
             PipelineMetrics::new(),
             runtime_state,
         );
