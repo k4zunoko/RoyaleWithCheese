@@ -68,7 +68,7 @@ mod tests {
     fn windows_input_adapter_key_held_bit_encoding() {
         // Test the bit encoding logic when key is held (bit 15 = 1)
         // When key is held: 0x8000 & 0x8000 = 0x8000 (true)
-        let key_held = -32768i16;  // 0x8000 as signed i16
+        let key_held = -32768i16; // 0x8000 as signed i16
         let is_pressed = (key_held as u16 & 0x8000u16) != 0;
         assert!(is_pressed, "Held key (0x8000) should be pressed");
     }

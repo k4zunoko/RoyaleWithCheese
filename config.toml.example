@@ -1,21 +1,14 @@
 # RoyaleWithCheese 設定ファイル例
 # このファイルをコピーして config.toml として使用してください
-# 詳細な説明は CONFIGURATION.md を参照してください
 
 [capture]
 source = "dda"
 timeout_ms = 8
-max_consecutive_timeouts = 120
-reinit_initial_delay_ms = 100
-reinit_max_delay_ms = 5000
 monitor_index = 0
 
 [process]
 # 処理モード: "fast-color" (CPU) または "fast-color-gpu" (GPU直接指定)
-# gpu.enabled = true にすると fast-color でも自動的に GPU にアップグレードされます
 mode = "fast-color"
-min_detection_area = 0
-detection_method = "moments"
 
 [process.roi]
 width = 460
@@ -33,7 +26,6 @@ v_high = 255
 sensitivity = 1.0
 x_clip_limit = 10.0
 y_clip_limit = 10.0
-dead_zone = 0.0
 
 [communication]
 # 注意: 実際のデバイスの VID/PID に必ず変更してください (0 は無効)
@@ -42,46 +34,8 @@ product_id = 0x5678
 hid_send_interval_ms = 8
 
 [pipeline]
-enable_dirty_rect_optimization = false
 stats_interval_sec = 10
 
-[activation]
-max_distance_from_center = 5.0
-active_window_ms = 500
-
-[audio_feedback]
-enabled = true
-on_sound = "C:\\Windows\\Media\\Speech On.wav"
-off_sound = "C:\\Windows\\Media\\Speech Off.wav"
-fallback_to_silent = true
-
-# ============================================================================
-# GPU処理設定
-# GPU Processing Settings
-# ============================================================================
-[gpu]
-# GPU処理を有効にする
-# Enable GPU-based processing using D3D11 compute shaders
-# 
-# trueの場合: GPU処理を試行し、失敗した場合はCPUに自動フォールバック
-# falseの場合: CPU処理のみを使用（デフォルト）
-# 
-# 注意: GPU処理はD3D11対応GPUが必要です。ない場合は自動的にCPUにフォールバックします。
-enabled = false
-
-# 使用するGPUデバイスのインデックス (0 = プライマリGPU)
-# GPU device index to use (0 = primary GPU)
-# 
-# 複数GPUがある場合に使用するGPUを指定します。
-# enabled = true の場合のみ有効です。
-device_index = 0
-
-# GPUが利用可能な場合に優先的に使用する (将来の拡張用)
-# Prefer GPU processing when available
-# 
-# 現在はenabledフラグと同じ動作です。
-# GPU失敗時は常にCPUへ自動フォールバックします。
-prefer_gpu = false
 
 [debug]
 enabled = false

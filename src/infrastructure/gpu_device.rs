@@ -2,8 +2,7 @@
 
 use crate::domain::error::{DomainError, DomainResult};
 use windows::Win32::Graphics::Direct3D::{
-    D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP, D3D_FEATURE_LEVEL_10_0,
-    D3D_FEATURE_LEVEL_11_0,
+    D3D_DRIVER_TYPE, D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_11_0,
 };
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, D3D11_CREATE_DEVICE_FLAG,
@@ -12,7 +11,6 @@ use windows::Win32::Graphics::Direct3D11::{
 
 pub fn create_d3d11_device() -> DomainResult<(ID3D11Device, ID3D11DeviceContext)> {
     create_device_for_driver(D3D_DRIVER_TYPE_HARDWARE)
-        .or_else(|_| create_device_for_driver(D3D_DRIVER_TYPE_WARP))
 }
 
 fn create_device_for_driver(

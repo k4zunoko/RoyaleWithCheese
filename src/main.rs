@@ -10,6 +10,7 @@ use RoyaleWithCheese::application::metrics::PipelineMetrics;
 use RoyaleWithCheese::application::pipeline::PipelineRunner;
 use RoyaleWithCheese::application::runtime_state::RuntimeState;
 use RoyaleWithCheese::domain::config::AppConfig;
+use RoyaleWithCheese::domain::config::ProcessMode;
 use RoyaleWithCheese::domain::ports::CapturePort;
 use RoyaleWithCheese::domain::types::Roi;
 use RoyaleWithCheese::infrastructure::capture::dda::DdaCaptureAdapter;
@@ -46,28 +47,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let runtime_state = Arc::new(RuntimeState::new());
 
     // ── Process adapter ───────────────────────────────────────────────────────
-    let process: ProcessSelector = match config.process.mode.as_str() {
-        "fast-color-gpu" => {
+    let process: ProcessSelector = match config.process.mode {
+        ProcessMode::FastColorGpu => {
             let adapter = GpuColorAdapter::new().map_err(|e| format!("GPU init failed: {e}"))?;
             ProcessSelector::FastColorGpu(adapter)
         }
-        _ => {
-            // "fast-color" — honour gpu.enabled flag for optional GPU upgrade
-            if config.gpu.enabled {
-                match GpuColorAdapter::new() {
-                    Ok(adapter) => ProcessSelector::FastColorGpu(adapter),
-                    Err(e) => {
-                        tracing::warn!(%e, "GPU unavailable, falling back to CPU");
-                        let cpu = ColorProcessAdapter::new()
-                            .map_err(|e2| format!("CPU init failed: {e2}"))?;
-                        ProcessSelector::FastColor(cpu)
-                    }
-                }
-            } else {
-                let adapter =
-                    ColorProcessAdapter::new().map_err(|e| format!("CPU init failed: {e}"))?;
-                ProcessSelector::FastColor(adapter)
-            }
+        ProcessMode::FastColor => {
+            let adapter =
+                ColorProcessAdapter::new().map_err(|e| format!("CPU init failed: {e}"))?;
+            ProcessSelector::FastColor(adapter)
         }
     };
 

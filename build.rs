@@ -24,10 +24,7 @@ fn main() {
 
     // ビルドプロファイルに応じた出力ディレクトリを決定
     let out_dir = env::var("OUT_DIR").unwrap();
-    let target_dir = Path::new(&out_dir)
-        .ancestors()
-        .nth(3)
-        .unwrap();
+    let target_dir = Path::new(&out_dir).ancestors().nth(3).unwrap();
 
     // OpenCV DLLファイルをコピー
     copy_opencv_dlls(&opencv_bin_dir, target_dir);
@@ -39,10 +36,7 @@ fn copy_opencv_dlls(src_dir: &Path, dst_dir: &Path) {
     let entries = match fs::read_dir(src_dir) {
         Ok(entries) => entries,
         Err(e) => {
-            println!(
-                "cargo:warning=Failed to read OpenCV DLL directory: {}",
-                e
-            );
+            println!("cargo:warning=Failed to read OpenCV DLL directory: {}", e);
             return;
         }
     };
@@ -59,7 +53,9 @@ fn copy_opencv_dlls(src_dir: &Path, dst_dir: &Path) {
 
                 // すでに同じサイズの同名ファイルが存在する場合はスキップ
                 if dst_path.exists() {
-                    if let (Ok(src_meta), Ok(dst_meta)) = (fs::metadata(&path), fs::metadata(&dst_path)) {
+                    if let (Ok(src_meta), Ok(dst_meta)) =
+                        (fs::metadata(&path), fs::metadata(&dst_path))
+                    {
                         if src_meta.len() == dst_meta.len() {
                             continue;
                         }
@@ -68,7 +64,11 @@ fn copy_opencv_dlls(src_dir: &Path, dst_dir: &Path) {
 
                 match fs::copy(&path, &dst_path) {
                     Ok(_) => {
-                        println!("cargo:warning=Copied: {} -> {}", filename_str, dst_path.display());
+                        println!(
+                            "cargo:warning=Copied: {} -> {}",
+                            filename_str,
+                            dst_path.display()
+                        );
                         copied_count += 1;
                     }
                     Err(e) => {

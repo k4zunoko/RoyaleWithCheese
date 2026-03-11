@@ -212,9 +212,9 @@ fn test_process_selector_enum_dispatch() {
 }
 
 #[test]
-fn test_fallback_when_gpu_unavailable() {
-    // This test simulates the fallback behavior when GPU is not available
-    // We can't easily simulate GPU failure, but we can verify CPU fallback works
+fn test_cpu_mode_processes_correctly() {
+    // This test verifies CPU processing mode works correctly
+    // ProcessMode::FastColor uses CPU-based HSV color detection
 
     let cpu_adapter = ColorProcessAdapter::new().expect("Failed to create CPU adapter");
     let selector = ProcessSelector::FastColor(cpu_adapter);
@@ -227,7 +227,7 @@ fn test_fallback_when_gpu_unavailable() {
     let mut selector = selector;
     let result = selector
         .process_frame(&frame, &roi, &hsv_range)
-        .expect("CPU fallback processing failed");
+        .expect("CPU mode processing failed");
 
     assert!(result.detected);
     assert_eq!(

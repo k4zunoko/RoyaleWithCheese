@@ -126,19 +126,15 @@ cargo build --features opencv-debug-display
 
 | セクション | 役割 |
 |---|---|
-| `[capture]` | 画面キャプチャ方式・タイムアウト・再初期化の設定 |
-| `[process]` | 処理モード・検出方法の選択 |
+| `[capture]` | 画面キャプチャ方式・タイムアウトの設定 |
+| `[process]` | 処理モードの選択 |
 | `[process.roi]` | 処理対象とする矩形領域（画面中央に自動配置） |
 | `[process.hsv_range]` | 検出対象の HSV 色範囲 |
-| `[process.coordinate_transform]` | 感度・クリップリミット・デッドゾーン |
+| `[process.coordinate_transform]` | 感度・クリップリミット |
 | `[communication]` | USB HID デバイスの VID/PID・送信間隔 |
-| `[pipeline]` | ダーティレクト最適化・統計情報出力間隔 |
-| `[activation]` | マウス移動の活性化条件 |
-| `[audio_feedback]` | 活性化・非活性化時の効果音 |
-| `[gpu]` | D3D11 GPU 処理の有効化・デバイス選択 |
+| `[pipeline]` | 統計情報出力間隔 |
 | `[debug]` | デバッグモードの有効化 |
 
-詳細な各パラメータの説明は **[CONFIGURATION.md](CONFIGURATION.md)** を参照してください。
 
 ### キャプチャソースの選択
 
@@ -150,24 +146,12 @@ source = "wgc"   # 推奨: 低レイテンシ (Windows 10 1803+)
 
 ### GPU 処理の有効化
 
-GPU 処理には 2 通りの方法があります：
-
 ```toml
-# 方法 1: gpu.enabled フラグ（GPU 失敗時は CPU に自動フォールバック）
-[process]
-mode = "fast-color"
-
-[gpu]
-enabled = true
-device_index = 0   # プライマリ GPU
-
-# 方法 2: モードで直接指定（GPU 初期化失敗時はエラー終了）
 [process]
 mode = "fast-color-gpu"
-
-[gpu]
-enabled = false   # mode で直接指定するため不要
 ```
+
+`mode = "fast-color-gpu"` を設定すると GPU 処理が有効になります。D3D11 対応 GPU が必要です。GPU 初期化に失敗した場合はエラーで終了します。
 
 ### HSV 色範囲の調整
 
@@ -301,6 +285,5 @@ tests/
 ### GPU 処理が有効にならない
 
 - D3D11 対応 GPU が接続されているか確認してください
-- `gpu.enabled = true` または `process.mode = "fast-color-gpu"` を設定してください
-- 複数 GPU がある場合、`gpu.device_index` で対象 GPU を指定してください（0 = プライマリ）
-- GPU 初期化に失敗した場合、`mode = "fast-color"` + `gpu.enabled = true` の組み合わせでは自動的に CPU にフォールバックします
+- `process.mode = "fast-color-gpu"` を設定してください
+- GPU 初期化に失敗した場合はエラーで終了します

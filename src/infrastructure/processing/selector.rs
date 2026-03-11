@@ -10,7 +10,6 @@ use crate::domain::types::{DetectionResult, Frame, GpuFrame, HsvRange, Processor
 use crate::infrastructure::processing::cpu::ColorProcessAdapter;
 use crate::infrastructure::processing::gpu::adapter::GpuColorAdapter;
 
-
 /// Exhaustive enum dispatch for processing adapters.
 ///
 /// Wraps either CPU-based HSV color detection or GPU-accelerated compute processing.

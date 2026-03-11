@@ -52,8 +52,8 @@ pub enum DomainError {
 
     /// GPU device/adapter not available
     ///
-    /// GPU が利用できないエラー。CPU での処理へのフォールバックが可能。
-    /// Recoverable エラーとして扱われます。
+    /// GPU が利用できない致命的エラー。
+    /// Non-recoverable — GPU 初期化失敗はパイプライン停止を引き起こします。
     #[error("GPU not available: {0}")]
     GpuNotAvailable(String),
 
@@ -77,14 +77,10 @@ impl DomainError {
     ///
     /// 回復可能なエラー：
     /// - DeviceNotAvailable: ロック画面やディスプレイモード変更は一時的
-    /// - GpuNotAvailable: CPU処理へのフォールバック可能
     ///
     /// それ以外は致命的エラー
     pub fn is_recoverable(&self) -> bool {
-        matches!(
-            self,
-            DomainError::DeviceNotAvailable | DomainError::GpuNotAvailable(_)
-        )
+        matches!(self, DomainError::DeviceNotAvailable)
     }
 }
 
@@ -196,7 +192,7 @@ mod tests {
     #[test]
     fn test_is_recoverable_gpu_not_available() {
         let err = DomainError::GpuNotAvailable("test".to_string());
-        assert!(err.is_recoverable());
+        assert!(!err.is_recoverable());
     }
 
     #[test]
