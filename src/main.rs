@@ -124,6 +124,12 @@ fn run_with_capture<C: CapturePort + 'static>(
 
     tracing::info!(x = roi.x, y = roi.y, w = roi.width, h = roi.height, "ROI");
 
+    if let Some(ref toggle) = config.toggle {
+        tracing::info!(key = %toggle.key, "toggle enabled");
+    } else {
+        tracing::info!("toggle disabled (no [toggle] section in config)");
+    }
+
     let runner = PipelineRunner::new(
         capture,
         process,

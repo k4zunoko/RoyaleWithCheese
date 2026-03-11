@@ -7,9 +7,10 @@ use crate::application::runtime_state::RuntimeState;
 use crate::domain::config::{CaptureConfig, CommunicationConfig, PipelineConfig, ProcessConfig};
 use crate::domain::error::DomainResult;
 use crate::domain::ports::{
-    apply_coordinate_transform, coordinates_to_hid_report, CapturePort, CommPort, ProcessPort,
+    apply_coordinate_transform, coordinates_to_hid_report, CapturePort, CommPort, InputPort,
+    ProcessPort,
 };
-use crate::domain::types::{DetectionResult, HsvRange, Roi};
+use crate::domain::types::{DetectionResult, HsvRange, Roi, VirtualKey};
 use crate::infrastructure::processing::selector::ProcessSelector;
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TrySendError};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -274,6 +275,32 @@ pub fn stats_thread(
             }
             Err(RecvTimeoutError::Disconnected) => break,
         }
+    }
+}
+
+pub fn toggle_thread(
+    input: Arc<dyn InputPort>,
+    toggle_key: VirtualKey,
+    runtime_state: Arc<RuntimeState>,
+    stop: Arc<AtomicBool>,
+) {
+    let mut prev_pressed = false;
+    while !stop.load(Ordering::Relaxed) {
+        let currently_pressed = input.is_key_pressed(toggle_key);
+        if !prev_pressed && currently_pressed {
+            // SAFETY: toggle() の load-store は非原子的だが、
+            // この関数は単一スレッドからのみ呼び出されるため安全。
+            runtime_state.toggle();
+            if runtime_state.is_active() {
+                crate::infrastructure::sound::play_toggle_on_sound();
+                tracing::info!("toggle: active=true");
+            } else {
+                crate::infrastructure::sound::play_toggle_off_sound();
+                tracing::info!("toggle: active=false");
+            }
+        }
+        prev_pressed = currently_pressed;
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -589,5 +616,93 @@ mod tests {
         let selector = build_process_selector();
         assert_eq!(selector.backend(), ProcessorBackend::Cpu);
         assert!(!selector.supports_gpu_processing());
+    }
+    struct MockInput {
+        pressed: std::sync::Mutex<Vec<bool>>,
+        call_index: std::sync::Mutex<usize>,
+    }
+
+    impl MockInput {
+        fn always_released() -> Self {
+            Self {
+                pressed: std::sync::Mutex::new(vec![]),
+                call_index: std::sync::Mutex::new(0),
+            }
+        }
+
+        /// Returns true for the first `n` calls then false.
+        fn press_for_n_calls(n: usize) -> Self {
+            let values = (0..100).map(|i| i < n).collect();
+            Self {
+                pressed: std::sync::Mutex::new(values),
+                call_index: std::sync::Mutex::new(0),
+            }
+        }
+    }
+
+    impl InputPort for MockInput {
+        fn is_key_pressed(&self, _key: VirtualKey) -> bool {
+            let values = self.pressed.lock().unwrap();
+            let mut idx = self.call_index.lock().unwrap();
+            let result = values.get(*idx).copied().unwrap_or(false);
+            *idx += 1;
+            result
+        }
+    }
+
+    #[test]
+    fn toggle_thread_stops_on_flag() {
+        let input = Arc::new(MockInput::always_released());
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+
+        let input_c = Arc::clone(&input);
+        let rs_c = Arc::clone(&runtime_state);
+        let stop_c = Arc::clone(&stop);
+        thread::spawn(move || {
+            toggle_thread(input_c, VirtualKey::LeftButton, rs_c, stop_c);
+            let _ = done_tx.send(());
+        });
+
+        thread::sleep(Duration::from_millis(30));
+        stop.store(true, Ordering::Relaxed);
+        done_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("toggle_thread should exit after stop flag is set");
+    }
+
+    #[test]
+    fn toggle_thread_edge_detection() {
+        // Returns true for first 3 calls (rising edge at call 0), then false.
+        // This produces exactly one rising edge → one toggle.
+        let input = Arc::new(MockInput::press_for_n_calls(3));
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+
+        let initial_active = runtime_state.is_active(); // true
+
+        let input_c = Arc::clone(&input);
+        let rs_c = Arc::clone(&runtime_state);
+        let stop_c = Arc::clone(&stop);
+        thread::spawn(move || {
+            toggle_thread(input_c, VirtualKey::LeftButton, rs_c, stop_c);
+            let _ = done_tx.send(());
+        });
+
+        // Wait enough iterations for the mock values to be consumed and toggle to occur.
+        thread::sleep(Duration::from_millis(100));
+        stop.store(true, Ordering::Relaxed);
+        done_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("toggle_thread should exit");
+
+        // Exactly one toggle: active flipped from initial.
+        assert_ne!(
+            runtime_state.is_active(),
+            initial_active,
+            "runtime_state should have been toggled exactly once"
+        );
     }
 }

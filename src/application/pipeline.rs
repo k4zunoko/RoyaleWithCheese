@@ -5,6 +5,7 @@ use crate::application::runtime_state::RuntimeState;
 use crate::domain::config::AppConfig;
 use crate::domain::error::{DomainError, DomainResult};
 use crate::domain::ports::{CapturePort, CommPort, InputPort};
+use crate::domain::types::VirtualKey;
 use crate::domain::types::{DetectionResult, Frame, Roi};
 use crate::infrastructure::processing::selector::ProcessSelector;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -80,7 +81,7 @@ impl PipelineRunner {
             capture,
             process,
             comm,
-            input: _input, // InputPort is not needed on the hot path threads
+            input,
             config,
             metrics,
             runtime_state,
@@ -92,7 +93,7 @@ impl PipelineRunner {
             .centered_in(device_info.width, device_info.height)
             .unwrap_or_else(|| Roi::new(0, 0, config.process.roi.width, config.process.roi.height));
 
-        let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(4);
+        let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(5);
 
         // ── Capture thread ────────────────────────────────────────────────────
         let capture_stop = Arc::clone(&stop);
@@ -165,6 +166,23 @@ impl PipelineRunner {
                 pipeline_config,
             );
         }));
+
+        // ── Toggle thread ────────────────────────────────────────────────────
+        if let Some(ref toggle_config) = config.toggle {
+            let toggle_key = VirtualKey::from_config_str(&toggle_config.key)
+                .expect("toggle key already validated");
+            let toggle_input = Arc::clone(&input);
+            let toggle_runtime_state = Arc::clone(&runtime_state);
+            let toggle_stop = Arc::clone(&stop);
+            handles.push(thread::spawn(move || {
+                crate::application::threads::toggle_thread(
+                    toggle_input,
+                    toggle_key,
+                    toggle_runtime_state,
+                    toggle_stop,
+                );
+            }));
+        }
 
         // Join all threads; propagate first panic as a DomainError.
         for handle in handles {
