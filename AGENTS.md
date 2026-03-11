@@ -188,7 +188,7 @@ cargo test real_hardware_pipeline_smoke_test -- --ignored --nocapture --test-thr
 -   Debug ビルドは詳細、Release は簡潔。
 -   `performance-timing` feature でタイミングログ有効化。
 -   設定は `config.toml` からロード。
--   失敗時は `main.rs` のデフォルトへフォールバック。
+-   `config.toml` の読み込み・パース・検証に失敗した場合はエラー終了させ、暗黙のデフォルトフォールバックを追加しないでください。
 -   検証は `AppConfig::validate()` を使用。
 -   対応キャプチャソース:
     -   `dda`

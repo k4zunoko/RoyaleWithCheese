@@ -77,7 +77,7 @@ cargo run --release
 .\target\release\RoyaleWithCheese.exe
 ```
 
-起動時に `config.toml` が存在しない場合、またはパースに失敗した場合は警告ログを出力してデフォルト値で起動します。
+起動時に `config.toml` の読み込み・パース・検証のいずれかに失敗した場合、アプリケーションはエラー終了します。
 
 ### ログレベルの制御
 
@@ -185,7 +185,7 @@ cargo test --tests
 cargo test
 
 # 特定のテストを実行
-cargo test domain::config::tests::test_default_config_validates -- --exact --nocapture
+cargo test domain::config::tests::test_example_config_validates -- --exact --nocapture
 
 # 特定の統合テストファイルを実行
 cargo test --test pipeline_integration
