@@ -160,6 +160,7 @@ fn test_config() -> AppConfig {
             stats_interval_sec: 10,
         },
         debug: DebugConfig { enabled: false },
+        toggle: None,
     }
 }
 

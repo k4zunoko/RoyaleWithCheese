@@ -4,6 +4,7 @@
 //! Configuration is immutable after startup and covers all pipeline components.
 
 use crate::domain::error::{DomainError, DomainResult};
+use crate::domain::types::VirtualKey;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -108,6 +109,13 @@ pub struct PipelineConfig {
     pub stats_interval_sec: u32,
 }
 
+/// トグルスイッチ設定
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ToggleConfig {
+    /// トグルキー（例: "insert", "left_control"）
+    pub key: String,
+}
+
 /// デバッグ設定
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DebugConfig {
@@ -132,6 +140,9 @@ pub struct AppConfig {
     pub pipeline: PipelineConfig,
     /// デバッグ設定
     pub debug: DebugConfig,
+    /// トグルスイッチ設定（省略時はトグル無効）
+    #[serde(default)]
+    pub toggle: Option<ToggleConfig>,
 }
 
 impl AppConfig {
@@ -251,6 +262,15 @@ impl AppConfig {
             ));
         }
 
+        // トグルキーの検証
+        if let Some(ref toggle) = self.toggle {
+            if VirtualKey::from_config_str(&toggle.key).is_none() {
+                return Err(DomainError::Configuration(format!(
+                    "Invalid toggle key: {}. Valid values: insert, left_button, right_button, left_control, left_alt",
+                    toggle.key
+                )));
+            }
+        }
         Ok(())
     }
 }
@@ -658,5 +678,164 @@ enabled = false
         let debug_str = format!("{:?}", config);
         assert!(debug_str.contains("AppConfig"));
         assert!(debug_str.contains("dda"));
+    }
+
+    // ========== Test: Toggle Configuration ==========
+
+    #[test]
+    fn test_validate_toggle_invalid_key() {
+        let toml_str = r#"
+[capture]
+source = "dda"
+timeout_ms = 8
+monitor_index = 0
+
+[process]
+mode = "fast-color"
+
+[process.roi]
+width = 200
+height = 200
+
+[process.hsv_range]
+h_low = 25
+h_high = 45
+s_low = 80
+s_high = 255
+v_low = 80
+v_high = 255
+
+[process.coordinate_transform]
+sensitivity = 1.0
+x_clip_limit = 10.0
+y_clip_limit = 10.0
+
+[communication]
+vendor_id = 0x1234
+product_id = 0x5678
+hid_send_interval_ms = 8
+
+[pipeline]
+stats_interval_sec = 10
+
+[debug]
+enabled = false
+
+[toggle]
+key = "unknown_key"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).expect("Should parse TOML");
+        let result = config.validate();
+        assert!(result.is_err(), "Should fail validation with invalid key");
+        if let Err(DomainError::Configuration(msg)) = result {
+            assert!(
+                msg.contains("Invalid toggle key"),
+                "Error should mention invalid toggle key: {}",
+                msg
+            );
+        } else {
+            panic!("Expected DomainError::Configuration");
+        }
+    }
+
+    #[test]
+    fn test_toggle_config_none_when_absent() {
+        let toml_str = r#"
+[capture]
+source = "dda"
+timeout_ms = 8
+monitor_index = 0
+
+[process]
+mode = "fast-color"
+
+[process.roi]
+width = 200
+height = 200
+
+[process.hsv_range]
+h_low = 25
+h_high = 45
+s_low = 80
+s_high = 255
+v_low = 80
+v_high = 255
+
+[process.coordinate_transform]
+sensitivity = 1.0
+x_clip_limit = 10.0
+y_clip_limit = 10.0
+
+[communication]
+vendor_id = 0x1234
+product_id = 0x5678
+hid_send_interval_ms = 8
+
+[pipeline]
+stats_interval_sec = 10
+
+[debug]
+enabled = false
+"#;
+        let config: AppConfig = toml::from_str(toml_str).expect("Should parse TOML");
+        assert!(config.toggle.is_none(), "toggle should be None when absent");
+        config
+            .validate()
+            .expect("Should validate without toggle section");
+    }
+
+    #[test]
+    fn test_toggle_config_valid_key() {
+        let toml_str = r#"
+[capture]
+source = "dda"
+timeout_ms = 8
+monitor_index = 0
+
+[process]
+mode = "fast-color"
+
+[process.roi]
+width = 200
+height = 200
+
+[process.hsv_range]
+h_low = 25
+h_high = 45
+s_low = 80
+s_high = 255
+v_low = 80
+v_high = 255
+
+[process.coordinate_transform]
+sensitivity = 1.0
+x_clip_limit = 10.0
+y_clip_limit = 10.0
+
+[communication]
+vendor_id = 0x1234
+product_id = 0x5678
+hid_send_interval_ms = 8
+
+[pipeline]
+stats_interval_sec = 10
+
+[debug]
+enabled = false
+
+[toggle]
+key = "insert"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).expect("Should parse TOML");
+        assert!(
+            config.toggle.is_some(),
+            "toggle should be Some when present"
+        );
+        assert_eq!(config.toggle.unwrap().key, "insert");
+        // validate() should also pass - will test via separate call
+        let config2: AppConfig = toml::from_str(toml_str).expect("Should parse TOML");
+        config2
+            .validate()
+            .expect("Should validate with valid toggle key");
     }
 }

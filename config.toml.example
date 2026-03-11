@@ -36,6 +36,9 @@ hid_send_interval_ms = 8
 [pipeline]
 stats_interval_sec = 10
 
+[toggle]
+# トグルキー: "insert", "left_control", "left_alt" など
+key = "insert"
 
 [debug]
 enabled = false

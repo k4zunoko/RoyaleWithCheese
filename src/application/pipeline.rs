@@ -296,6 +296,7 @@ mod tests {
                 stats_interval_sec: 10,
             },
             debug: DebugConfig { enabled: false },
+            toggle: None,
         }
     }
 

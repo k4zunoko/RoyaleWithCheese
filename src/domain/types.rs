@@ -271,6 +271,20 @@ impl VirtualKey {
             VirtualKey::LeftAlt => 0xA4,
         }
     }
+
+    /// Convert a config string to a VirtualKey variant (case-insensitive).
+    ///
+    /// Returns `None` for unrecognized strings.
+    pub fn from_config_str(s: &str) -> Option<VirtualKey> {
+        match s.to_ascii_lowercase().as_str() {
+            "insert" => Some(VirtualKey::Insert),
+            "left_button" => Some(VirtualKey::LeftButton),
+            "right_button" => Some(VirtualKey::RightButton),
+            "left_control" => Some(VirtualKey::LeftControl),
+            "left_alt" => Some(VirtualKey::LeftAlt),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -465,6 +479,46 @@ mod tests {
     fn virtual_key_equality() {
         assert_eq!(VirtualKey::Insert, VirtualKey::Insert);
         assert_ne!(VirtualKey::Insert, VirtualKey::LeftButton);
+    }
+
+    #[test]
+    fn virtual_key_from_config_str() {
+        // Test all 5 variants convert correctly
+        assert_eq!(
+            VirtualKey::from_config_str("insert"),
+            Some(VirtualKey::Insert)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("left_button"),
+            Some(VirtualKey::LeftButton)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("right_button"),
+            Some(VirtualKey::RightButton)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("left_control"),
+            Some(VirtualKey::LeftControl)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("left_alt"),
+            Some(VirtualKey::LeftAlt)
+        );
+
+        // Test case-insensitivity
+        assert_eq!(
+            VirtualKey::from_config_str("INSERT"),
+            Some(VirtualKey::Insert)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("LEFT_BUTTON"),
+            Some(VirtualKey::LeftButton)
+        );
+        assert_eq!(VirtualKey::from_config_str("RIGHT_CONTROL"), None); // Unknown variant
+
+        // Test unknown returns None
+        assert_eq!(VirtualKey::from_config_str("unknown"), None);
+        assert_eq!(VirtualKey::from_config_str(""), None);
     }
 
     #[test]
