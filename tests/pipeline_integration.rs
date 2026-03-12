@@ -149,6 +149,7 @@ fn test_config() -> AppConfig {
                 sensitivity: 1.0,
                 x_clip_limit: 10.0,
                 y_clip_limit: 10.0,
+                dead_zone: 0.0,
             },
         },
         communication: CommunicationConfig {
@@ -161,6 +162,7 @@ fn test_config() -> AppConfig {
         },
         debug: DebugConfig { enabled: false },
         toggle: None,
+        activation: None,
     }
 }
 
