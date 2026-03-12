@@ -870,7 +870,6 @@ key = "insert"
             .expect("Should validate with valid toggle key");
     }
 
-
     #[test]
     fn test_validate_dead_zone_negative() {
         let mut config = valid_config();

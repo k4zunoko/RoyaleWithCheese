@@ -545,10 +545,8 @@ mod tests {
 
         // delta=2 (center_x=52): 2 < dead_zone(3) → 0.0 → * 5.0 = 0.0 → clip(0.0) = 0.0
         let result_blocked = DetectionResult::detected(52.0, 50.0, 0.5);
-        let coords_blocked =
-            apply_coordinate_transform(&result_blocked, &roi, 5.0, 3.0, 20.0, 0.0);
+        let coords_blocked = apply_coordinate_transform(&result_blocked, &roi, 5.0, 3.0, 20.0, 0.0);
         assert!(coords_blocked.detected);
         assert_eq!(coords_blocked.delta_x, 0.0);
     }
-
 }

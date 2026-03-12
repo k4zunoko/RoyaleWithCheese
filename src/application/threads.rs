@@ -457,6 +457,27 @@ mod tests {
         }
     }
 
+    struct DataCapturingComm {
+        last_data: Arc<std::sync::Mutex<Vec<u8>>>,
+        notify_tx: std::sync::mpsc::Sender<()>,
+    }
+
+    impl CommPort for DataCapturingComm {
+        fn send(&mut self, data: &[u8]) -> DomainResult<()> {
+            *self.last_data.lock().unwrap() = data.to_vec();
+            let _ = self.notify_tx.send(());
+            Ok(())
+        }
+
+        fn reconnect(&mut self) -> DomainResult<()> {
+            Ok(())
+        }
+
+        fn is_connected(&self) -> bool {
+            true
+        }
+    }
+
     fn build_process_selector() -> ProcessSelector {
         let adapter = ColorProcessAdapter::new().expect("ColorProcessAdapter should initialize");
         ProcessSelector::FastColor(adapter)
@@ -631,6 +652,74 @@ mod tests {
 
         stop.store(true, Ordering::Relaxed);
         handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn test_hid_thread_uses_config_sensitivity() {
+        // roi center = (50, 50); detection at (60, 50) -> raw delta_x = 10.0
+        // sensitivity=1.0 -> delta_x=10 -> report[3]=10
+        // sensitivity=2.0 -> delta_x=20 -> report[3]=20 (double)
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let run_hid = |sensitivity: f64| -> Vec<u8> {
+            let metrics = PipelineMetrics::new();
+            let runtime_state = Arc::new(RuntimeState::new());
+            let stop = Arc::new(AtomicBool::new(false));
+            let (tx, rx) = bounded(1);
+            let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+            let last_data = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let comm = Box::new(DataCapturingComm {
+                last_data: Arc::clone(&last_data),
+                notify_tx,
+            });
+            let config = test_communication_config();
+            let stop_for_thread = Arc::clone(&stop);
+            let rs_for_thread = Arc::clone(&runtime_state);
+            let handle = thread::spawn(move || {
+                hid_thread(
+                    comm,
+                    rx,
+                    metrics,
+                    rs_for_thread,
+                    stop_for_thread,
+                    config,
+                    CoordinateTransformConfig {
+                        sensitivity,
+                        x_clip_limit: 0.0,
+                        y_clip_limit: 0.0,
+                        dead_zone: 0.0,
+                    },
+                    None,
+                    roi,
+                )
+            });
+            tx.send(TimestampedDetection {
+                result: DetectionResult::detected(60.0, 50.0, 0.5),
+                captured_at: Instant::now(),
+                processed_at: Instant::now(),
+            })
+            .expect("detection send should succeed");
+            notify_rx
+                .recv_timeout(Duration::from_millis(300))
+                .expect("hid send should be called");
+            let captured = last_data.lock().unwrap().clone();
+            stop.store(true, Ordering::Relaxed);
+            handle.join().expect("hid thread should exit");
+            captured
+        };
+
+        let report_1x = run_hid(1.0);
+        let report_2x = run_hid(2.0);
+
+        // HID report: [0x01, 0x00, 0x00, x_val, x_sign, y_val, y_sign, 0xFF]
+        // report[3] is x_val; sensitivity=2.0 should double the magnitude
+        assert_eq!(report_1x[3], 10, "sensitivity=1.0 should yield x_val=10");
+        assert_eq!(report_2x[3], 20, "sensitivity=2.0 should yield x_val=20");
+        assert_eq!(
+            report_2x[3],
+            report_1x[3] * 2,
+            "sensitivity=2.0 should double x_val"
+        );
     }
 
     #[test]
@@ -957,5 +1046,4 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         handle.join().expect("hid thread should exit");
     }
-
 }
