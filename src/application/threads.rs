@@ -782,4 +782,180 @@ mod tests {
             "runtime_state should have been toggled exactly once"
         );
     }
+
+    #[test]
+    fn test_activation_gate_none_always_sends() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new()); // starts active=true
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::clone(&send_count),
+            notify_tx,
+        });
+        let config = test_communication_config();
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                config,
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                None, // no activation gating
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(60.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("hid send should occur with activation=None");
+        assert!(send_count.load(Ordering::Relaxed) >= 1);
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn test_activation_gate_within_distance() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new()); // starts active=true
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::clone(&send_count),
+            notify_tx,
+        });
+        let config = test_communication_config();
+        // roi center = (50, 50); detection at (60, 50) -> Chebyshev = max(10, 0) = 10 <= 50
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                config,
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                Some(ActivationConfig {
+                    max_distance_from_center: 50.0,
+                    active_window_ms: 500,
+                }),
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(60.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(300))
+            .expect("hid send should occur when detection is within distance");
+        assert!(send_count.load(Ordering::Relaxed) >= 1);
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn test_activation_gate_outside_distance() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new()); // starts active=true
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::clone(&send_count),
+            notify_tx,
+        });
+        let config = CommunicationConfig {
+            vendor_id: 0x1234,
+            product_id: 0x5678,
+            hid_send_interval_ms: 200, // long interval to avoid timeout-path sends
+        };
+        // roi center = (50, 50); detection at (80, 50) -> Chebyshev = max(30, 0) = 30 > 5.0
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                config,
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                Some(ActivationConfig {
+                    max_distance_from_center: 5.0,
+                    active_window_ms: 200,
+                }),
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(80.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("detection send should succeed");
+
+        // Detection is outside max_distance_from_center=5.0, so activation should NOT fire.
+        let result = notify_rx.recv_timeout(Duration::from_millis(150));
+        assert!(
+            result.is_err(),
+            "hid send should NOT occur when detection is outside activation distance"
+        );
+        assert_eq!(
+            send_count.load(Ordering::Relaxed),
+            0,
+            "send_count should remain 0"
+        );
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
 }
