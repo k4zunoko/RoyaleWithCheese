@@ -4,7 +4,9 @@ use crate::application::metrics::PipelineMetrics;
 use crate::application::pipeline::{StatData, TimestampedDetection, TimestampedFrame};
 use crate::application::recovery::{RecoveryState, RecoveryStrategy};
 use crate::application::runtime_state::RuntimeState;
-use crate::domain::config::{CaptureConfig, CommunicationConfig, PipelineConfig, ProcessConfig};
+use crate::domain::config::{
+    CaptureConfig, CommunicationConfig, CoordinateTransformConfig, PipelineConfig, ProcessConfig,
+};
 use crate::domain::error::DomainResult;
 use crate::domain::ports::{
     apply_coordinate_transform, coordinates_to_hid_report, CapturePort, CommPort, InputPort,
@@ -182,6 +184,7 @@ fn send_detection_report(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn hid_thread(
     mut comm: Box<dyn CommPort + 'static>,
     rx: Receiver<TimestampedDetection>,
@@ -189,11 +192,10 @@ pub fn hid_thread(
     runtime_state: Arc<RuntimeState>,
     stop: Arc<AtomicBool>,
     config: CommunicationConfig,
+    coordinate_transform: CoordinateTransformConfig,
     roi: Roi,
 ) {
     let hid_send_interval = Duration::from_millis(config.hid_send_interval_ms as u64);
-    // CommunicationConfig has no sensitivity; use neutral multiplier.
-    let sensitivity = 1.0_f64;
     let mut last_detection: Option<DetectionResult> = None;
     let mut recovery = RecoveryState::new();
     let strategy = RecoveryStrategy::new(100, 3200, 5);
@@ -210,10 +212,10 @@ pub fn hid_thread(
                     &mut *comm,
                     &timestamped_detection.result,
                     &roi,
-                    sensitivity,
-                    0.0,
-                    0.0,
-                    0.0,
+                    coordinate_transform.sensitivity,
+                    coordinate_transform.dead_zone,
+                    coordinate_transform.x_clip_limit,
+                    coordinate_transform.y_clip_limit,
                     &metrics,
                 ) {
                     Ok(()) => strategy.record_success(&mut recovery),
@@ -249,10 +251,10 @@ pub fn hid_thread(
                     &mut *comm,
                     &detection,
                     &roi,
-                    sensitivity,
-                    0.0,
-                    0.0,
-                    0.0,
+                    coordinate_transform.sensitivity,
+                    coordinate_transform.dead_zone,
+                    coordinate_transform.x_clip_limit,
+                    coordinate_transform.y_clip_limit,
                     &metrics,
                 ) {
                     Ok(()) => strategy.record_success(&mut recovery),
@@ -560,6 +562,12 @@ mod tests {
                 runtime_state_for_thread,
                 stop_for_thread,
                 config,
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
                 roi,
             )
         });

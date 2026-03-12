@@ -139,6 +139,7 @@ impl PipelineRunner {
         let hid_metrics = Arc::clone(&metrics);
         let hid_runtime_state = Arc::clone(&runtime_state);
         let communication_config = config.communication.clone();
+        let coordinate_transform_config = config.process.coordinate_transform.clone();
         let hid_roi = roi;
         handles.push(thread::spawn(move || {
             crate::application::threads::hid_thread(
@@ -148,6 +149,7 @@ impl PipelineRunner {
                 hid_runtime_state,
                 hid_stop,
                 communication_config,
+                coordinate_transform_config,
                 hid_roi,
             );
         }));
