@@ -59,6 +59,9 @@ pub struct CoordinateTransformConfig {
     pub x_clip_limit: f64,
     /// Y軸クリップリミット
     pub y_clip_limit: f64,
+    /// デッドゾーン（中心からの無視距離）
+    #[serde(default)]
+    pub dead_zone: f64,
 }
 
 /// 処理モード
@@ -116,6 +119,15 @@ pub struct ToggleConfig {
     pub key: String,
 }
 
+/// アクティベーション設定
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ActivationConfig {
+    /// 中心からの最大距離（チェビシェフ距離）
+    pub max_distance_from_center: f64,
+    /// アクティブ維持時間 (ミリ秒)
+    pub active_window_ms: u64,
+}
+
 /// デバッグ設定
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DebugConfig {
@@ -143,6 +155,9 @@ pub struct AppConfig {
     /// トグルスイッチ設定（省略時はトグル無効）
     #[serde(default)]
     pub toggle: Option<ToggleConfig>,
+    /// アクティベーション設定（省略時はアクティベーション無効）
+    #[serde(default)]
+    pub activation: Option<ActivationConfig>,
 }
 
 impl AppConfig {
@@ -224,21 +239,27 @@ impl AppConfig {
         }
 
         // 座標変換設定の検証
-        if self.process.coordinate_transform.x_clip_limit <= 0.0 {
+        if self.process.coordinate_transform.x_clip_limit < 0.0 {
             return Err(DomainError::Configuration(
-                "process.coordinate_transform.x_clip_limit must be > 0".to_string(),
+                "process.coordinate_transform.x_clip_limit must be >= 0".to_string(),
             ));
         }
 
-        if self.process.coordinate_transform.y_clip_limit <= 0.0 {
+        if self.process.coordinate_transform.y_clip_limit < 0.0 {
             return Err(DomainError::Configuration(
-                "process.coordinate_transform.y_clip_limit must be > 0".to_string(),
+                "process.coordinate_transform.y_clip_limit must be >= 0".to_string(),
             ));
         }
 
         if self.process.coordinate_transform.sensitivity <= 0.0 {
             return Err(DomainError::Configuration(
                 "process.coordinate_transform.sensitivity must be > 0".to_string(),
+            ));
+        }
+
+        if self.process.coordinate_transform.dead_zone < 0.0 {
+            return Err(DomainError::Configuration(
+                "process.coordinate_transform.dead_zone must be >= 0".to_string(),
             ));
         }
 
@@ -269,6 +290,20 @@ impl AppConfig {
                     "Invalid toggle key: {}. Valid values: insert, left_button, right_button, left_control, left_alt",
                     toggle.key
                 )));
+            }
+        }
+
+        // アクティベーション設定の検証
+        if let Some(act) = &self.activation {
+            if act.max_distance_from_center <= 0.0 {
+                return Err(DomainError::Configuration(
+                    "activation.max_distance_from_center must be > 0".to_string(),
+                ));
+            }
+            if act.active_window_ms == 0 {
+                return Err(DomainError::Configuration(
+                    "activation.active_window_ms must be > 0".to_string(),
+                ));
             }
         }
         Ok(())
@@ -621,11 +656,7 @@ enabled = false
         let mut config = valid_config();
         config.process.coordinate_transform.x_clip_limit = 0.0;
         let result = config.validate();
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("x_clip_limit must be > 0"));
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -633,7 +664,7 @@ enabled = false
         let mut config = valid_config();
         config.process.coordinate_transform.y_clip_limit = 0.0;
         let result = config.validate();
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -837,5 +868,91 @@ key = "insert"
         config2
             .validate()
             .expect("Should validate with valid toggle key");
+    }
+
+
+    #[test]
+    fn test_validate_dead_zone_negative() {
+        let mut config = valid_config();
+        config.process.coordinate_transform.dead_zone = -1.0;
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("dead_zone must be >= 0"));
+    }
+
+    #[test]
+    fn test_validate_dead_zone_zero() {
+        let mut config = valid_config();
+        config.process.coordinate_transform.dead_zone = 0.0;
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    // ========== Test: Validation - ActivationConfig ==========
+
+    #[test]
+    fn test_validate_activation_max_distance_zero() {
+        let mut config = valid_config();
+        config.activation = Some(ActivationConfig {
+            max_distance_from_center: 0.0,
+            active_window_ms: 500,
+        });
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("activation.max_distance_from_center must be > 0"));
+    }
+
+    #[test]
+    fn test_validate_activation_max_distance_negative() {
+        let mut config = valid_config();
+        config.activation = Some(ActivationConfig {
+            max_distance_from_center: -1.0,
+            active_window_ms: 500,
+        });
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("activation.max_distance_from_center must be > 0"));
+    }
+
+    #[test]
+    fn test_validate_activation_window_zero() {
+        let mut config = valid_config();
+        config.activation = Some(ActivationConfig {
+            max_distance_from_center: 15.0,
+            active_window_ms: 0,
+        });
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("activation.active_window_ms must be > 0"));
+    }
+
+    #[test]
+    fn test_validate_activation_valid() {
+        let mut config = valid_config();
+        config.activation = Some(ActivationConfig {
+            max_distance_from_center: 15.0,
+            active_window_ms: 500,
+        });
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_config_without_activation() {
+        let config = valid_config();
+        assert!(config.activation.is_none());
+        assert!(config.validate().is_ok());
     }
 }
