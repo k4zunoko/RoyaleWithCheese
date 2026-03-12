@@ -5,7 +5,8 @@ use crate::application::pipeline::{StatData, TimestampedDetection, TimestampedFr
 use crate::application::recovery::{RecoveryState, RecoveryStrategy};
 use crate::application::runtime_state::RuntimeState;
 use crate::domain::config::{
-    CaptureConfig, CommunicationConfig, CoordinateTransformConfig, PipelineConfig, ProcessConfig,
+    ActivationConfig, CaptureConfig, CommunicationConfig, CoordinateTransformConfig,
+    PipelineConfig, ProcessConfig,
 };
 use crate::domain::error::DomainResult;
 use crate::domain::ports::{
@@ -193,12 +194,15 @@ pub fn hid_thread(
     stop: Arc<AtomicBool>,
     config: CommunicationConfig,
     coordinate_transform: CoordinateTransformConfig,
+    activation: Option<ActivationConfig>,
     roi: Roi,
 ) {
     let hid_send_interval = Duration::from_millis(config.hid_send_interval_ms as u64);
     let mut last_detection: Option<DetectionResult> = None;
     let mut recovery = RecoveryState::new();
     let strategy = RecoveryStrategy::new(100, 3200, 5);
+    let mut activation_active = false;
+    let mut activation_deadline: Option<Instant> = None;
 
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(hid_send_interval) {
@@ -206,6 +210,32 @@ pub fn hid_thread(
                 last_detection = Some(timestamped_detection.result.clone());
                 if !runtime_state.is_active() {
                     continue;
+                }
+
+                // Activation gating - only applies when activation config is present
+                if let Some(ref act) = activation {
+                    let dx =
+                        (timestamped_detection.result.center_x as f64) - (roi.width as f64 / 2.0);
+                    let dy =
+                        (timestamped_detection.result.center_y as f64) - (roi.height as f64 / 2.0);
+                    let distance = dx.abs().max(dy.abs());
+                    if timestamped_detection.result.detected
+                        && distance <= act.max_distance_from_center
+                    {
+                        activation_active = true;
+                        activation_deadline =
+                            Some(Instant::now() + Duration::from_millis(act.active_window_ms));
+                    }
+                    let is_activation_live = activation_deadline
+                        .map(|d| Instant::now() < d)
+                        .unwrap_or(false);
+                    if !is_activation_live {
+                        activation_active = false;
+                        continue;
+                    }
+                    if !activation_active {
+                        continue;
+                    }
                 }
 
                 match send_detection_report(
@@ -245,6 +275,20 @@ pub fn hid_thread(
                     .unwrap_or_else(DetectionResult::not_detected);
                 if !runtime_state.is_active() {
                     continue;
+                }
+
+                // Activation gating - only fire timeout sends while activation window is live
+                if activation.is_some() {
+                    let is_activation_live = activation_deadline
+                        .map(|d| Instant::now() < d)
+                        .unwrap_or(false);
+                    if !is_activation_live {
+                        activation_active = false;
+                        continue;
+                    }
+                    if !activation_active {
+                        continue;
+                    }
                 }
 
                 match send_detection_report(
@@ -568,6 +612,7 @@ mod tests {
                     y_clip_limit: 0.0,
                     dead_zone: 0.0,
                 },
+                None,
                 roi,
             )
         });
