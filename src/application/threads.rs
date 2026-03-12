@@ -149,15 +149,26 @@ pub fn process_thread(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_detection_report(
     comm: &mut dyn CommPort,
     detection: &DetectionResult,
     roi: &Roi,
     sensitivity: f64,
+    dead_zone: f64,
+    x_clip_limit: f64,
+    y_clip_limit: f64,
     metrics: &PipelineMetrics,
 ) -> DomainResult<()> {
     let t0 = Instant::now();
-    let transformed = apply_coordinate_transform(detection, roi, sensitivity);
+    let transformed = apply_coordinate_transform(
+        detection,
+        roi,
+        sensitivity,
+        dead_zone,
+        x_clip_limit,
+        y_clip_limit,
+    );
     let report = coordinates_to_hid_report(&transformed);
     match comm.send(&report) {
         Ok(_) => {
@@ -200,6 +211,9 @@ pub fn hid_thread(
                     &timestamped_detection.result,
                     &roi,
                     sensitivity,
+                    0.0,
+                    0.0,
+                    0.0,
                     &metrics,
                 ) {
                     Ok(()) => strategy.record_success(&mut recovery),
@@ -231,7 +245,16 @@ pub fn hid_thread(
                     continue;
                 }
 
-                match send_detection_report(&mut *comm, &detection, &roi, sensitivity, &metrics) {
+                match send_detection_report(
+                    &mut *comm,
+                    &detection,
+                    &roi,
+                    sensitivity,
+                    0.0,
+                    0.0,
+                    0.0,
+                    &metrics,
+                ) {
                     Ok(()) => strategy.record_success(&mut recovery),
                     Err(error) if error.is_recoverable() => {
                         tracing::warn!(%error, "recoverable hid send error");

@@ -88,12 +88,15 @@ pub trait InputPort: Send + Sync {
     }
 }
 
-/// 検出結果に座標変換（感度適用）を行います。
+/// 検出結果に座標変換（感度・デッドゾーン・クリップリミット適用）を行います。
 #[inline]
 pub fn apply_coordinate_transform(
     result: &DetectionResult,
     roi: &Roi,
     sensitivity: f64,
+    dead_zone: f64,
+    x_clip_limit: f64,
+    y_clip_limit: f64,
 ) -> TransformedCoordinates {
     if !result.detected {
         return TransformedCoordinates::new(0.0, 0.0, false);
@@ -102,11 +105,31 @@ pub fn apply_coordinate_transform(
     let center_x = roi.width as f64 / 2.0;
     let center_y = roi.height as f64 / 2.0;
 
-    TransformedCoordinates::new(
-        (result.center_x as f64 - center_x) * sensitivity,
-        (result.center_y as f64 - center_y) * sensitivity,
-        true,
-    )
+    // 1. raw delta
+    let mut delta_x = result.center_x as f64 - center_x;
+    let mut delta_y = result.center_y as f64 - center_y;
+
+    // 2. dead_zone: deltas inside zone become 0
+    if delta_x.abs() < dead_zone {
+        delta_x = 0.0;
+    }
+    if delta_y.abs() < dead_zone {
+        delta_y = 0.0;
+    }
+
+    // 3. sensitivity
+    delta_x *= sensitivity;
+    delta_y *= sensitivity;
+
+    // 4. clip_limit: 0.0 means unlimited
+    if x_clip_limit > 0.0 {
+        delta_x = delta_x.clamp(-x_clip_limit, x_clip_limit);
+    }
+    if y_clip_limit > 0.0 {
+        delta_y = delta_y.clamp(-y_clip_limit, y_clip_limit);
+    }
+
+    TransformedCoordinates::new(delta_x, delta_y, true)
 }
 
 #[inline]
@@ -405,7 +428,7 @@ mod tests {
     fn apply_coordinate_transform_returns_zero_when_not_detected() {
         let result = DetectionResult::not_detected();
         let roi = Roi::new(0, 0, 100, 100);
-        let coords = apply_coordinate_transform(&result, &roi, 1.5);
+        let coords = apply_coordinate_transform(&result, &roi, 1.5, 0.0, 0.0, 0.0);
         assert!(!coords.detected);
         assert_eq!(coords.delta_x, 0.0);
         assert_eq!(coords.delta_y, 0.0);
@@ -415,7 +438,7 @@ mod tests {
     fn apply_coordinate_transform_uses_roi_center_and_sensitivity() {
         let result = DetectionResult::detected(60.0, 30.0, 0.5);
         let roi = Roi::new(300, 400, 100, 80);
-        let coords = apply_coordinate_transform(&result, &roi, 2.0);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 0.0, 0.0);
         assert!(coords.detected);
         assert_eq!(coords.delta_x, 20.0);
         assert_eq!(coords.delta_y, -20.0);
