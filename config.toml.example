@@ -24,6 +24,7 @@ v_high = 255
 
 [process.coordinate_transform]
 sensitivity = 1.0
+dead_zone = 0.0
 x_clip_limit = 10.0
 y_clip_limit = 10.0
 
@@ -42,3 +43,8 @@ key = "insert"
 
 [debug]
 enabled = false
+
+# [activation]
+# # 検出座標が ROI 中心から max_distance_from_center (チェビシェフ距離) 以内の場合のみ有効化
+# max_distance_from_center = 15.0
+# active_window_ms = 500
