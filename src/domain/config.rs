@@ -55,9 +55,9 @@ pub struct HsvRangeConfig {
 pub struct CoordinateTransformConfig {
     /// 感度倍率
     pub sensitivity: f64,
-    /// X軸クリップリミット
+    /// X軸クリップリミット (0.0 なら X 出力を無効化)
     pub x_clip_limit: f64,
-    /// Y軸クリップリミット
+    /// Y軸クリップリミット (0.0 なら Y 出力を無効化)
     pub y_clip_limit: f64,
     /// デッドゾーン（中心からの無視距離）
     #[serde(default)]

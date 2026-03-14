@@ -130,7 +130,7 @@ cargo build --features opencv-debug-display
 | `[process]` | 処理モードの選択 |
 | `[process.roi]` | 処理対象とする矩形領域（画面中央に自動配置） |
 | `[process.hsv_range]` | 検出対象の HSV 色範囲 |
-| `[process.coordinate_transform]` | 感度・クリップリミット |
+| `[process.coordinate_transform]` | 感度・デッドゾーン・軸ごとのクリップ/無効化 |
 | `[communication]` | USB HID デバイスの VID/PID・送信間隔 |
 | `[pipeline]` | 統計情報出力間隔 |
 | `[debug]` | デバッグモードの有効化 |

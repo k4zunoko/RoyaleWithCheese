@@ -121,11 +121,15 @@ pub fn apply_coordinate_transform(
     delta_x *= sensitivity;
     delta_y *= sensitivity;
 
-    // 4. clip_limit: 0.0 means unlimited
-    if x_clip_limit > 0.0 {
+    // 4. clip_limit: 0.0 means force zero on that axis
+    if x_clip_limit == 0.0 {
+        delta_x = 0.0;
+    } else {
         delta_x = delta_x.clamp(-x_clip_limit, x_clip_limit);
     }
-    if y_clip_limit > 0.0 {
+    if y_clip_limit == 0.0 {
+        delta_y = 0.0;
+    } else {
         delta_y = delta_y.clamp(-y_clip_limit, y_clip_limit);
     }
 
@@ -438,7 +442,7 @@ mod tests {
     fn apply_coordinate_transform_uses_roi_center_and_sensitivity() {
         let result = DetectionResult::detected(60.0, 30.0, 0.5);
         let roi = Roi::new(300, 400, 100, 80);
-        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 0.0, 0.0);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 100.0, 100.0);
         assert!(coords.detected);
         assert_eq!(coords.delta_x, 20.0);
         assert_eq!(coords.delta_y, -20.0);
@@ -478,7 +482,7 @@ mod tests {
         let result = DetectionResult::detected(60.0, 50.0, 0.5);
         let roi = Roi::new(0, 0, 100, 100);
         // delta_x = 60 - 50 = 10, * sensitivity 2.0 = 20.0
-        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 0.0, 0.0);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 100.0, 100.0);
         assert!(coords.detected);
         assert_eq!(coords.delta_x, 20.0);
         assert_eq!(coords.delta_y, 0.0);
@@ -489,7 +493,7 @@ mod tests {
         // delta_x = 52 - 50 = 2, dead_zone = 5.0 → 2 < 5 → zeroed
         let result = DetectionResult::detected(52.0, 50.0, 0.5);
         let roi = Roi::new(0, 0, 100, 100);
-        let coords = apply_coordinate_transform(&result, &roi, 1.0, 5.0, 0.0, 0.0);
+        let coords = apply_coordinate_transform(&result, &roi, 1.0, 5.0, 100.0, 100.0);
         assert!(coords.detected);
         assert_eq!(coords.delta_x, 0.0);
     }
@@ -499,7 +503,7 @@ mod tests {
         // delta_x = 56 - 50 = 6, dead_zone = 5.0 → 6 >= 5 → passes
         let result = DetectionResult::detected(56.0, 50.0, 0.5);
         let roi = Roi::new(0, 0, 100, 100);
-        let coords = apply_coordinate_transform(&result, &roi, 2.0, 5.0, 0.0, 0.0);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 5.0, 100.0, 100.0);
         assert!(coords.detected);
         assert_eq!(coords.delta_x, 12.0);
     }
@@ -515,13 +519,34 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_clip_zero_no_clamp() {
-        // x_clip_limit = 0.0 → unlimited; delta_x = 40 * 3.0 = 120.0
+    fn test_transform_clip_zero_forces_x_to_zero() {
+        // x_clip_limit = 0.0 → force x to 0 after dead_zone and sensitivity
         let result = DetectionResult::detected(90.0, 50.0, 0.5);
         let roi = Roi::new(0, 0, 100, 100);
         let coords = apply_coordinate_transform(&result, &roi, 3.0, 0.0, 0.0, 0.0);
         assert!(coords.detected);
-        assert_eq!(coords.delta_x, 120.0);
+        assert_eq!(coords.delta_x, 0.0);
+        assert_eq!(coords.delta_y, 0.0);
+    }
+
+    #[test]
+    fn test_transform_clip_zero_forces_only_y_to_zero() {
+        let result = DetectionResult::detected(60.0, 70.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 50.0, 0.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 20.0);
+        assert_eq!(coords.delta_y, 0.0);
+    }
+
+    #[test]
+    fn test_transform_clip_zero_forces_only_x_to_zero() {
+        let result = DetectionResult::detected(60.0, 70.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 0.0, 50.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 0.0);
+        assert_eq!(coords.delta_y, 40.0);
     }
 
     #[test]
@@ -539,13 +564,14 @@ mod tests {
         let roi = Roi::new(0, 0, 100, 100);
         // delta=4 (center_x=54): 4 >= dead_zone(3) → * 5.0 = 20.0 → clip(20.0) = 20.0
         let result_passes = DetectionResult::detected(54.0, 50.0, 0.5);
-        let coords_passes = apply_coordinate_transform(&result_passes, &roi, 5.0, 3.0, 20.0, 0.0);
+        let coords_passes = apply_coordinate_transform(&result_passes, &roi, 5.0, 3.0, 20.0, 100.0);
         assert!(coords_passes.detected);
         assert_eq!(coords_passes.delta_x, 20.0);
 
         // delta=2 (center_x=52): 2 < dead_zone(3) → 0.0 → * 5.0 = 0.0 → clip(0.0) = 0.0
         let result_blocked = DetectionResult::detected(52.0, 50.0, 0.5);
-        let coords_blocked = apply_coordinate_transform(&result_blocked, &roi, 5.0, 3.0, 20.0, 0.0);
+        let coords_blocked =
+            apply_coordinate_transform(&result_blocked, &roi, 5.0, 3.0, 20.0, 100.0);
         assert!(coords_blocked.detected);
         assert_eq!(coords_blocked.delta_x, 0.0);
     }

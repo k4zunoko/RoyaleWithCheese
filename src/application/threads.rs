@@ -685,8 +685,8 @@ mod tests {
                     config,
                     CoordinateTransformConfig {
                         sensitivity,
-                        x_clip_limit: 0.0,
-                        y_clip_limit: 0.0,
+                        x_clip_limit: 255.0,
+                        y_clip_limit: 255.0,
                         dead_zone: 0.0,
                     },
                     None,
