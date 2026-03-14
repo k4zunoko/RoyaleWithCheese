@@ -122,10 +122,19 @@ pub struct ToggleConfig {
 /// アクティベーション設定
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ActivationConfig {
+    /// アクティベーション制御を有効にするか
+    #[serde(default = "default_activation_enabled")]
+    pub enabled: bool,
     /// 中心からの最大距離（チェビシェフ距離）
+    #[serde(default)]
     pub max_distance_from_center: f64,
     /// アクティブ維持時間 (ミリ秒)
+    #[serde(default)]
     pub active_window_ms: u64,
+}
+
+fn default_activation_enabled() -> bool {
+    true
 }
 
 /// デバッグ設定
@@ -295,15 +304,17 @@ impl AppConfig {
 
         // アクティベーション設定の検証
         if let Some(act) = &self.activation {
-            if act.max_distance_from_center <= 0.0 {
-                return Err(DomainError::Configuration(
-                    "activation.max_distance_from_center must be > 0".to_string(),
-                ));
-            }
-            if act.active_window_ms == 0 {
-                return Err(DomainError::Configuration(
-                    "activation.active_window_ms must be > 0".to_string(),
-                ));
+            if act.enabled {
+                if act.max_distance_from_center <= 0.0 {
+                    return Err(DomainError::Configuration(
+                        "activation.max_distance_from_center must be > 0".to_string(),
+                    ));
+                }
+                if act.active_window_ms == 0 {
+                    return Err(DomainError::Configuration(
+                        "activation.active_window_ms must be > 0".to_string(),
+                    ));
+                }
             }
         }
         Ok(())
@@ -896,6 +907,7 @@ key = "insert"
     fn test_validate_activation_max_distance_zero() {
         let mut config = valid_config();
         config.activation = Some(ActivationConfig {
+            enabled: true,
             max_distance_from_center: 0.0,
             active_window_ms: 500,
         });
@@ -911,6 +923,7 @@ key = "insert"
     fn test_validate_activation_max_distance_negative() {
         let mut config = valid_config();
         config.activation = Some(ActivationConfig {
+            enabled: true,
             max_distance_from_center: -1.0,
             active_window_ms: 500,
         });
@@ -926,6 +939,7 @@ key = "insert"
     fn test_validate_activation_window_zero() {
         let mut config = valid_config();
         config.activation = Some(ActivationConfig {
+            enabled: true,
             max_distance_from_center: 15.0,
             active_window_ms: 0,
         });
@@ -941,11 +955,129 @@ key = "insert"
     fn test_validate_activation_valid() {
         let mut config = valid_config();
         config.activation = Some(ActivationConfig {
+            enabled: true,
             max_distance_from_center: 15.0,
             active_window_ms: 500,
         });
         let result = config.validate();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_activation_disabled_skips_window_constraints() {
+        let mut config = valid_config();
+        config.activation = Some(ActivationConfig {
+            enabled: false,
+            max_distance_from_center: 0.0,
+            active_window_ms: 0,
+        });
+        let result = config.validate();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_parse_activation_enabled_defaults_true() {
+        let toml_str = r#"
+[capture]
+source = "dda"
+timeout_ms = 8
+monitor_index = 0
+
+[process]
+mode = "fast-color"
+
+[process.roi]
+width = 200
+height = 200
+
+[process.hsv_range]
+h_low = 25
+h_high = 45
+s_low = 80
+s_high = 255
+v_low = 80
+v_high = 255
+
+[process.coordinate_transform]
+sensitivity = 1.0
+x_clip_limit = 10.0
+y_clip_limit = 10.0
+
+[communication]
+vendor_id = 0x1234
+product_id = 0x5678
+hid_send_interval_ms = 8
+
+[pipeline]
+stats_interval_sec = 10
+
+[debug]
+enabled = false
+
+[activation]
+max_distance_from_center = 15.0
+active_window_ms = 500
+"#;
+
+        let config: AppConfig = toml::from_str(toml_str).expect("Should parse TOML");
+        let activation = config.activation.expect("activation should be present");
+        assert!(activation.enabled, "enabled should default to true");
+    }
+
+    #[test]
+    fn test_parse_disabled_activation_without_window_fields() {
+        let toml_str = r#"
+[capture]
+source = "dda"
+timeout_ms = 8
+monitor_index = 0
+
+[process]
+mode = "fast-color"
+
+[process.roi]
+width = 200
+height = 200
+
+[process.hsv_range]
+h_low = 25
+h_high = 45
+s_low = 80
+s_high = 255
+v_low = 80
+v_high = 255
+
+[process.coordinate_transform]
+sensitivity = 1.0
+x_clip_limit = 10.0
+y_clip_limit = 10.0
+
+[communication]
+vendor_id = 0x1234
+product_id = 0x5678
+hid_send_interval_ms = 8
+
+[pipeline]
+stats_interval_sec = 10
+
+[debug]
+enabled = false
+
+[activation]
+enabled = false
+"#;
+
+        let config: AppConfig = toml::from_str(toml_str).expect("Should parse TOML");
+        let activation = config
+            .activation
+            .as_ref()
+            .expect("activation should be present");
+        assert!(!activation.enabled, "enabled should remain false");
+        assert_eq!(activation.max_distance_from_center, 0.0);
+        assert_eq!(activation.active_window_ms, 0);
+        config
+            .validate()
+            .expect("disabled activation should validate without numeric fields");
     }
 
     #[test]

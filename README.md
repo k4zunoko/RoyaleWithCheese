@@ -132,6 +132,7 @@ cargo build --features opencv-debug-display
 | `[process.hsv_range]` | 検出対象の HSV 色範囲 |
 | `[process.coordinate_transform]` | 感度・デッドゾーン・軸ごとのクリップ/無効化 |
 | `[communication]` | USB HID デバイスの VID/PID・送信間隔 |
+| `[activation]` | ROI 中心距離にもとづくアクティベーション制御 |
 | `[pipeline]` | 統計情報出力間隔 |
 | `[debug]` | デバッグモードの有効化 |
 
@@ -152,6 +153,17 @@ mode = "fast-color-gpu"
 ```
 
 `mode = "fast-color-gpu"` を設定すると GPU 処理が有効になります。D3D11 対応 GPU が必要です。GPU 初期化に失敗した場合はエラーで終了します。
+
+### アクティベーション制御
+
+```toml
+[activation]
+enabled = true
+max_distance_from_center = 15.0
+active_window_ms = 500
+```
+
+`enabled = true` のときだけアクティベーション制御が有効になります。検出座標が ROI 中心から `max_distance_from_center` 以内に入ったときだけ `active_window_ms` 分だけアクティブ時間が加算され、そのウィンドウが残っている間は HID 出力を継続します。
 
 ### HSV 色範囲の調整
 
