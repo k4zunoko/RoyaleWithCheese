@@ -12,7 +12,6 @@ use RoyaleWithCheese::application::runtime_state::RuntimeState;
 use RoyaleWithCheese::domain::config::AppConfig;
 use RoyaleWithCheese::domain::config::ProcessMode;
 use RoyaleWithCheese::domain::ports::CapturePort;
-use RoyaleWithCheese::domain::types::Roi;
 use RoyaleWithCheese::infrastructure::capture::dda::DdaCaptureAdapter;
 use RoyaleWithCheese::infrastructure::capture::wgc::WgcCaptureAdapter;
 use RoyaleWithCheese::infrastructure::hid_comm::HidCommAdapter;
@@ -108,21 +107,6 @@ fn run_with_capture<C: CapturePort + 'static>(
         name   = %device_info.name,
         "capture device"
     );
-
-    let roi = Roi::new(0, 0, config.process.roi.width, config.process.roi.height)
-        .centered_in(device_info.width, device_info.height)
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                roi_w = config.process.roi.width,
-                roi_h = config.process.roi.height,
-                screen_w = device_info.width,
-                screen_h = device_info.height,
-                "ROI larger than screen, using top-left origin"
-            );
-            Roi::new(0, 0, config.process.roi.width, config.process.roi.height)
-        });
-
-    tracing::info!(x = roi.x, y = roi.y, w = roi.width, h = roi.height, "ROI");
 
     if let Some(ref toggle) = config.toggle {
         tracing::info!(key = %toggle.key, "toggle enabled");

@@ -91,7 +91,16 @@ impl PipelineRunner {
         let device_info = capture.device_info();
         let roi = Roi::new(0, 0, config.process.roi.width, config.process.roi.height)
             .centered_in(device_info.width, device_info.height)
-            .unwrap_or_else(|| Roi::new(0, 0, config.process.roi.width, config.process.roi.height));
+            .ok_or_else(|| {
+                DomainError::Configuration(format!(
+                    "ROI ({}x{}) exceeds display dimensions ({}x{})",
+                    config.process.roi.width,
+                    config.process.roi.height,
+                    device_info.width,
+                    device_info.height
+                ))
+            })?;
+        tracing::info!(x = roi.x, y = roi.y, w = roi.width, h = roi.height, "ROI");
 
         let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(5);
 
@@ -437,5 +446,109 @@ mod tests {
             .process_frame(&frame, &roi, &hsv)
             .expect("inline mock processing should succeed");
         assert!(!result.detected);
+    }
+
+    #[test]
+    fn pipeline_run_rejects_oversized_roi() {
+        struct MockSmallCapture;
+        impl CapturePort for MockSmallCapture {
+            fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
+                Ok(None)
+            }
+
+            fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+                Ok(None)
+            }
+
+            fn reinitialize(&mut self) -> DomainResult<()> {
+                Ok(())
+            }
+
+            fn device_info(&self) -> DeviceInfo {
+                DeviceInfo::new(200, 100, "mock-small".to_string())
+            }
+
+            fn supports_gpu_frame(&self) -> bool {
+                true
+            }
+        }
+
+        let input: Arc<dyn InputPort> = Arc::new(MockInput);
+        let config = test_config(); // ROI is 460x240, display is 200x100 → error
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let runner = PipelineRunner::new(
+            MockSmallCapture,
+            build_process_selector(),
+            MockComm,
+            input,
+            config,
+            metrics,
+            runtime_state,
+        );
+        let result = runner.run();
+        assert!(
+            matches!(result, Err(DomainError::Configuration(_))),
+            "expected Configuration error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn pipeline_run_accepts_exact_fit_roi() {
+        struct BoundedCapture {
+            remaining: usize,
+        }
+
+        impl CapturePort for BoundedCapture {
+            fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
+                if self.remaining == 0 {
+                    return Err(DomainError::Capture("done".to_string()));
+                }
+                self.remaining -= 1;
+                Ok(Some(Frame::new(vec![0, 0, 0, 255], 1, 1)))
+            }
+
+            fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+                Ok(None)
+            }
+
+            fn reinitialize(&mut self) -> DomainResult<()> {
+                Ok(())
+            }
+
+            fn device_info(&self) -> DeviceInfo {
+                DeviceInfo::new(460, 240, "mock-exact".to_string())
+            }
+
+            fn supports_gpu_frame(&self) -> bool {
+                true
+            }
+        }
+
+        let input: Arc<dyn InputPort> = Arc::new(MockInput);
+        let config = test_config(); // ROI 460x240, display 460x240 → exact fit → OK
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let runner = PipelineRunner::new(
+            BoundedCapture { remaining: 3 },
+            build_process_selector(),
+            MockComm,
+            input,
+            config,
+            metrics,
+            runtime_state,
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = runner.run();
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("pipeline should stop within 5 seconds");
+        assert!(
+            !matches!(result, Err(DomainError::Configuration(_))),
+            "ROI validation should pass; got Configuration error"
+        );
     }
 }
