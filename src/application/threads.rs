@@ -88,6 +88,34 @@ fn refresh_activation_window(
     *deadline = now.checked_add(active_window).or(Some(now));
 }
 
+#[inline]
+fn advance_stats_report_deadline(
+    mut next_report_at: Instant,
+    stats_interval: Duration,
+    now: Instant,
+) -> Instant {
+    while next_report_at <= now {
+        next_report_at += stats_interval;
+    }
+    next_report_at
+}
+
+#[inline]
+fn report_stats_if_due(
+    metrics: &PipelineMetrics,
+    next_report_at: &mut Instant,
+    stats_interval: Duration,
+) {
+    let now = Instant::now();
+    if now < *next_report_at {
+        return;
+    }
+
+    let snapshot = metrics.snapshot();
+    tracing::info!("{}", snapshot.display());
+    *next_report_at = advance_stats_report_deadline(*next_report_at, stats_interval, now);
+}
+
 pub struct ProcessThreadContext {
     pub runtime_state: Arc<RuntimeState>,
     pub config: ProcessConfig,
@@ -369,13 +397,16 @@ pub fn stats_thread(
     config: PipelineConfig,
 ) {
     let stats_interval = Duration::from_secs(config.stats_interval_sec as u64);
+    let mut next_report_at = Instant::now() + stats_interval;
+
     while !stop.load(Ordering::Relaxed) {
         let _active = runtime_state.is_active();
-        match stats_rx.recv_timeout(stats_interval) {
-            Ok(_stat) => {}
-            Err(RecvTimeoutError::Timeout) => {
-                let snapshot = metrics.snapshot();
-                tracing::info!("{}", snapshot.display());
+        report_stats_if_due(&metrics, &mut next_report_at, stats_interval);
+
+        let timeout = next_report_at.saturating_duration_since(Instant::now());
+        match stats_rx.recv_timeout(timeout) {
+            Ok(_) | Err(RecvTimeoutError::Timeout) => {
+                report_stats_if_due(&metrics, &mut next_report_at, stats_interval);
             }
             Err(RecvTimeoutError::Disconnected) => {
                 stop.store(true, Ordering::Relaxed);
@@ -1290,6 +1321,30 @@ mod tests {
             stop.load(Ordering::Relaxed),
             "stop should be set after stats channel disconnect"
         );
+    }
+
+    #[test]
+    fn advance_stats_report_deadline_moves_to_next_interval() {
+        let base = Instant::now();
+        let interval = Duration::from_millis(100);
+
+        let next = advance_stats_report_deadline(base + interval, interval, base + interval);
+
+        assert_eq!(next, base + (interval * 2));
+    }
+
+    #[test]
+    fn advance_stats_report_deadline_skips_missed_intervals() {
+        let base = Instant::now();
+        let interval = Duration::from_millis(100);
+
+        let next = advance_stats_report_deadline(
+            base + interval,
+            interval,
+            base + Duration::from_millis(350),
+        );
+
+        assert_eq!(next, base + Duration::from_millis(400));
     }
 
     #[test]
