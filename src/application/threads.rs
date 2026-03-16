@@ -88,11 +88,13 @@ pub fn capture_thread(
                 }
                 if !strategy.should_attempt(&recovery) {
                     tracing::error!("capture recovery retries exceeded; stopping capture thread");
+                    stop.store(true, Ordering::Relaxed);
                     break;
                 }
             }
             Err(error) => {
                 tracing::error!(%error, "non-recoverable capture error");
+                stop.store(true, Ordering::Relaxed);
                 break;
             }
         }
@@ -142,12 +144,16 @@ pub fn process_thread(
                     }
                     Err(error) => {
                         tracing::error!(%error, "non-recoverable process error");
+                        stop.store(true, Ordering::Relaxed);
                         break;
                     }
                 }
             }
             Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => {
+                stop.store(true, Ordering::Relaxed);
+                break;
+            }
         }
     }
 }
@@ -1045,5 +1051,95 @@ mod tests {
 
         stop.store(true, Ordering::Relaxed);
         handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn capture_thread_sets_stop_on_fatal_error() {
+        use crate::domain::error::DomainError;
+
+        struct FatalCapture;
+        impl CapturePort for FatalCapture {
+            fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
+                Err(DomainError::Capture("fatal".to_string()))
+            }
+            fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+                Ok(None)
+            }
+            fn reinitialize(&mut self) -> DomainResult<()> {
+                Ok(())
+            }
+            fn device_info(&self) -> DeviceInfo {
+                DeviceInfo::new(1920, 1080, "mock".to_string())
+            }
+        }
+
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, _rx) = bounded(1);
+        let roi = Roi::new(0, 0, 1, 1);
+        let capture_config = test_capture_config();
+
+        let stop_for_thread = Arc::clone(&stop);
+        let rs_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            capture_thread(
+                Box::new(FatalCapture),
+                tx,
+                metrics,
+                rs_for_thread,
+                stop_for_thread,
+                capture_config,
+                roi,
+            );
+        });
+
+        handle
+            .join()
+            .expect("capture thread should exit on fatal error");
+        assert!(
+            stop.load(Ordering::Relaxed),
+            "stop should be set after fatal capture error"
+        );
+    }
+
+    #[test]
+    fn process_thread_sets_stop_on_fatal_error() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (capture_tx, capture_rx) = bounded(1);
+        let (process_tx, _process_rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
+        let process = build_process_selector();
+        let process_config = test_process_config();
+
+        let stop_for_thread = Arc::clone(&stop);
+        let rs_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            process_thread(
+                process,
+                capture_rx,
+                process_tx,
+                stats_tx,
+                metrics,
+                stop_for_thread,
+                ProcessThreadContext {
+                    runtime_state: rs_for_thread,
+                    config: process_config,
+                },
+            );
+        });
+
+        // Drop the sender to trigger RecvTimeoutError::Disconnected
+        drop(capture_tx);
+
+        handle
+            .join()
+            .expect("process thread should exit on disconnect");
+        assert!(
+            stop.load(Ordering::Relaxed),
+            "stop should be set after capture channel disconnect"
+        );
     }
 }
