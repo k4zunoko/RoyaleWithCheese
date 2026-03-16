@@ -147,6 +147,7 @@ impl PipelineRunner {
         let hid_stop = Arc::clone(&stop);
         let hid_metrics = Arc::clone(&metrics);
         let hid_runtime_state = Arc::clone(&runtime_state);
+        let hid_input = Arc::clone(&input);
         let communication_config = config.communication.clone();
         let coordinate_transform_config = config.process.coordinate_transform.clone();
         let activation_config = config.activation.clone();
@@ -155,6 +156,7 @@ impl PipelineRunner {
             crate::application::threads::hid_thread(
                 comm,
                 process_rx,
+                hid_input,
                 hid_metrics,
                 hid_runtime_state,
                 hid_stop,

@@ -44,7 +44,8 @@ key = "insert"
 [debug]
 enabled = false
 
-# [activation]
-# # 検出座標が ROI 中心から max_distance_from_center (チェビシェフ距離) 以内の場合のみ有効化
-# max_distance_from_center = 15.0
-# active_window_ms = 500
+[activation]
+enabled = false
+# 検出座標が ROI 中心から max_distance_from_center (チェビシェフ距離) 以内の場合のみ有効化
+max_distance_from_center = 15.0
+active_window_ms = 500

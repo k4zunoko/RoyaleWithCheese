@@ -50,6 +50,44 @@ fn send_latest_only<T>(tx: &Sender<T>, item: T, metrics: &PipelineMetrics) {
     }
 }
 
+#[inline]
+fn activation_window_live(deadline: &mut Option<Instant>, now: Instant) -> bool {
+    match *deadline {
+        Some(current_deadline) if now < current_deadline => true,
+        Some(_) => {
+            *deadline = None;
+            false
+        }
+        None => false,
+    }
+}
+
+#[inline]
+fn detection_within_activation_range(
+    detection: &DetectionResult,
+    roi: &Roi,
+    activation: &ActivationConfig,
+) -> bool {
+    if !detection.detected {
+        return false;
+    }
+
+    let center_x = roi.width as f64 / 2.0;
+    let center_y = roi.height as f64 / 2.0;
+    let dx = detection.center_x as f64 - center_x;
+    let dy = detection.center_y as f64 - center_y;
+    dx.abs().max(dy.abs()) <= activation.max_distance_from_center
+}
+
+#[inline]
+fn refresh_activation_window(
+    deadline: &mut Option<Instant>,
+    active_window: Duration,
+    now: Instant,
+) {
+    *deadline = now.checked_add(active_window).or(Some(now));
+}
+
 pub struct ProcessThreadContext {
     pub runtime_state: Arc<RuntimeState>,
     pub config: ProcessConfig,
@@ -195,6 +233,7 @@ fn send_detection_report(
 pub fn hid_thread(
     mut comm: Box<dyn CommPort + 'static>,
     rx: Receiver<TimestampedDetection>,
+    input: Arc<dyn InputPort>,
     metrics: Arc<PipelineMetrics>,
     runtime_state: Arc<RuntimeState>,
     stop: Arc<AtomicBool>,
@@ -204,10 +243,10 @@ pub fn hid_thread(
     roi: Roi,
 ) {
     let hid_send_interval = Duration::from_millis(config.hid_send_interval_ms as u64);
+    let activation = activation.filter(|act| act.enabled);
     let mut last_detection: Option<DetectionResult> = None;
     let mut recovery = RecoveryState::new();
     let strategy = RecoveryStrategy::new(100, 3200, 5);
-    let mut activation_active = false;
     let mut activation_deadline: Option<Instant> = None;
 
     while !stop.load(Ordering::Relaxed) {
@@ -218,28 +257,19 @@ pub fn hid_thread(
                     continue;
                 }
 
-                // Activation gating - only applies when activation config is present
                 if let Some(ref act) = activation {
-                    let dx =
-                        (timestamped_detection.result.center_x as f64) - (roi.width as f64 / 2.0);
-                    let dy =
-                        (timestamped_detection.result.center_y as f64) - (roi.height as f64 / 2.0);
-                    let distance = dx.abs().max(dy.abs());
-                    if timestamped_detection.result.detected
-                        && distance <= act.max_distance_from_center
+                    let now = Instant::now();
+                    let left_click_pressed = input.is_key_pressed(VirtualKey::LeftButton);
+                    if detection_within_activation_range(&timestamped_detection.result, &roi, act)
+                        || left_click_pressed
                     {
-                        activation_active = true;
-                        activation_deadline =
-                            Some(Instant::now() + Duration::from_millis(act.active_window_ms));
+                        refresh_activation_window(
+                            &mut activation_deadline,
+                            Duration::from_millis(act.active_window_ms),
+                            now,
+                        );
                     }
-                    let is_activation_live = activation_deadline
-                        .map(|d| Instant::now() < d)
-                        .unwrap_or(false);
-                    if !is_activation_live {
-                        activation_active = false;
-                        continue;
-                    }
-                    if !activation_active {
+                    if !activation_window_live(&mut activation_deadline, now) {
                         continue;
                     }
                 }
@@ -285,18 +315,10 @@ pub fn hid_thread(
                     continue;
                 }
 
-                // Activation gating - only fire timeout sends while activation window is live
-                if activation.is_some() {
-                    let is_activation_live = activation_deadline
-                        .map(|d| Instant::now() < d)
-                        .unwrap_or(false);
-                    if !is_activation_live {
-                        activation_active = false;
-                        continue;
-                    }
-                    if !activation_active {
-                        continue;
-                    }
+                if activation.is_some()
+                    && !activation_window_live(&mut activation_deadline, Instant::now())
+                {
+                    continue;
                 }
 
                 match send_detection_report(
@@ -634,11 +656,13 @@ mod tests {
         let roi = Roi::new(0, 0, 460, 240);
 
         let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
         let runtime_state_for_thread = Arc::clone(&runtime_state);
         let handle = thread::spawn(move || {
             hid_thread(
                 comm,
                 rx,
+                input_for_thread,
                 metrics,
                 runtime_state_for_thread,
                 stop_for_thread,
@@ -690,19 +714,21 @@ mod tests {
             });
             let config = test_communication_config();
             let stop_for_thread = Arc::clone(&stop);
+            let input_for_thread = Arc::new(MockInput::always_released());
             let rs_for_thread = Arc::clone(&runtime_state);
             let handle = thread::spawn(move || {
                 hid_thread(
                     comm,
                     rx,
+                    input_for_thread,
                     metrics,
                     rs_for_thread,
                     stop_for_thread,
                     config,
                     CoordinateTransformConfig {
                         sensitivity,
-                        x_clip_limit: 0.0,
-                        y_clip_limit: 0.0,
+                        x_clip_limit: 255.0,
+                        y_clip_limit: 255.0,
                         dead_zone: 0.0,
                     },
                     None,
@@ -812,6 +838,13 @@ mod tests {
             }
         }
 
+        fn always_pressed() -> Self {
+            Self {
+                pressed: std::sync::Mutex::new(vec![true; 128]),
+                call_index: std::sync::Mutex::new(0),
+            }
+        }
+
         /// Returns true for the first `n` calls then false.
         fn press_for_n_calls(n: usize) -> Self {
             let values = (0..100).map(|i| i < n).collect();
@@ -904,11 +937,13 @@ mod tests {
         let roi = Roi::new(0, 0, 100, 100);
 
         let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
         let runtime_state_for_thread = Arc::clone(&runtime_state);
         let handle = thread::spawn(move || {
             hid_thread(
                 comm,
                 rx,
+                input_for_thread,
                 metrics,
                 runtime_state_for_thread,
                 stop_for_thread,
@@ -957,11 +992,13 @@ mod tests {
         let roi = Roi::new(0, 0, 100, 100);
 
         let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
         let runtime_state_for_thread = Arc::clone(&runtime_state);
         let handle = thread::spawn(move || {
             hid_thread(
                 comm,
                 rx,
+                input_for_thread,
                 metrics,
                 runtime_state_for_thread,
                 stop_for_thread,
@@ -973,6 +1010,7 @@ mod tests {
                     dead_zone: 0.0,
                 },
                 Some(ActivationConfig {
+                    enabled: true,
                     max_distance_from_center: 50.0,
                     active_window_ms: 500,
                 }),
@@ -1017,11 +1055,13 @@ mod tests {
         let roi = Roi::new(0, 0, 100, 100);
 
         let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
         let runtime_state_for_thread = Arc::clone(&runtime_state);
         let handle = thread::spawn(move || {
             hid_thread(
                 comm,
                 rx,
+                input_for_thread,
                 metrics,
                 runtime_state_for_thread,
                 stop_for_thread,
@@ -1033,6 +1073,7 @@ mod tests {
                     dead_zone: 0.0,
                 },
                 Some(ActivationConfig {
+                    enabled: true,
                     max_distance_from_center: 5.0,
                     active_window_ms: 200,
                 }),
@@ -1068,16 +1109,20 @@ mod tests {
         use crate::domain::error::DomainError;
 
         struct FatalCapture;
+
         impl CapturePort for FatalCapture {
             fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
                 Err(DomainError::Capture("fatal".to_string()))
             }
+
             fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
                 Ok(None)
             }
+
             fn reinitialize(&mut self) -> DomainResult<()> {
                 Ok(())
             }
+
             fn device_info(&self) -> DeviceInfo {
                 DeviceInfo::new(1920, 1080, "mock".to_string())
             }
@@ -1141,7 +1186,6 @@ mod tests {
             );
         });
 
-        // Drop the sender to trigger RecvTimeoutError::Disconnected
         drop(capture_tx);
 
         handle
@@ -1158,15 +1202,18 @@ mod tests {
         use crate::domain::error::DomainError;
 
         struct FailingComm;
+
         impl CommPort for FailingComm {
             fn send(&mut self, _data: &[u8]) -> DomainResult<()> {
                 Err(DomainError::Communication(
                     "device not connected".to_string(),
                 ))
             }
+
             fn reconnect(&mut self) -> DomainResult<()> {
                 Err(DomainError::Communication("reconnect failed".to_string()))
             }
+
             fn is_connected(&self) -> bool {
                 false
             }
@@ -1180,11 +1227,13 @@ mod tests {
         let roi = Roi::new(0, 0, 460, 240);
 
         let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
         let rs_for_thread = Arc::clone(&runtime_state);
         let handle = thread::spawn(move || {
             hid_thread(
                 Box::new(FailingComm),
                 rx,
+                input_for_thread,
                 metrics,
                 rs_for_thread,
                 stop_for_thread,
@@ -1200,7 +1249,6 @@ mod tests {
             );
         });
 
-        // Send a detection to trigger send_detection_report → FailingComm::send → fatal error
         tx.send(TimestampedDetection {
             result: DetectionResult::detected(10.0, 10.0, 0.5),
             captured_at: Instant::now(),
@@ -1233,7 +1281,6 @@ mod tests {
             stats_thread(stats_rx, metrics, rs_for_thread, stop_for_thread, config);
         });
 
-        // Drop the sender to trigger RecvTimeoutError::Disconnected
         drop(stats_tx);
 
         handle
@@ -1243,5 +1290,309 @@ mod tests {
             stop.load(Ordering::Relaxed),
             "stop should be set after stats channel disconnect"
         );
+    }
+
+    #[test]
+    fn test_activation_gate_outside_distance_with_left_click_sends() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::clone(&send_count),
+            notify_tx,
+        });
+        let config = CommunicationConfig {
+            vendor_id: 0x1234,
+            product_id: 0x5678,
+            hid_send_interval_ms: 200,
+        };
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_pressed());
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                input_for_thread,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                config,
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                Some(ActivationConfig {
+                    enabled: true,
+                    max_distance_from_center: 5.0,
+                    active_window_ms: 200,
+                }),
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(80.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(150))
+            .expect("left click should refresh activation and allow the send");
+        assert!(send_count.load(Ordering::Relaxed) >= 1);
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn test_activation_gate_disabled_always_sends() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::clone(&send_count),
+            notify_tx,
+        });
+        let config = test_communication_config();
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                input_for_thread,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                config,
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                Some(ActivationConfig {
+                    enabled: false,
+                    max_distance_from_center: 1.0,
+                    active_window_ms: 500,
+                }),
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(80.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("hid send should occur when activation is disabled");
+        assert!(send_count.load(Ordering::Relaxed) >= 1);
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn test_activation_window_extends_and_keeps_sending() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(4);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::clone(&send_count),
+            notify_tx,
+        });
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                input_for_thread,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                CommunicationConfig {
+                    vendor_id: 0x1234,
+                    product_id: 0x5678,
+                    hid_send_interval_ms: 20,
+                },
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                Some(ActivationConfig {
+                    enabled: true,
+                    max_distance_from_center: 15.0,
+                    active_window_ms: 120,
+                }),
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(60.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("first detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(120))
+            .expect("first hid send should occur");
+
+        thread::sleep(Duration::from_millis(60));
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(60.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("second detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(120))
+            .expect("second hid send should occur");
+
+        thread::sleep(Duration::from_millis(140));
+
+        let send_count_during_window = send_count.load(Ordering::Relaxed);
+        assert!(
+            send_count_during_window >= 3,
+            "extended activation window should keep timeout sends alive"
+        );
+
+        thread::sleep(Duration::from_millis(260));
+
+        while notify_rx.try_recv().is_ok() {}
+
+        let send_count_after_expiry = send_count.load(Ordering::Relaxed);
+
+        thread::sleep(Duration::from_millis(80));
+
+        assert_eq!(
+            send_count.load(Ordering::Relaxed),
+            send_count_after_expiry,
+            "timeout sends should stop after the extended activation window expires"
+        );
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn test_activation_outside_distance_does_not_extend_window() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(4);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::clone(&send_count),
+            notify_tx,
+        });
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                input_for_thread,
+                metrics,
+                runtime_state_for_thread,
+                stop_for_thread,
+                CommunicationConfig {
+                    vendor_id: 0x1234,
+                    product_id: 0x5678,
+                    hid_send_interval_ms: 20,
+                },
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                Some(ActivationConfig {
+                    enabled: true,
+                    max_distance_from_center: 15.0,
+                    active_window_ms: 120,
+                }),
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(60.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("first detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(120))
+            .expect("first hid send should occur");
+
+        thread::sleep(Duration::from_millis(60));
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(90.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("outside-threshold detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(120))
+            .expect("live activation window should still allow the outside-threshold send");
+
+        thread::sleep(Duration::from_millis(140));
+
+        while notify_rx.try_recv().is_ok() {}
+
+        let send_count_after_expiry = send_count.load(Ordering::Relaxed);
+
+        thread::sleep(Duration::from_millis(80));
+
+        assert_eq!(
+            send_count.load(Ordering::Relaxed),
+            send_count_after_expiry,
+            "outside-threshold detections should not extend the activation window"
+        );
+
+        assert!(send_count_after_expiry >= 2);
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
     }
 }
