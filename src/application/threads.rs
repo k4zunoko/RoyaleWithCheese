@@ -265,11 +265,13 @@ pub fn hid_thread(
                         }
                         if !strategy.should_attempt(&recovery) {
                             tracing::error!("hid recovery retries exceeded; stopping hid thread");
+                            stop.store(true, Ordering::Relaxed);
                             break;
                         }
                     }
                     Err(error) => {
                         tracing::error!(%error, "non-recoverable hid send error");
+                        stop.store(true, Ordering::Relaxed);
                         break;
                     }
                 }
@@ -318,16 +320,21 @@ pub fn hid_thread(
                         }
                         if !strategy.should_attempt(&recovery) {
                             tracing::error!("hid recovery retries exceeded; stopping hid thread");
+                            stop.store(true, Ordering::Relaxed);
                             break;
                         }
                     }
                     Err(error) => {
                         tracing::error!(%error, "non-recoverable hid send error");
+                        stop.store(true, Ordering::Relaxed);
                         break;
                     }
                 }
             }
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => {
+                stop.store(true, Ordering::Relaxed);
+                break;
+            }
         }
     }
 }
@@ -348,7 +355,10 @@ pub fn stats_thread(
                 let snapshot = metrics.snapshot();
                 tracing::info!("{}", snapshot.display());
             }
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => {
+                stop.store(true, Ordering::Relaxed);
+                break;
+            }
         }
     }
 }
@@ -385,10 +395,10 @@ mod tests {
     use crate::application::runtime_state::RuntimeState;
     use crate::domain::config::{
         CaptureConfig, CommunicationConfig, CoordinateTransformConfig, HsvRangeConfig,
-        ProcessConfig, ProcessMode, RoiConfig,
+        PipelineConfig, ProcessConfig, ProcessMode, RoiConfig,
     };
     use crate::domain::error::DomainResult;
-    use crate::domain::ports::CapturePort;
+    use crate::domain::ports::{CapturePort, CommPort};
     use crate::domain::types::{DeviceInfo, Frame, GpuFrame, HsvRange, ProcessorBackend, Roi};
     use crate::infrastructure::processing::cpu::ColorProcessAdapter;
     use crossbeam_channel::bounded;
@@ -1140,6 +1150,98 @@ mod tests {
         assert!(
             stop.load(Ordering::Relaxed),
             "stop should be set after capture channel disconnect"
+        );
+    }
+
+    #[test]
+    fn hid_thread_sets_stop_on_fatal_error() {
+        use crate::domain::error::DomainError;
+
+        struct FailingComm;
+        impl CommPort for FailingComm {
+            fn send(&mut self, _data: &[u8]) -> DomainResult<()> {
+                Err(DomainError::Communication(
+                    "device not connected".to_string(),
+                ))
+            }
+            fn reconnect(&mut self) -> DomainResult<()> {
+                Err(DomainError::Communication("reconnect failed".to_string()))
+            }
+            fn is_connected(&self) -> bool {
+                false
+            }
+        }
+
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let config = test_communication_config();
+        let roi = Roi::new(0, 0, 460, 240);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let rs_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                Box::new(FailingComm),
+                rx,
+                metrics,
+                rs_for_thread,
+                stop_for_thread,
+                config,
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                None,
+                roi,
+            );
+        });
+
+        // Send a detection to trigger send_detection_report → FailingComm::send → fatal error
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(10.0, 10.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("detection send should succeed");
+
+        handle
+            .join()
+            .expect("hid thread should exit on fatal error");
+        assert!(
+            stop.load(Ordering::Relaxed),
+            "stop should be set after fatal hid error"
+        );
+    }
+
+    #[test]
+    fn stats_thread_sets_stop_on_disconnect() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (stats_tx, stats_rx) = crossbeam_channel::unbounded();
+        let config = PipelineConfig {
+            stats_interval_sec: 10,
+        };
+
+        let stop_for_thread = Arc::clone(&stop);
+        let rs_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            stats_thread(stats_rx, metrics, rs_for_thread, stop_for_thread, config);
+        });
+
+        // Drop the sender to trigger RecvTimeoutError::Disconnected
+        drop(stats_tx);
+
+        handle
+            .join()
+            .expect("stats thread should exit on disconnect");
+        assert!(
+            stop.load(Ordering::Relaxed),
+            "stop should be set after stats channel disconnect"
         );
     }
 }
