@@ -2,6 +2,9 @@
 
 `C:\Programs\RoyaleWithCheese` で作業するコーディングエージェント向けのリポジトリガイダンス。
 
+## Review guidelines
+- Always review in Japanese
+
 ---
 
 ## スコープ
