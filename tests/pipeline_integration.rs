@@ -284,6 +284,55 @@ fn mock_pipeline_frame_drop_behavior_and_metrics_updated() {
 }
 
 #[test]
+fn hid_fatal_error_stops_pipeline() {
+    struct FailingComm;
+
+    impl CommPort for FailingComm {
+        fn send(&mut self, _data: &[u8]) -> DomainResult<()> {
+            Err(DomainError::Communication(
+                "device not connected".to_string(),
+            ))
+        }
+
+        fn reconnect(&mut self) -> DomainResult<()> {
+            Err(DomainError::Communication("reconnect failed".to_string()))
+        }
+
+        fn is_connected(&self) -> bool {
+            false
+        }
+    }
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let metrics = PipelineMetrics::new();
+    let input: Arc<dyn InputPort> = Arc::new(MockInput);
+    let runtime_state = Arc::new(RuntimeState::new());
+
+    let capture = StopAwareCapture::continuous(Arc::clone(&stop), bgra_frame(460, 240, 0, 255, 0));
+
+    let runner = PipelineRunner::new(
+        capture,
+        build_selector(),
+        FailingComm,
+        input,
+        test_config(),
+        Arc::clone(&metrics),
+        runtime_state,
+    );
+
+    let (done_tx, done_rx) = mpsc::channel();
+
+    thread::spawn(move || {
+        let result = runner.run();
+        let _ = done_tx.send(result);
+    });
+
+    let _ = done_rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("pipeline should stop within 2 seconds when hid returns fatal error");
+}
+
+#[test]
 #[ignore = "requires real display capture backend and HID device"]
 fn real_hardware_pipeline_smoke_test() {
     // Manual run example:
