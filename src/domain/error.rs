@@ -35,8 +35,9 @@ pub enum DomainError {
 
     /// デバイス一時不可（Recoverable）
     ///
-    /// ロック画面遷移やディスプレイモード変更など、
-    /// すぐに復旧可能なエラー。
+    /// ロック画面遷移やディスプレイモード変更、
+    /// HID デバイスの一時切断・未接続など、
+    /// 再初期化や再接続で復旧可能なエラー。
     #[error("Device temporarily unavailable")]
     DeviceNotAvailable,
 
@@ -76,7 +77,7 @@ impl DomainError {
     /// エラーが回復可能かどうかを判定
     ///
     /// 回復可能なエラー：
-    /// - DeviceNotAvailable: ロック画面やディスプレイモード変更は一時的
+    /// - DeviceNotAvailable: ロック画面やディスプレイモード変更、HID一時断は一時的
     ///
     /// それ以外は致命的エラー
     pub fn is_recoverable(&self) -> bool {

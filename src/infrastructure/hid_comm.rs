@@ -113,10 +113,10 @@ impl HidCommAdapter {
             })?;
 
             return api.open_path(c_path.as_c_str()).map_err(|err| {
-                DomainError::Communication(format!(
-                    "failed to reconnect HID device by path '{}': {}",
-                    path, err
-                ))
+                Self::map_hid_runtime_error(
+                    format!("failed to reconnect HID device by path '{path}'"),
+                    err,
+                )
             });
         }
 
@@ -124,19 +124,50 @@ impl HidCommAdapter {
             return api
                 .open_serial(self.vendor_id, self.product_id, serial)
                 .map_err(|err| {
-                    DomainError::Communication(format!(
-                        "failed to reconnect HID device (vid=0x{:04X}, pid=0x{:04X}, serial='{}'): {}",
-                        self.vendor_id, self.product_id, serial, err
-                    ))
+                    Self::map_hid_runtime_error(
+                        format!(
+                            "failed to reconnect HID device (vid=0x{:04X}, pid=0x{:04X}, serial='{}')",
+                            self.vendor_id, self.product_id, serial
+                        ),
+                        err,
+                    )
                 });
         }
 
         api.open(self.vendor_id, self.product_id).map_err(|err| {
-            DomainError::Communication(format!(
-                "failed to reconnect HID device (vid=0x{:04X}, pid=0x{:04X}): {}",
-                self.vendor_id, self.product_id, err
-            ))
+            Self::map_hid_runtime_error(
+                format!(
+                    "failed to reconnect HID device (vid=0x{:04X}, pid=0x{:04X})",
+                    self.vendor_id, self.product_id
+                ),
+                err,
+            )
         })
+    }
+
+    fn map_hid_runtime_error(context: String, err: hidapi::HidError) -> DomainError {
+        let message = err.to_string();
+        if Self::looks_like_device_unavailable(&message) {
+            return DomainError::DeviceNotAvailable;
+        }
+
+        DomainError::Communication(format!("{context}: {message}"))
+    }
+
+    fn looks_like_device_unavailable(message: &str) -> bool {
+        let normalized = message.to_ascii_lowercase();
+        [
+            "device not connected",
+            "not connected",
+            "not functioning",
+            "failed to read from\x20device",
+            "device unavailable",
+            "cannot open device",
+            "no such device",
+            "device has been disconnected",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle))
     }
 }
 
@@ -145,19 +176,19 @@ impl CommPort for HidCommAdapter {
         let device = match self.device.as_mut() {
             Some(device) => device,
             None => {
-                return Err(DomainError::Communication(format!(
-                    "HID device not connected (vid=0x{:04X}, pid=0x{:04X})",
-                    self.vendor_id, self.product_id
-                )));
+                return Err(DomainError::DeviceNotAvailable);
             }
         };
 
         if let Err(err) = device.write(data) {
             self.device = None;
-            return Err(DomainError::Communication(format!(
-                "HID write failed (vid=0x{:04X}, pid=0x{:04X}): {}",
-                self.vendor_id, self.product_id, err
-            )));
+            return Err(Self::map_hid_runtime_error(
+                format!(
+                    "HID write failed (vid=0x{:04X}, pid=0x{:04X})",
+                    self.vendor_id, self.product_id
+                ),
+                err,
+            ));
         }
 
         Ok(())
@@ -185,6 +216,7 @@ impl CommPort for HidCommAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hidapi::HidError;
 
     fn test_config() -> CommunicationConfig {
         CommunicationConfig {
@@ -213,7 +245,37 @@ mod tests {
             .send(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF])
             .expect_err("send should fail while disconnected");
 
-        assert!(matches!(err, DomainError::Communication(_)));
+        assert!(matches!(err, DomainError::DeviceNotAvailable));
+    }
+
+    #[test]
+    fn hid_runtime_error_maps_disconnect_message_to_device_not_available() {
+        let err = HidCommAdapter::map_hid_runtime_error(
+            "hid write failed".to_string(),
+            HidError::HidApiError {
+                message: "A device attached to the system is not functioning".to_string(),
+            },
+        );
+
+        assert!(matches!(err, DomainError::DeviceNotAvailable));
+    }
+
+    #[test]
+    fn hid_runtime_error_keeps_other_failures_as_communication() {
+        let err = HidCommAdapter::map_hid_runtime_error(
+            "hid write failed".to_string(),
+            HidError::HidApiError {
+                message: "access denied".to_string(),
+            },
+        );
+
+        match err {
+            DomainError::Communication(message) => {
+                assert!(message.contains("hid write failed"));
+                assert!(message.contains("access denied"));
+            }
+            other => panic!("expected communication error, got {other:?}"),
+        }
     }
 
     #[test]

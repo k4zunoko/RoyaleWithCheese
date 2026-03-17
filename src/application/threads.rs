@@ -499,6 +499,35 @@ mod tests {
         }
     }
 
+    struct RecoveringComm {
+        send_attempts: Arc<AtomicUsize>,
+        reconnect_count: Arc<AtomicUsize>,
+        notify_tx: std::sync::mpsc::Sender<()>,
+        connected: bool,
+    }
+
+    impl CommPort for RecoveringComm {
+        fn send(&mut self, _data: &[u8]) -> DomainResult<()> {
+            self.send_attempts.fetch_add(1, Ordering::Relaxed);
+            if !self.connected {
+                return Err(crate::domain::error::DomainError::DeviceNotAvailable);
+            }
+
+            let _ = self.notify_tx.send(());
+            Ok(())
+        }
+
+        fn reconnect(&mut self) -> DomainResult<()> {
+            self.reconnect_count.fetch_add(1, Ordering::Relaxed);
+            self.connected = true;
+            Ok(())
+        }
+
+        fn is_connected(&self) -> bool {
+            self.connected
+        }
+    }
+
     fn build_process_selector() -> ProcessSelector {
         let adapter = ColorProcessAdapter::new().expect("ColorProcessAdapter should initialize");
         ProcessSelector::FastColor(adapter)
@@ -804,6 +833,75 @@ mod tests {
             "timeout resend should not emit another stat event"
         );
         assert!(send_count.load(Ordering::Relaxed) >= 2);
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn hid_thread_recovers_after_device_not_available_error() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_attempts = Arc::new(AtomicUsize::new(0));
+        let reconnect_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecoveringComm {
+            send_attempts: Arc::clone(&send_attempts),
+            reconnect_count: Arc::clone(&reconnect_count),
+            notify_tx,
+            connected: false,
+        });
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                input_for_thread,
+                metrics,
+                stats_tx,
+                runtime_state_for_thread,
+                stop_for_thread,
+                CommunicationConfig {
+                    vendor_id: 0x1234,
+                    product_id: 0x5678,
+                    hid_send_interval_ms: 20,
+                },
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 255.0,
+                    y_clip_limit: 255.0,
+                    dead_zone: 0.0,
+                },
+                None,
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(60.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(500))
+            .expect("hid thread should recover and send after reconnect");
+
+        let snapshot = runtime_state.is_active();
+        assert!(
+            snapshot,
+            "runtime state should stay active during hid recovery"
+        );
+        assert_eq!(reconnect_count.load(Ordering::Relaxed), 1);
+        assert!(send_attempts.load(Ordering::Relaxed) >= 2);
 
         stop.store(true, Ordering::Relaxed);
         handle.join().expect("hid thread should exit");

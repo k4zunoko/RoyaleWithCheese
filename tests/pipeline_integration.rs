@@ -108,6 +108,33 @@ impl CommPort for CountingComm {
     }
 }
 
+struct RecoveringComm {
+    send_count: Arc<AtomicU64>,
+    reconnect_count: Arc<AtomicU64>,
+    connected: bool,
+}
+
+impl CommPort for RecoveringComm {
+    fn send(&mut self, _data: &[u8]) -> DomainResult<()> {
+        if !self.connected {
+            return Err(DomainError::DeviceNotAvailable);
+        }
+
+        self.send_count.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn reconnect(&mut self) -> DomainResult<()> {
+        self.reconnect_count.fetch_add(1, Ordering::Relaxed);
+        self.connected = true;
+        Ok(())
+    }
+
+    fn is_connected(&self) -> bool {
+        self.connected
+    }
+}
+
 fn build_selector() -> ProcessSelector {
     let adapter = ColorProcessAdapter::new().expect("ColorProcessAdapter should initialize");
     ProcessSelector::FastColor(adapter)
@@ -330,6 +357,54 @@ fn hid_fatal_error_stops_pipeline() {
     let _ = done_rx
         .recv_timeout(Duration::from_secs(2))
         .expect("pipeline should stop within 2 seconds when hid returns fatal error");
+}
+
+#[test]
+fn hid_recoverable_error_reconnects_and_pipeline_keeps_running() {
+    let stop = Arc::new(AtomicBool::new(false));
+    let metrics = PipelineMetrics::new();
+    let send_count = Arc::new(AtomicU64::new(0));
+    let reconnect_count = Arc::new(AtomicU64::new(0));
+    let input: Arc<dyn InputPort> = Arc::new(MockInput);
+    let runtime_state = Arc::new(RuntimeState::new());
+
+    let capture = StopAwareCapture::continuous(Arc::clone(&stop), bgra_frame(460, 240, 0, 255, 0));
+    let comm = RecoveringComm {
+        send_count: Arc::clone(&send_count),
+        reconnect_count: Arc::clone(&reconnect_count),
+        connected: false,
+    };
+
+    let runner = PipelineRunner::new(
+        capture,
+        build_selector(),
+        comm,
+        input,
+        test_config(),
+        Arc::clone(&metrics),
+        runtime_state,
+    );
+
+    run_pipeline_with_external_stop(runner, stop, 250);
+
+    assert!(
+        reconnect_count.load(Ordering::Relaxed) >= 1,
+        "expected at least one HID reconnect attempt"
+    );
+    assert!(
+        send_count.load(Ordering::Relaxed) > 0,
+        "expected HID sends to resume after reconnect"
+    );
+
+    let snapshot = metrics.snapshot();
+    assert!(
+        snapshot.hid_errors >= 1,
+        "expected initial HID error to be recorded"
+    );
+    assert!(
+        snapshot.hid_sends > 0,
+        "expected successful HID sends after recovery"
+    );
 }
 
 #[test]
