@@ -1,12 +1,12 @@
 //! Per-thread runner functions used by the pipeline.
 
 use crate::application::metrics::PipelineMetrics;
-use crate::application::pipeline::{StatData, TimestampedDetection, TimestampedFrame};
+use crate::application::pipeline::{TimestampedDetection, TimestampedFrame};
 use crate::application::recovery::{RecoveryState, RecoveryStrategy};
 use crate::application::runtime_state::RuntimeState;
+use crate::application::stats::StatData;
 use crate::domain::config::{
-    ActivationConfig, CaptureConfig, CommunicationConfig, CoordinateTransformConfig,
-    PipelineConfig, ProcessConfig,
+    ActivationConfig, CaptureConfig, CommunicationConfig, CoordinateTransformConfig, ProcessConfig,
 };
 use crate::domain::error::DomainResult;
 use crate::domain::ports::{
@@ -88,34 +88,6 @@ fn refresh_activation_window(
     *deadline = now.checked_add(active_window).or(Some(now));
 }
 
-#[inline]
-fn advance_stats_report_deadline(
-    mut next_report_at: Instant,
-    stats_interval: Duration,
-    now: Instant,
-) -> Instant {
-    while next_report_at <= now {
-        next_report_at += stats_interval;
-    }
-    next_report_at
-}
-
-#[inline]
-fn report_stats_if_due(
-    metrics: &PipelineMetrics,
-    next_report_at: &mut Instant,
-    stats_interval: Duration,
-) {
-    let now = Instant::now();
-    if now < *next_report_at {
-        return;
-    }
-
-    let snapshot = metrics.snapshot();
-    tracing::info!("{}", snapshot.display());
-    *next_report_at = advance_stats_report_deadline(*next_report_at, stats_interval, now);
-}
-
 pub struct ProcessThreadContext {
     pub runtime_state: Arc<RuntimeState>,
     pub config: ProcessConfig,
@@ -171,7 +143,6 @@ pub fn process_thread(
     mut process: ProcessSelector,
     rx: Receiver<TimestampedFrame>,
     tx: Sender<TimestampedDetection>,
-    stats_tx: Sender<StatData>,
     metrics: Arc<PipelineMetrics>,
     stop: Arc<AtomicBool>,
     context: ProcessThreadContext,
@@ -199,11 +170,6 @@ pub fn process_thread(
                             },
                             &metrics,
                         );
-                        let _ = stats_tx.try_send(StatData {
-                            captured_at: timestamped_frame.captured_at,
-                            processed_at,
-                            hid_sent_at: processed_at,
-                        });
                     }
                     Err(error) if error.is_recoverable() => {
                         tracing::warn!(%error, "recoverable process error");
@@ -234,7 +200,7 @@ fn send_detection_report(
     x_clip_limit: f64,
     y_clip_limit: f64,
     metrics: &PipelineMetrics,
-) -> DomainResult<()> {
+) -> DomainResult<Instant> {
     let t0 = Instant::now();
     let transformed = apply_coordinate_transform(
         detection,
@@ -248,7 +214,7 @@ fn send_detection_report(
     match comm.send(&report) {
         Ok(_) => {
             metrics.record_hid_send(t0.elapsed());
-            Ok(())
+            Ok(Instant::now())
         }
         Err(error) => {
             metrics.record_hid_error();
@@ -263,6 +229,7 @@ pub fn hid_thread(
     rx: Receiver<TimestampedDetection>,
     input: Arc<dyn InputPort>,
     metrics: Arc<PipelineMetrics>,
+    stats_tx: Sender<StatData>,
     runtime_state: Arc<RuntimeState>,
     stop: Arc<AtomicBool>,
     config: CommunicationConfig,
@@ -272,7 +239,7 @@ pub fn hid_thread(
 ) {
     let hid_send_interval = Duration::from_millis(config.hid_send_interval_ms as u64);
     let activation = activation.filter(|act| act.enabled);
-    let mut last_detection: Option<DetectionResult> = None;
+    let mut last_detection: Option<TimestampedDetection> = None;
     let mut recovery = RecoveryState::new();
     let strategy = RecoveryStrategy::new(100, 3200, 5);
     let mut activation_deadline: Option<Instant> = None;
@@ -280,7 +247,7 @@ pub fn hid_thread(
     while !stop.load(Ordering::Relaxed) {
         match rx.recv_timeout(hid_send_interval) {
             Ok(timestamped_detection) => {
-                last_detection = Some(timestamped_detection.result.clone());
+                last_detection = Some(timestamped_detection.clone());
                 if !runtime_state.is_active() {
                     continue;
                 }
@@ -312,7 +279,14 @@ pub fn hid_thread(
                     coordinate_transform.y_clip_limit,
                     &metrics,
                 ) {
-                    Ok(()) => strategy.record_success(&mut recovery),
+                    Ok(hid_sent_at) => {
+                        strategy.record_success(&mut recovery);
+                        let _ = stats_tx.try_send(StatData {
+                            captured_at: timestamped_detection.captured_at,
+                            processed_at: timestamped_detection.processed_at,
+                            hid_sent_at,
+                        });
+                    }
                     Err(error) if error.is_recoverable() => {
                         tracing::warn!(%error, "recoverable hid send error");
                         strategy.record_failure(&mut recovery);
@@ -335,10 +309,15 @@ pub fn hid_thread(
                 }
             }
             Err(RecvTimeoutError::Timeout) => {
-                let detection = last_detection
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_else(DetectionResult::not_detected);
+                let detection =
+                    last_detection
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| TimestampedDetection {
+                            result: DetectionResult::not_detected(),
+                            captured_at: Instant::now(),
+                            processed_at: Instant::now(),
+                        });
                 if !runtime_state.is_active() {
                     continue;
                 }
@@ -351,7 +330,7 @@ pub fn hid_thread(
 
                 match send_detection_report(
                     &mut *comm,
-                    &detection,
+                    &detection.result,
                     &roi,
                     coordinate_transform.sensitivity,
                     coordinate_transform.dead_zone,
@@ -359,7 +338,7 @@ pub fn hid_thread(
                     coordinate_transform.y_clip_limit,
                     &metrics,
                 ) {
-                    Ok(()) => strategy.record_success(&mut recovery),
+                    Ok(_) => strategy.record_success(&mut recovery),
                     Err(error) if error.is_recoverable() => {
                         tracing::warn!(%error, "recoverable hid send error");
                         strategy.record_failure(&mut recovery);
@@ -380,33 +359,6 @@ pub fn hid_thread(
                         break;
                     }
                 }
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                stop.store(true, Ordering::Relaxed);
-                break;
-            }
-        }
-    }
-}
-
-pub fn stats_thread(
-    stats_rx: Receiver<StatData>,
-    metrics: Arc<PipelineMetrics>,
-    runtime_state: Arc<RuntimeState>,
-    stop: Arc<AtomicBool>,
-    config: PipelineConfig,
-) {
-    let stats_interval = Duration::from_secs(config.stats_interval_sec as u64);
-    let mut next_report_at = Instant::now() + stats_interval;
-
-    while !stop.load(Ordering::Relaxed) {
-        let _active = runtime_state.is_active();
-        report_stats_if_due(&metrics, &mut next_report_at, stats_interval);
-
-        let timeout = next_report_at.saturating_duration_since(Instant::now());
-        match stats_rx.recv_timeout(timeout) {
-            Ok(_) | Err(RecvTimeoutError::Timeout) => {
-                report_stats_if_due(&metrics, &mut next_report_at, stats_interval);
             }
             Err(RecvTimeoutError::Disconnected) => {
                 stop.store(true, Ordering::Relaxed);
@@ -448,7 +400,7 @@ mod tests {
     use crate::application::runtime_state::RuntimeState;
     use crate::domain::config::{
         CaptureConfig, CommunicationConfig, CoordinateTransformConfig, HsvRangeConfig,
-        PipelineConfig, ProcessConfig, ProcessMode, RoiConfig,
+        ProcessConfig, ProcessMode, RoiConfig,
     };
     use crate::domain::error::DomainResult;
     use crate::domain::ports::{CapturePort, CommPort};
@@ -633,7 +585,6 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let (capture_tx, capture_rx) = bounded(1);
         let (process_tx, process_rx) = bounded(1);
-        let (stats_tx, _stats_rx) = bounded(4);
         let process = build_process_selector();
         let process_config = test_process_config();
 
@@ -644,7 +595,6 @@ mod tests {
                 process,
                 capture_rx,
                 process_tx,
-                stats_tx,
                 metrics,
                 stop_for_thread,
                 ProcessThreadContext {
@@ -677,6 +627,7 @@ mod tests {
         let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let send_count = Arc::new(AtomicUsize::new(0));
         let comm = Box::new(RecordingComm {
@@ -695,6 +646,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 runtime_state_for_thread,
                 stop_for_thread,
                 config,
@@ -726,6 +678,138 @@ mod tests {
     }
 
     #[test]
+    fn hid_thread_emits_stat_data_after_successful_send() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let (stats_tx, stats_rx) = bounded(4);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::new(AtomicUsize::new(0)),
+            notify_tx,
+        });
+        let config = test_communication_config();
+        let roi = Roi::new(0, 0, 460, 240);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                input_for_thread,
+                metrics,
+                stats_tx,
+                runtime_state_for_thread,
+                stop_for_thread,
+                config,
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                None,
+                roi,
+            )
+        });
+
+        let captured_at = Instant::now();
+        let processed_at = captured_at + Duration::from_millis(2);
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(10.0, 10.0, 0.5),
+            captured_at,
+            processed_at,
+        })
+        .expect("detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("hid send should be called");
+        let stat = stats_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("fresh HID send should emit stat data");
+        assert_eq!(stat.captured_at, captured_at);
+        assert_eq!(stat.processed_at, processed_at);
+        assert!(stat.hid_sent_at >= stat.processed_at);
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
+    fn hid_thread_timeout_resend_does_not_emit_additional_stat_data() {
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = bounded(1);
+        let (stats_tx, stats_rx) = bounded(4);
+        let (notify_tx, notify_rx) = std::sync::mpsc::channel();
+        let send_count = Arc::new(AtomicUsize::new(0));
+        let comm = Box::new(RecordingComm {
+            send_count: Arc::clone(&send_count),
+            notify_tx,
+        });
+        let roi = Roi::new(0, 0, 100, 100);
+
+        let stop_for_thread = Arc::clone(&stop);
+        let input_for_thread = Arc::new(MockInput::always_released());
+        let runtime_state_for_thread = Arc::clone(&runtime_state);
+        let handle = thread::spawn(move || {
+            hid_thread(
+                comm,
+                rx,
+                input_for_thread,
+                metrics,
+                stats_tx,
+                runtime_state_for_thread,
+                stop_for_thread,
+                CommunicationConfig {
+                    vendor_id: 0x1234,
+                    product_id: 0x5678,
+                    hid_send_interval_ms: 20,
+                },
+                CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 0.0,
+                    y_clip_limit: 0.0,
+                    dead_zone: 0.0,
+                },
+                None,
+                roi,
+            )
+        });
+
+        tx.send(TimestampedDetection {
+            result: DetectionResult::detected(60.0, 50.0, 0.5),
+            captured_at: Instant::now(),
+            processed_at: Instant::now(),
+        })
+        .expect("detection send should succeed");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(120))
+            .expect("fresh send should occur");
+        let _first_stat = stats_rx
+            .recv_timeout(Duration::from_millis(120))
+            .expect("fresh send should emit stat data");
+
+        notify_rx
+            .recv_timeout(Duration::from_millis(120))
+            .expect("timeout resend should occur");
+        assert!(
+            stats_rx.recv_timeout(Duration::from_millis(60)).is_err(),
+            "timeout resend should not emit another stat event"
+        );
+        assert!(send_count.load(Ordering::Relaxed) >= 2);
+
+        stop.store(true, Ordering::Relaxed);
+        handle.join().expect("hid thread should exit");
+    }
+
+    #[test]
     fn test_hid_thread_uses_config_sensitivity() {
         // roi center = (50, 50); detection at (60, 50) -> raw delta_x = 10.0
         // sensitivity=1.0 -> delta_x=10 -> report[3]=10
@@ -737,6 +821,7 @@ mod tests {
             let runtime_state = Arc::new(RuntimeState::new());
             let stop = Arc::new(AtomicBool::new(false));
             let (tx, rx) = bounded(1);
+            let (stats_tx, _stats_rx) = bounded(4);
             let (notify_tx, notify_rx) = std::sync::mpsc::channel();
             let last_data = Arc::new(std::sync::Mutex::new(Vec::new()));
             let comm = Box::new(DataCapturingComm {
@@ -753,6 +838,7 @@ mod tests {
                     rx,
                     input_for_thread,
                     metrics,
+                    stats_tx,
                     rs_for_thread,
                     stop_for_thread,
                     config,
@@ -958,6 +1044,7 @@ mod tests {
         let runtime_state = Arc::new(RuntimeState::new()); // starts active=true
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let send_count = Arc::new(AtomicUsize::new(0));
         let comm = Box::new(RecordingComm {
@@ -976,6 +1063,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 runtime_state_for_thread,
                 stop_for_thread,
                 config,
@@ -1012,6 +1100,7 @@ mod tests {
         let runtime_state = Arc::new(RuntimeState::new()); // starts active=true
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let send_count = Arc::new(AtomicUsize::new(0));
         let comm = Box::new(RecordingComm {
@@ -1031,6 +1120,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 runtime_state_for_thread,
                 stop_for_thread,
                 config,
@@ -1071,6 +1161,7 @@ mod tests {
         let runtime_state = Arc::new(RuntimeState::new()); // starts active=true
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let send_count = Arc::new(AtomicUsize::new(0));
         let comm = Box::new(RecordingComm {
@@ -1094,6 +1185,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 runtime_state_for_thread,
                 stop_for_thread,
                 config,
@@ -1196,7 +1288,6 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(false));
         let (capture_tx, capture_rx) = bounded(1);
         let (process_tx, _process_rx) = bounded(1);
-        let (stats_tx, _stats_rx) = bounded(4);
         let process = build_process_selector();
         let process_config = test_process_config();
 
@@ -1207,7 +1298,6 @@ mod tests {
                 process,
                 capture_rx,
                 process_tx,
-                stats_tx,
                 metrics,
                 stop_for_thread,
                 ProcessThreadContext {
@@ -1254,6 +1344,7 @@ mod tests {
         let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
         let config = test_communication_config();
         let roi = Roi::new(0, 0, 460, 240);
 
@@ -1266,6 +1357,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 rs_for_thread,
                 stop_for_thread,
                 config,
@@ -1297,62 +1389,12 @@ mod tests {
     }
 
     #[test]
-    fn stats_thread_sets_stop_on_disconnect() {
-        let metrics = PipelineMetrics::new();
-        let runtime_state = Arc::new(RuntimeState::new());
-        let stop = Arc::new(AtomicBool::new(false));
-        let (stats_tx, stats_rx) = crossbeam_channel::unbounded();
-        let config = PipelineConfig {
-            stats_interval_sec: 10,
-        };
-
-        let stop_for_thread = Arc::clone(&stop);
-        let rs_for_thread = Arc::clone(&runtime_state);
-        let handle = thread::spawn(move || {
-            stats_thread(stats_rx, metrics, rs_for_thread, stop_for_thread, config);
-        });
-
-        drop(stats_tx);
-
-        handle
-            .join()
-            .expect("stats thread should exit on disconnect");
-        assert!(
-            stop.load(Ordering::Relaxed),
-            "stop should be set after stats channel disconnect"
-        );
-    }
-
-    #[test]
-    fn advance_stats_report_deadline_moves_to_next_interval() {
-        let base = Instant::now();
-        let interval = Duration::from_millis(100);
-
-        let next = advance_stats_report_deadline(base + interval, interval, base + interval);
-
-        assert_eq!(next, base + (interval * 2));
-    }
-
-    #[test]
-    fn advance_stats_report_deadline_skips_missed_intervals() {
-        let base = Instant::now();
-        let interval = Duration::from_millis(100);
-
-        let next = advance_stats_report_deadline(
-            base + interval,
-            interval,
-            base + Duration::from_millis(350),
-        );
-
-        assert_eq!(next, base + Duration::from_millis(400));
-    }
-
-    #[test]
     fn test_activation_gate_outside_distance_with_left_click_sends() {
         let metrics = PipelineMetrics::new();
         let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let send_count = Arc::new(AtomicUsize::new(0));
         let comm = Box::new(RecordingComm {
@@ -1375,6 +1417,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 runtime_state_for_thread,
                 stop_for_thread,
                 config,
@@ -1415,6 +1458,7 @@ mod tests {
         let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(1);
+        let (stats_tx, _stats_rx) = bounded(4);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let send_count = Arc::new(AtomicUsize::new(0));
         let comm = Box::new(RecordingComm {
@@ -1433,6 +1477,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 runtime_state_for_thread,
                 stop_for_thread,
                 config,
@@ -1473,6 +1518,7 @@ mod tests {
         let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(4);
+        let (stats_tx, _stats_rx) = bounded(16);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let send_count = Arc::new(AtomicUsize::new(0));
         let comm = Box::new(RecordingComm {
@@ -1490,6 +1536,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 runtime_state_for_thread,
                 stop_for_thread,
                 CommunicationConfig {
@@ -1568,6 +1615,7 @@ mod tests {
         let runtime_state = Arc::new(RuntimeState::new());
         let stop = Arc::new(AtomicBool::new(false));
         let (tx, rx) = bounded(4);
+        let (stats_tx, _stats_rx) = bounded(16);
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let send_count = Arc::new(AtomicUsize::new(0));
         let comm = Box::new(RecordingComm {
@@ -1585,6 +1633,7 @@ mod tests {
                 rx,
                 input_for_thread,
                 metrics,
+                stats_tx,
                 runtime_state_for_thread,
                 stop_for_thread,
                 CommunicationConfig {

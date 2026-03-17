@@ -2,6 +2,7 @@
 
 use crate::application::metrics::PipelineMetrics;
 use crate::application::runtime_state::RuntimeState;
+use crate::application::stats::StatData;
 use crate::domain::config::AppConfig;
 use crate::domain::error::{DomainError, DomainResult};
 use crate::domain::ports::{CapturePort, CommPort, InputPort};
@@ -20,17 +21,11 @@ pub struct TimestampedFrame {
 }
 
 /// Detection message with capture + process timestamps.
+#[derive(Debug, Clone)]
 pub struct TimestampedDetection {
     pub result: DetectionResult,
     pub captured_at: Instant,
     pub processed_at: Instant,
-}
-
-/// Stats message carrying end-to-end stage timestamps.
-pub struct StatData {
-    pub captured_at: Instant,
-    pub processed_at: Instant,
-    pub hid_sent_at: Instant,
 }
 
 /// Orchestrates adapters, channels, and pipeline threads.
@@ -126,14 +121,12 @@ impl PipelineRunner {
         let process_stop = Arc::clone(&stop);
         let process_metrics = Arc::clone(&metrics);
         let process_runtime_state = Arc::clone(&runtime_state);
-        let process_stats_tx = stats_tx;
         let process_config = config.process.clone();
         handles.push(thread::spawn(move || {
             crate::application::threads::process_thread(
                 process,
                 capture_rx,
                 process_tx,
-                process_stats_tx,
                 process_metrics,
                 process_stop,
                 crate::application::threads::ProcessThreadContext {
@@ -148,6 +141,7 @@ impl PipelineRunner {
         let hid_metrics = Arc::clone(&metrics);
         let hid_runtime_state = Arc::clone(&runtime_state);
         let hid_input = Arc::clone(&input);
+        let hid_stats_tx = stats_tx;
         let communication_config = config.communication.clone();
         let coordinate_transform_config = config.process.coordinate_transform.clone();
         let activation_config = config.activation.clone();
@@ -158,6 +152,7 @@ impl PipelineRunner {
                 process_rx,
                 hid_input,
                 hid_metrics,
+                hid_stats_tx,
                 hid_runtime_state,
                 hid_stop,
                 communication_config,
@@ -173,7 +168,7 @@ impl PipelineRunner {
         let stats_runtime_state = Arc::clone(&runtime_state);
         let pipeline_config = config.pipeline.clone();
         handles.push(thread::spawn(move || {
-            crate::application::threads::stats_thread(
+            crate::application::stats::stats_thread(
                 stats_rx,
                 stats_metrics,
                 stats_runtime_state,

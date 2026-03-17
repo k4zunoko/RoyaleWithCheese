@@ -29,6 +29,8 @@ pub struct PipelineMetrics {
     pub process_latency_us: AtomicU64,
     /// HID通信レイテンシ累計（マイクロ秒）
     pub hid_latency_us: AtomicU64,
+    /// process->HID 送信完了までのレイテンシ累計（マイクロ秒）
+    pub process_to_hid_latency_us: AtomicU64,
     /// エンドツーエンドレイテンシ累計（マイクロ秒）
     pub total_latency_us: AtomicU64,
 }
@@ -48,6 +50,7 @@ impl PipelineMetrics {
             capture_latency_us: AtomicU64::new(0),
             process_latency_us: AtomicU64::new(0),
             hid_latency_us: AtomicU64::new(0),
+            process_to_hid_latency_us: AtomicU64::new(0),
             total_latency_us: AtomicU64::new(0),
         })
     }
@@ -87,9 +90,22 @@ impl PipelineMetrics {
         self.hid_sends.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// process->HID送信完了までのレイテンシを記録
+    pub fn record_process_to_hid_latency(&self, duration: Duration) {
+        let us = duration.as_micros() as u64;
+        self.process_to_hid_latency_us
+            .fetch_add(us, Ordering::Relaxed);
+    }
+
     /// HID通信エラーを記録
     pub fn record_hid_error(&self) {
         self.hid_errors.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// キャプチャ開始からHID送信完了までの総レイテンシを記録
+    pub fn record_total_latency(&self, duration: Duration) {
+        let us = duration.as_micros() as u64;
+        self.total_latency_us.fetch_add(us, Ordering::Relaxed);
     }
 
     /// 全メトリクスのスナップショットを取得
@@ -106,6 +122,7 @@ impl PipelineMetrics {
             capture_latency_us: self.capture_latency_us.load(Ordering::Relaxed),
             process_latency_us: self.process_latency_us.load(Ordering::Relaxed),
             hid_latency_us: self.hid_latency_us.load(Ordering::Relaxed),
+            process_to_hid_latency_us: self.process_to_hid_latency_us.load(Ordering::Relaxed),
             total_latency_us: self.total_latency_us.load(Ordering::Relaxed),
         }
     }
@@ -132,6 +149,8 @@ pub struct MetricsSnapshot {
     pub process_latency_us: u64,
     /// HID通信レイテンシ累計（マイクロ秒）
     pub hid_latency_us: u64,
+    /// process->HID送信完了までのレイテンシ累計（マイクロ秒）
+    pub process_to_hid_latency_us: u64,
     /// エンドツーエンドレイテンシ累計（マイクロ秒）
     pub total_latency_us: u64,
 }
@@ -143,7 +162,7 @@ impl MetricsSnapshot {
     /// 各メトリクス値を含む整形された文字列
     pub fn display(&self) -> String {
         format!(
-            "Frames: captured={}, dropped={}, processed={} | HID: sends={}, errors={} | Latency (us): capture={}, process={}, hid={}, total={}",
+            "Frames: captured={}, dropped={}, processed={} | HID: sends={}, errors={} | Latency (us): capture={}, process={}, hid={}, process_to_hid={}, total={}",
             self.frames_captured,
             self.frames_dropped,
             self.frames_processed,
@@ -152,6 +171,7 @@ impl MetricsSnapshot {
             self.capture_latency_us,
             self.process_latency_us,
             self.hid_latency_us,
+            self.process_to_hid_latency_us,
             self.total_latency_us,
         )
     }
@@ -176,6 +196,7 @@ mod tests {
         assert_eq!(snap.capture_latency_us, 0);
         assert_eq!(snap.process_latency_us, 0);
         assert_eq!(snap.hid_latency_us, 0);
+        assert_eq!(snap.process_to_hid_latency_us, 0);
         assert_eq!(snap.total_latency_us, 0);
     }
 
@@ -268,6 +289,7 @@ mod tests {
             capture_latency_us: 10000,
             process_latency_us: 5000,
             hid_latency_us: 500,
+            process_to_hid_latency_us: 4500,
             total_latency_us: 15500,
         };
 
@@ -275,6 +297,7 @@ mod tests {
         assert!(display_str.contains("captured=100"));
         assert!(display_str.contains("dropped=5"));
         assert!(display_str.contains("sends=90"));
+        assert!(display_str.contains("process_to_hid=4500"));
     }
 
     #[test]
@@ -316,6 +339,7 @@ mod tests {
         assert_eq!(snap.capture_latency_us, 4000); // 4000 threads * 1 us
         assert_eq!(snap.process_latency_us, 8000); // 4000 threads * 2 us
         assert_eq!(snap.hid_latency_us, 4000); // 4000 threads * 1 us
+        assert_eq!(snap.process_to_hid_latency_us, 0);
     }
 
     #[test]
@@ -366,5 +390,27 @@ mod tests {
 
         let snap = metrics.snapshot();
         assert_eq!(snap.capture_latency_us, 1_001_000);
+    }
+
+    #[test]
+    fn test_record_total_latency() {
+        let metrics = PipelineMetrics::new();
+
+        metrics.record_total_latency(Duration::from_micros(100));
+        metrics.record_total_latency(Duration::from_micros(250));
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.total_latency_us, 350);
+    }
+
+    #[test]
+    fn test_record_process_to_hid_latency() {
+        let metrics = PipelineMetrics::new();
+
+        metrics.record_process_to_hid_latency(Duration::from_micros(40));
+        metrics.record_process_to_hid_latency(Duration::from_micros(60));
+
+        let snap = metrics.snapshot();
+        assert_eq!(snap.process_to_hid_latency_us, 100);
     }
 }
