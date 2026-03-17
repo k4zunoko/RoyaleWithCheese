@@ -35,8 +35,9 @@ pub enum DomainError {
 
     /// デバイス一時不可（Recoverable）
     ///
-    /// ロック画面遷移やディスプレイモード変更など、
-    /// すぐに復旧可能なエラー。
+    /// ロック画面遷移やディスプレイモード変更、
+    /// HID デバイスの一時切断・未接続など、
+    /// 再初期化や再接続で復旧可能なエラー。
     #[error("Device temporarily unavailable")]
     DeviceNotAvailable,
 
@@ -50,21 +51,10 @@ pub enum DomainError {
     #[error("Initialization failed: {0}")]
     Initialization(String),
 
-    /// リソース不足エラー
-    #[allow(dead_code)] // 将来のエラーハンドリング用
-    #[error("Resource unavailable: {0}")]
-    ResourceUnavailable(String),
-
-    /// その他のエラー
-    #[allow(dead_code)] // 将来のエラーハンドリング用
-    #[error("Unexpected error: {0}")]
-    Other(String),
-
-    // GPU-specific errors
     /// GPU device/adapter not available
     ///
-    /// GPU が利用できないエラー。CPU での処理へのフォールバックが可能。
-    /// Recoverable エラーとして扱われます。
+    /// GPU が利用できない致命的エラー。
+    /// Non-recoverable — GPU 初期化失敗はパイプライン停止を引き起こします。
     #[error("GPU not available: {0}")]
     GpuNotAvailable(String),
 
@@ -83,5 +73,184 @@ pub enum DomainError {
     GpuTexture(String),
 }
 
+impl DomainError {
+    /// エラーが回復可能かどうかを判定
+    ///
+    /// 回復可能なエラー：
+    /// - DeviceNotAvailable: ロック画面やディスプレイモード変更、HID一時断は一時的
+    ///
+    /// それ以外は致命的エラー
+    pub fn is_recoverable(&self) -> bool {
+        matches!(self, DomainError::DeviceNotAvailable)
+    }
+}
+
 /// Domain層の統一Result型
 pub type DomainResult<T> = Result<T, DomainError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ========== Test: Error Display Messages ==========
+
+    #[test]
+    fn test_capture_error_display() {
+        let err = DomainError::Capture("test message".to_string());
+        assert_eq!(err.to_string(), "Capture error: test message");
+    }
+
+    #[test]
+    fn test_process_error_display() {
+        let err = DomainError::Process("test message".to_string());
+        assert_eq!(err.to_string(), "Process error: test message");
+    }
+
+    #[test]
+    fn test_communication_error_display() {
+        let err = DomainError::Communication("test message".to_string());
+        assert_eq!(err.to_string(), "Communication error: test message");
+    }
+
+    #[test]
+    fn test_configuration_error_display() {
+        let err = DomainError::Configuration("test message".to_string());
+        assert_eq!(err.to_string(), "Configuration error: test message");
+    }
+
+    #[test]
+    fn test_timeout_error_display() {
+        let err = DomainError::Timeout("test message".to_string());
+        assert_eq!(err.to_string(), "Operation timed out: test message");
+    }
+
+    #[test]
+    fn test_device_not_available_display() {
+        let err = DomainError::DeviceNotAvailable;
+        assert_eq!(err.to_string(), "Device temporarily unavailable");
+    }
+
+    #[test]
+    fn test_reinitialization_required_display() {
+        let err = DomainError::ReInitializationRequired;
+        assert_eq!(err.to_string(), "Reinitialization required");
+    }
+
+    #[test]
+    fn test_initialization_error_display() {
+        let err = DomainError::Initialization("test message".to_string());
+        assert_eq!(err.to_string(), "Initialization failed: test message");
+    }
+
+    #[test]
+    fn test_gpu_not_available_display() {
+        let err = DomainError::GpuNotAvailable("test message".to_string());
+        assert_eq!(err.to_string(), "GPU not available: test message");
+    }
+
+    #[test]
+    fn test_gpu_compute_error_display() {
+        let err = DomainError::GpuCompute("test message".to_string());
+        assert_eq!(err.to_string(), "GPU compute error: test message");
+    }
+
+    #[test]
+    fn test_gpu_texture_error_display() {
+        let err = DomainError::GpuTexture("test message".to_string());
+        assert_eq!(err.to_string(), "GPU texture error: test message");
+    }
+
+    // ========== Test: DomainResult Type Alias ==========
+
+    #[test]
+    fn test_domain_result_ok() {
+        let result: DomainResult<i32> = Ok(42);
+        match result {
+            Ok(value) => assert_eq!(value, 42),
+            Err(error) => panic!("expected Ok(42), got {error}"),
+        }
+    }
+
+    #[test]
+    fn test_domain_result_err() {
+        let result: DomainResult<i32> = Err(DomainError::Capture("test".to_string()));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_domain_result_string() {
+        let result: DomainResult<String> = Ok("hello".to_string());
+        match result {
+            Ok(value) => assert_eq!(value, "hello"),
+            Err(error) => panic!("expected Ok(hello), got {error}"),
+        }
+    }
+
+    // ========== Test: is_recoverable() ==========
+
+    #[test]
+    fn test_is_recoverable_device_not_available() {
+        let err = DomainError::DeviceNotAvailable;
+        assert!(err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_recoverable_gpu_not_available() {
+        let err = DomainError::GpuNotAvailable("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_capture() {
+        let err = DomainError::Capture("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_process() {
+        let err = DomainError::Process("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_communication() {
+        let err = DomainError::Communication("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_configuration() {
+        let err = DomainError::Configuration("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_timeout() {
+        let err = DomainError::Timeout("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_reinitialization_required() {
+        let err = DomainError::ReInitializationRequired;
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_initialization() {
+        let err = DomainError::Initialization("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_gpu_compute() {
+        let err = DomainError::GpuCompute("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+
+    #[test]
+    fn test_is_not_recoverable_gpu_texture() {
+        let err = DomainError::GpuTexture("test".to_string());
+        assert!(!err.is_recoverable());
+    }
+}

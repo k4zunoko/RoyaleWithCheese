@@ -1,13 +1,13 @@
-//! コア型定義
+//! Domain core types
 //!
-//! Domain層の中心となるデータ構造。
-//! すべての処理で共有される不変の型。
+//! Core data structures used throughout the entire pipeline.
+//! These types are shared across all layers and are immutable-first.
 
 use std::time::Instant;
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT;
 
-/// ピクセル座標で指定されるROI（Region of Interest）
+/// Region of Interest - pixel coordinates for capture and processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Roi {
     pub x: u32,
@@ -17,7 +17,7 @@ pub struct Roi {
 }
 
 impl Roi {
-    /// 新しいROIを作成
+    /// Create a new ROI
     pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
         Self {
             x,
@@ -27,21 +27,19 @@ impl Roi {
         }
     }
 
-    /// ROIの中心座標を取得
-    #[allow(dead_code)] // テストと将来の使用のため保持
+    /// Get the center coordinates of this ROI
     #[inline]
     pub fn center(&self) -> (u32, u32) {
         (self.x + self.width / 2, self.y + self.height / 2)
     }
 
-    /// ROIの面積を取得
-    #[allow(dead_code)] // テストと将来の使用のため保持
+    /// Get the area of this ROI
     #[inline]
     pub fn area(&self) -> u32 {
         self.width * self.height
     }
 
-    /// 指定された矩形との交差判定
+    /// Check if this ROI intersects with another ROI
     #[inline]
     pub fn intersects(&self, other: &Roi) -> bool {
         let self_x2 = self.x + self.width;
@@ -52,29 +50,16 @@ impl Roi {
         self.x < other_x2 && self_x2 > other.x && self.y < other_y2 && self_y2 > other.y
     }
 
-    /// 指定された画面サイズの中心に配置されるROIを作成
+    /// Create an ROI centered in the given screen dimensions
     ///
-    /// ROIのwidth/heightを保持したまま、x/yを画面中心に配置するように計算します。
-    ///
-    /// # Arguments
-    /// - `screen_width`: 画面幅（ピクセル）
-    /// - `screen_height`: 画面高さ（ピクセル）
-    ///
-    /// # Returns
-    /// - `Some(Roi)`: 画面中心に配置されたROI
-    /// - `None`: ROIサイズが画面サイズを超える場合
-    ///
-    /// # レイテンシへの影響
-    /// - 計算コスト: 減算2回、除算2回（~10ns未満）
-    /// - 毎フレーム実行しても影響は無視できるレベル（<0.01ms）
+    /// Returns None if the ROI is larger than the screen.
+    /// Formula: x = (screen_width - self.width) / 2
     #[inline]
-    pub fn centered_in(&self, screen_width: u32, screen_height: u32) -> Option<Self> {
-        // ROIサイズが画面サイズを超える場合はNone
+    pub fn centered_in(self, screen_width: u32, screen_height: u32) -> Option<Roi> {
         if self.width > screen_width || self.height > screen_height {
             return None;
         }
 
-        // 中心座標を計算
         let x = (screen_width - self.width) / 2;
         let y = (screen_height - self.height) / 2;
 
@@ -82,109 +67,62 @@ impl Roi {
     }
 }
 
-/// HSV色空間のレンジ（OpenCV準拠: H[0-180], S[0-255], V[0-255]）
+/// HSV color range (OpenCV convention: H[0-180], S[0-255], V[0-255])
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HsvRange {
-    pub h_min: u8,
-    pub h_max: u8,
-    pub s_min: u8,
-    pub s_max: u8,
-    pub v_min: u8,
-    pub v_max: u8,
+    pub h_low: u8,
+    pub h_high: u8,
+    pub s_low: u8,
+    pub s_high: u8,
+    pub v_low: u8,
+    pub v_high: u8,
 }
 
 impl HsvRange {
-    /// 新しいHSVレンジを作成
-    pub fn new(h_min: u8, h_max: u8, s_min: u8, s_max: u8, v_min: u8, v_max: u8) -> Self {
+    /// Create a new HSV range
+    pub fn new(h_low: u8, h_high: u8, s_low: u8, s_high: u8, v_low: u8, v_high: u8) -> Self {
         Self {
-            h_min,
-            h_max,
-            s_min,
-            s_max,
-            v_min,
-            v_max,
+            h_low,
+            h_high,
+            s_low,
+            s_high,
+            v_low,
+            v_high,
         }
-    }
-
-    /// OpenCVのScalar形式で下限を取得 [H, S, V]
-    #[allow(dead_code)] // テストと将来の使用のため保持
-    #[inline]
-    pub fn lower_bound(&self) -> [u8; 3] {
-        [self.h_min, self.s_min, self.v_min]
-    }
-
-    /// OpenCVのScalar形式で上限を取得 [H, S, V]
-    #[allow(dead_code)] // テストと将来の使用のため保持
-    #[inline]
-    pub fn upper_bound(&self) -> [u8; 3] {
-        [self.h_max, self.s_max, self.v_max]
     }
 }
 
-/// キャプチャされたフレームデータ
+/// CPU-resident frame data (BGR format, continuous memory)
 #[derive(Debug, Clone)]
 pub struct Frame {
-    /// フレーム取得時刻
-    #[allow(dead_code)] // Clone traitで使用されるが直接読み取りは未使用
-    pub timestamp: Instant,
-    /// フレーム画像データ（BGR形式、連続メモリ）
     pub data: Vec<u8>,
-    /// 画像の幅
     pub width: u32,
-    /// 画像の高さ
     pub height: u32,
-    /// 更新領域（DirtyRect）のリスト
+    pub timestamp: Instant,
     pub dirty_rects: Vec<Roi>,
 }
 
 impl Frame {
-    /// 新しいフレームを作成
-    #[allow(dead_code)] // Infrastructure層では直接構造体を作成するため未使用
+    /// Create a new frame
     pub fn new(data: Vec<u8>, width: u32, height: u32) -> Self {
         Self {
-            timestamp: Instant::now(),
             data,
             width,
             height,
+            timestamp: Instant::now(),
             dirty_rects: Vec::new(),
         }
     }
-
-    /// DirtyRectsを設定
-    #[allow(dead_code)] // テストと将来のDirtyRect最適化で使用
-    pub fn with_dirty_rects(mut self, rects: Vec<Roi>) -> Self {
-        self.dirty_rects = rects;
-        self
-    }
-
-    /// 指定されたROIとDirtyRectsが交差するか判定
-    #[allow(dead_code)] // 将来のDirtyRect最適化で使用予定
-    #[inline]
-    pub fn roi_is_dirty(&self, roi: &Roi) -> bool {
-        if self.dirty_rects.is_empty() {
-            // DirtyRect情報がない場合は常に更新されたと見なす
-            return true;
-        }
-        self.dirty_rects.iter().any(|rect| roi.intersects(rect))
-    }
 }
 
-/// GPU-resident texture frame for D3D11 compute processing.
-///
-/// Unlike `Frame` which holds CPU-accessible pixel data, `GpuFrame` holds
-/// a reference to a GPU texture that can be used directly in compute shaders.
+/// GPU-resident texture frame for D3D11 compute processing
 #[derive(Debug)]
 pub struct GpuFrame {
-    /// D3D11 texture reference (None if not available)
-    texture: Option<ID3D11Texture2D>,
-    /// Texture width in pixels
-    width: u32,
-    /// Texture height in pixels
-    height: u32,
-    /// Pixel format (e.g., DXGI_FORMAT_B8G8R8A8_UNORM)
-    format: DXGI_FORMAT,
-    /// Capture timestamp
-    timestamp: Instant,
+    pub texture: Option<ID3D11Texture2D>,
+    pub width: u32,
+    pub height: u32,
+    pub format: DXGI_FORMAT,
+    pub timestamp: Instant,
 }
 
 impl GpuFrame {
@@ -203,51 +141,19 @@ impl GpuFrame {
             timestamp: Instant::now(),
         }
     }
-
-    /// Get reference to the D3D11 texture (if available)
-    pub fn texture(&self) -> Option<&ID3D11Texture2D> {
-        self.texture.as_ref()
-    }
-
-    /// Get texture width in pixels
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-
-    /// Get texture height in pixels
-    pub fn height(&self) -> u32 {
-        self.height
-    }
-
-    /// Get pixel format
-    pub fn format(&self) -> DXGI_FORMAT {
-        self.format
-    }
-
-    /// Get capture timestamp
-    pub fn timestamp(&self) -> Instant {
-        self.timestamp
-    }
 }
 
-/// バウンディングボックス（外接矩形）
-///
-/// BoundingBox検出メソッド使用時に検出対象の矩形情報を保持します。
-/// 座標はROI内の相対座標です。
+/// Bounding box with float coordinates
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoundingBox {
-    /// 矩形の左上隅X座標
     pub x: f32,
-    /// 矩形の左上隅Y座標
     pub y: f32,
-    /// 矩形の幅
     pub width: f32,
-    /// 矩形の高さ
     pub height: f32,
 }
 
 impl BoundingBox {
-    /// 新しいバウンディングボックスを作成
+    /// Create a new bounding box
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
         Self {
             x,
@@ -256,111 +162,129 @@ impl BoundingBox {
             height,
         }
     }
-
-    /// 矩形の中心座標を取得
-    #[allow(dead_code)] // テストと将来の使用のため保持
-    #[inline]
-    pub fn center(&self) -> (f32, f32) {
-        (self.x + self.width / 2.0, self.y + self.height / 2.0)
-    }
-
-    /// 矩形の面積を取得
-    #[allow(dead_code)] // 将来的に使用予定
-    #[inline]
-    pub fn area(&self) -> f32 {
-        self.width * self.height
-    }
 }
 
-/// 色検知の結果
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Result of object detection
+#[derive(Debug, Clone)]
 pub struct DetectionResult {
-    /// 検出時刻
-    pub timestamp: Instant,
-    /// 検出された重心X座標（ROI内の相対座標）
-    pub center_x: f32,
-    /// 検出された重心Y座標（ROI内の相対座標）
-    pub center_y: f32,
-    /// 検出された領域の面積（ピクセル数）
-    pub coverage: u32,
-    /// 検出フラグ（true: 検出あり, false: 検出なし）
     pub detected: bool,
-    /// バウンディングボックス情報（BoundingBox検出メソッド使用時のみ有効）
+    pub center_x: f32,
+    pub center_y: f32,
+    pub coverage: f32,
     pub bounding_box: Option<BoundingBox>,
 }
 
 impl DetectionResult {
-    /// 検出なしの結果を作成
-    pub fn none() -> Self {
+    /// Create a "not detected" result
+    pub fn not_detected() -> Self {
         Self {
-            timestamp: Instant::now(),
+            detected: false,
             center_x: 0.0,
             center_y: 0.0,
-            coverage: 0,
-            detected: false,
+            coverage: 0.0,
             bounding_box: None,
         }
     }
 
-    /// 検出ありの結果を作成
-    #[allow(dead_code)] // テストで使用
-    pub fn some(center_x: f32, center_y: f32, coverage: u32) -> Self {
+    /// Create a detection result with coordinates
+    pub fn detected(center_x: f32, center_y: f32, coverage: f32) -> Self {
         Self {
-            timestamp: Instant::now(),
+            detected: true,
             center_x,
             center_y,
             coverage,
-            detected: true,
             bounding_box: None,
-        }
-    }
-
-    /// 検出ありの結果をバウンディングボックス付きで作成
-    pub fn with_bounding_box(
-        center_x: f32,
-        center_y: f32,
-        coverage: u32,
-        bbox: BoundingBox,
-    ) -> Self {
-        Self {
-            timestamp: Instant::now(),
-            center_x,
-            center_y,
-            coverage,
-            detected: true,
-            bounding_box: Some(bbox),
         }
     }
 }
 
-/// 変換後の座標（感度・クリッピング・デッドゾーン適用済み）
-///
-/// ROI中心からの相対座標（Δx, Δy）を表します。
-/// HIDデバイスへの相対移動量として使用されます。
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Transformed coordinates (delta from expected center)
+#[derive(Debug, Clone, Copy)]
 pub struct TransformedCoordinates {
-    /// ROI中心からの相対X座標（ピクセル、±値）
-    pub x: f32,
-    /// ROI中心からの相対Y座標（ピクセル、±値）
-    pub y: f32,
-    /// 検出フラグ
+    pub delta_x: f64,
+    pub delta_y: f64,
     pub detected: bool,
 }
 
 impl TransformedCoordinates {
-    /// 新しい変換座標を作成
-    pub fn new(x: f32, y: f32, detected: bool) -> Self {
-        Self { x, y, detected }
+    /// Create new transformed coordinates
+    pub fn new(delta_x: f64, delta_y: f64, detected: bool) -> Self {
+        Self {
+            delta_x,
+            delta_y,
+            detected,
+        }
     }
 }
 
-/// 処理バックエンドの種類
+/// Device display information
+#[derive(Debug, Clone)]
+pub struct DeviceInfo {
+    pub width: u32,
+    pub height: u32,
+    pub name: String,
+}
+
+impl DeviceInfo {
+    /// Create new device info
+    pub fn new(width: u32, height: u32, name: String) -> Self {
+        Self {
+            width,
+            height,
+            name,
+        }
+    }
+}
+
+/// Processor backend selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessorBackend {
-    /// CPU-based processing (OpenCV)
     Cpu,
-    /// GPU-based processing (D3D11 Compute Shaders)
     Gpu,
+}
+
+/// Input state (mouse/keyboard buttons)
+#[derive(Debug, Clone, Default)]
+pub struct InputState {
+    pub mouse_left: bool,
+    pub mouse_right: bool,
+}
+
+/// Virtual key codes for HID output
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VirtualKey {
+    Insert,
+    LeftButton,
+    RightButton,
+    LeftControl,
+    LeftAlt,
+}
+
+impl VirtualKey {
+    /// Convert to Windows virtual key code (u16)
+    pub fn to_vk_code(&self) -> u16 {
+        match self {
+            VirtualKey::Insert => 0x2D,
+            VirtualKey::LeftButton => 0x01,
+            VirtualKey::RightButton => 0x02,
+            VirtualKey::LeftControl => 0xA2,
+            VirtualKey::LeftAlt => 0xA4,
+        }
+    }
+
+    /// Convert a config string to a VirtualKey variant (case-insensitive).
+    ///
+    /// Returns `None` for unrecognized strings.
+    pub fn from_config_str(s: &str) -> Option<VirtualKey> {
+        match s.to_ascii_lowercase().as_str() {
+            "insert" => Some(VirtualKey::Insert),
+            "left_button" => Some(VirtualKey::LeftButton),
+            "right_button" => Some(VirtualKey::RightButton),
+            "left_control" => Some(VirtualKey::LeftControl),
+            "left_alt" => Some(VirtualKey::LeftAlt),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -368,135 +292,240 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_roi_center() {
-        let roi = Roi::new(100, 200, 50, 60);
-        assert_eq!(roi.center(), (125, 230));
+    fn roi_centered_in_standard() {
+        let roi = Roi::new(0, 0, 200, 200);
+        let result = roi.centered_in(1920, 1080);
+        assert_eq!(
+            result,
+            Some(Roi {
+                x: 860,
+                y: 440,
+                width: 200,
+                height: 200
+            })
+        );
     }
 
     #[test]
-    fn test_roi_area() {
+    fn roi_centered_in_roi_larger_than_screen() {
+        let roi = Roi::new(0, 0, 200, 200);
+        let result = roi.centered_in(100, 100);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn roi_centered_in_roi_wider_than_screen() {
+        let roi = Roi::new(0, 0, 200, 100);
+        let result = roi.centered_in(100, 500);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn roi_centered_in_roi_taller_than_screen() {
         let roi = Roi::new(0, 0, 100, 200);
-        assert_eq!(roi.area(), 20000);
+        let result = roi.centered_in(500, 100);
+        assert_eq!(result, None);
     }
 
     #[test]
-    fn test_roi_intersects() {
-        let roi1 = Roi::new(10, 10, 50, 50);
-        let roi2 = Roi::new(40, 40, 50, 50);
-        let roi3 = Roi::new(100, 100, 50, 50);
+    fn roi_area() {
+        let roi = Roi::new(10, 20, 300, 400);
+        assert_eq!(roi.area(), 120_000);
+    }
 
+    #[test]
+    fn roi_center() {
+        let roi = Roi::new(100, 200, 80, 60);
+        assert_eq!(roi.center(), (140, 230));
+    }
+
+    #[test]
+    fn roi_intersects_overlapping() {
+        let roi1 = Roi::new(0, 0, 100, 100);
+        let roi2 = Roi::new(50, 50, 100, 100);
         assert!(roi1.intersects(&roi2));
         assert!(roi2.intersects(&roi1));
-        assert!(!roi1.intersects(&roi3));
     }
 
     #[test]
-    fn test_roi_centered_in_normal() {
-        // 1920x1080画面の中心に960x540のROI
-        let roi = Roi::new(0, 0, 960, 540); // x, yは無視される
-        let centered = roi.centered_in(1920, 1080).unwrap();
-        assert_eq!(centered.x, 480); // (1920 - 960) / 2
-        assert_eq!(centered.y, 270); // (1080 - 540) / 2
-        assert_eq!(centered.width, 960);
-        assert_eq!(centered.height, 540);
+    fn roi_intersects_non_overlapping_horizontal() {
+        let roi1 = Roi::new(0, 0, 100, 100);
+        let roi2 = Roi::new(100, 0, 100, 100);
+        assert!(!roi1.intersects(&roi2));
+        assert!(!roi2.intersects(&roi1));
     }
 
     #[test]
-    fn test_roi_centered_in_exact_size() {
-        // 画面サイズと同じROI
-        let roi = Roi::new(0, 0, 1920, 1080);
-        let centered = roi.centered_in(1920, 1080).unwrap();
-        assert_eq!(centered.x, 0);
-        assert_eq!(centered.y, 0);
-        assert_eq!(centered.width, 1920);
-        assert_eq!(centered.height, 1080);
+    fn roi_intersects_non_overlapping_vertical() {
+        let roi1 = Roi::new(0, 0, 100, 100);
+        let roi2 = Roi::new(0, 100, 100, 100);
+        assert!(!roi1.intersects(&roi2));
+        assert!(!roi2.intersects(&roi1));
     }
 
     #[test]
-    fn test_roi_centered_in_width_exceeds() {
-        // ROI幅が画面幅を超える場合はNone
-        let roi = Roi::new(0, 0, 2000, 540);
-        assert!(roi.centered_in(1920, 1080).is_none());
+    fn roi_intersects_diagonal() {
+        let roi1 = Roi::new(0, 0, 100, 100);
+        let roi2 = Roi::new(80, 80, 100, 100);
+        assert!(roi1.intersects(&roi2));
     }
 
     #[test]
-    fn test_roi_centered_in_height_exceeds() {
-        // ROI高さが画面高さを超える場合はNone
-        let roi = Roi::new(0, 0, 960, 1200);
-        assert!(roi.centered_in(1920, 1080).is_none());
+    fn roi_intersects_touching_edge_no_overlap() {
+        let roi1 = Roi::new(0, 0, 100, 100);
+        let roi2 = Roi::new(100, 100, 100, 100);
+        assert!(!roi1.intersects(&roi2));
     }
 
     #[test]
-    fn test_roi_centered_in_different_resolutions() {
-        // 異なる解像度で同じROIサイズを使用
-        let roi = Roi::new(0, 0, 460, 240);
-
-        // 1920x1080
-        let centered_1080 = roi.centered_in(1920, 1080).unwrap();
-        assert_eq!(centered_1080.x, 730); // (1920 - 460) / 2
-        assert_eq!(centered_1080.y, 420); // (1080 - 240) / 2
-
-        // 2560x1440
-        let centered_1440 = roi.centered_in(2560, 1440).unwrap();
-        assert_eq!(centered_1440.x, 1050); // (2560 - 460) / 2
-        assert_eq!(centered_1440.y, 600); // (1440 - 240) / 2
+    fn roi_new() {
+        let roi = Roi::new(10, 20, 300, 400);
+        assert_eq!(roi.x, 10);
+        assert_eq!(roi.y, 20);
+        assert_eq!(roi.width, 300);
+        assert_eq!(roi.height, 400);
     }
 
     #[test]
-    fn test_hsv_range_bounds() {
-        let range = HsvRange::new(25, 45, 80, 255, 80, 255);
-        assert_eq!(range.lower_bound(), [25, 80, 80]);
-        assert_eq!(range.upper_bound(), [45, 255, 255]);
+    fn hsv_range_new() {
+        let range = HsvRange::new(0, 180, 50, 255, 100, 255);
+        assert_eq!(range.h_low, 0);
+        assert_eq!(range.h_high, 180);
+        assert_eq!(range.s_low, 50);
+        assert_eq!(range.s_high, 255);
+        assert_eq!(range.v_low, 100);
+        assert_eq!(range.v_high, 255);
     }
 
     #[test]
-    fn test_frame_roi_is_dirty() {
-        let frame = Frame::new(vec![0; 1920 * 1080 * 3], 1920, 1080)
-            .with_dirty_rects(vec![Roi::new(100, 100, 200, 200)]);
-
-        let roi_dirty = Roi::new(150, 150, 100, 100);
-        let roi_clean = Roi::new(500, 500, 100, 100);
-
-        assert!(frame.roi_is_dirty(&roi_dirty));
-        assert!(!frame.roi_is_dirty(&roi_clean));
+    fn frame_new() {
+        let data = vec![1, 2, 3, 4];
+        let frame = Frame::new(data.clone(), 2, 2);
+        assert_eq!(frame.data, data);
+        assert_eq!(frame.width, 2);
+        assert_eq!(frame.height, 2);
+        assert_eq!(frame.dirty_rects.len(), 0);
     }
 
     #[test]
-    fn test_detection_result_none() {
-        let result = DetectionResult::none();
+    fn bounding_box_new() {
+        let bbox = BoundingBox::new(10.5, 20.3, 100.0, 200.0);
+        assert_eq!(bbox.x, 10.5);
+        assert_eq!(bbox.y, 20.3);
+        assert_eq!(bbox.width, 100.0);
+        assert_eq!(bbox.height, 200.0);
+    }
+
+    #[test]
+    fn detection_result_not_detected() {
+        let result = DetectionResult::not_detected();
         assert!(!result.detected);
-        assert_eq!(result.coverage, 0);
+        assert_eq!(result.center_x, 0.0);
+        assert_eq!(result.center_y, 0.0);
+        assert_eq!(result.coverage, 0.0);
+        assert!(result.bounding_box.is_none());
     }
 
     #[test]
-    fn test_detection_result_some() {
-        let result = DetectionResult::some(100.5, 200.3, 1500);
+    fn detection_result_detected() {
+        let result = DetectionResult::detected(500.5, 600.3, 0.75);
         assert!(result.detected);
-        assert_eq!(result.center_x, 100.5);
-        assert_eq!(result.center_y, 200.3);
-        assert_eq!(result.coverage, 1500);
+        assert_eq!(result.center_x, 500.5);
+        assert_eq!(result.center_y, 600.3);
+        assert_eq!(result.coverage, 0.75);
+        assert!(result.bounding_box.is_none());
     }
 
     #[test]
-    fn test_gpu_frame_construction() {
-        // Test that GpuFrame can be constructed with required fields
-        // Use Option<ID3D11Texture2D> as None for testing without actual GPU
-        let frame = GpuFrame::new(None, 1920, 1080, Default::default());
-        assert_eq!(frame.width(), 1920);
-        assert_eq!(frame.height(), 1080);
-        assert!(frame.texture().is_none());
+    fn transformed_coordinates_new() {
+        let tc = TransformedCoordinates::new(1.5, -2.3, true);
+        assert_eq!(tc.delta_x, 1.5);
+        assert_eq!(tc.delta_y, -2.3);
+        assert!(tc.detected);
     }
 
     #[test]
-    fn test_gpu_frame_field_accessors() {
-        // Test width, height, format accessors
-        let frame = GpuFrame::new(None, 640, 480, Default::default());
-        assert_eq!(frame.width(), 640);
-        assert_eq!(frame.height(), 480);
-        assert!(frame.texture().is_none());
+    fn device_info_new() {
+        let info = DeviceInfo::new(1920, 1080, "Primary Display".to_string());
+        assert_eq!(info.width, 1920);
+        assert_eq!(info.height, 1080);
+        assert_eq!(info.name, "Primary Display");
+    }
 
-        // Verify timestamp is set (just check it exists and is not zero)
-        let ts = frame.timestamp();
-        assert!(ts.elapsed().as_millis() < 1000); // Should be very recent
+    #[test]
+    fn processor_backend_equality() {
+        assert_eq!(ProcessorBackend::Cpu, ProcessorBackend::Cpu);
+        assert_eq!(ProcessorBackend::Gpu, ProcessorBackend::Gpu);
+        assert_ne!(ProcessorBackend::Cpu, ProcessorBackend::Gpu);
+    }
+
+    #[test]
+    fn input_state_default() {
+        let state = InputState::default();
+        assert!(!state.mouse_left);
+        assert!(!state.mouse_right);
+    }
+
+    #[test]
+    fn virtual_key_to_vk_code() {
+        assert_eq!(VirtualKey::Insert.to_vk_code(), 0x2D);
+        assert_eq!(VirtualKey::LeftButton.to_vk_code(), 0x01);
+        assert_eq!(VirtualKey::RightButton.to_vk_code(), 0x02);
+        assert_eq!(VirtualKey::LeftControl.to_vk_code(), 0xA2);
+        assert_eq!(VirtualKey::LeftAlt.to_vk_code(), 0xA4);
+    }
+
+    #[test]
+    fn virtual_key_equality() {
+        assert_eq!(VirtualKey::Insert, VirtualKey::Insert);
+        assert_ne!(VirtualKey::Insert, VirtualKey::LeftButton);
+    }
+
+    #[test]
+    fn virtual_key_from_config_str() {
+        // Test all 5 variants convert correctly
+        assert_eq!(
+            VirtualKey::from_config_str("insert"),
+            Some(VirtualKey::Insert)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("left_button"),
+            Some(VirtualKey::LeftButton)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("right_button"),
+            Some(VirtualKey::RightButton)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("left_control"),
+            Some(VirtualKey::LeftControl)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("left_alt"),
+            Some(VirtualKey::LeftAlt)
+        );
+
+        // Test case-insensitivity
+        assert_eq!(
+            VirtualKey::from_config_str("INSERT"),
+            Some(VirtualKey::Insert)
+        );
+        assert_eq!(
+            VirtualKey::from_config_str("LEFT_BUTTON"),
+            Some(VirtualKey::LeftButton)
+        );
+        assert_eq!(VirtualKey::from_config_str("RIGHT_CONTROL"), None); // Unknown variant
+
+        // Test unknown returns None
+        assert_eq!(VirtualKey::from_config_str("unknown"), None);
+        assert_eq!(VirtualKey::from_config_str(""), None);
+    }
+
+    #[test]
+    fn gpu_frame_new() {
+        let gpu_frame = GpuFrame::new(None, 1920, 1080, DXGI_FORMAT(0));
+        assert_eq!(gpu_frame.width, 1920);
+        assert_eq!(gpu_frame.height, 1080);
+        assert!(gpu_frame.texture.is_none());
     }
 }

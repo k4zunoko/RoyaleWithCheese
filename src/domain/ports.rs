@@ -1,99 +1,40 @@
-//! Port定義（Clean Architectureのインターフェース）
+//! Domainポート定義
 //!
-//! Domain層が外部実装に依存するための抽象trait。
-//! Infrastructure層がこれらを実装し、Application層がDIで注入する。
+//! Clean Architectureにおける抽象ポート群。
 
-use crate::domain::{
-    CoordinateTransformConfig, DetectionResult, DomainError, DomainResult, Frame, GpuFrame,
-    HsvRange, ProcessorBackend, Roi, TransformedCoordinates,
+use crate::domain::error::{DomainError, DomainResult};
+use crate::domain::types::{
+    DetectionResult, DeviceInfo, Frame, GpuFrame, HsvRange, InputState, ProcessorBackend, Roi,
+    TransformedCoordinates, VirtualKey,
 };
 
-/// キャプチャポート: 画面フレームの取得を抽象化
-pub trait CapturePort: Send + Sync {
-    /// ROI指定でフレームをキャプチャする（GPU ROI実装）
-    ///
-    /// 指定されたROI領域のみをGPU上で切り出し、CPU転送量を削減します。
-    ///
-    /// # Arguments
-    /// - `roi`: キャプチャするROI領域（デバイス座標系）
-    ///
-    /// # Returns
-    /// - `Ok(Some(Frame))`: フレームの取得成功（ROI領域のみ、Frame.width/heightはROIサイズ）
-    /// - `Ok(None)`: タイムアウト（フレーム更新なし）
-    /// - `Err(DomainError)`: 致命的エラー（再初期化が必要）
-    fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>>;
+/// キャプチャポート。
+pub trait CapturePort: Send {
+    /// ROI領域のフレームを取得します。
+    fn capture_frame(&mut self, roi: &Roi) -> DomainResult<Option<Frame>>;
 
-    /// GPU常駐テクスチャとしてフレームをキャプチャする
-    ///
-    /// GPU処理パイプライン用。テクスチャをCPUにコピーせず、
-    /// GPU常駐のまま返します。GPU処理をサポートしない実装は
-    /// デフォルトでGpuNotAvailableエラーを返します。
-    ///
-    /// # Returns
-    /// - `Ok(Some(GpuFrame))`: GPU常駐テクスチャの取得成功
-    /// - `Ok(None)`: タイムアウト（フレーム更新なし）
-    /// - `Err(DomainError::GpuNotAvailable)`: GPU処理未サポート
-    /// - `Err(DomainError)`: 致命的エラー
-    #[allow(unused_variables)]
-    fn capture_gpu_frame(&mut self, roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+    /// ROI領域のGPUフレームを取得します。
+    fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
         Err(DomainError::GpuNotAvailable(
-            "GPU frame capture not supported by this adapter".to_string(),
+            "このアダプタはGPUフレームをサポートしていません".into(),
         ))
     }
 
-    /// フレームをキャプチャする（全画面、デフォルト実装）
-    ///
-    /// 内部的にはcapture_frame_with_roi()を全画面ROIで呼び出します。
-    ///
-    /// # Returns
-    /// - `Ok(Some(Frame))`: フレームの取得成功
-    /// - `Ok(None)`: タイムアウト（フレーム更新なし）
-    /// - `Err(DomainError)`: 致命的エラー（再初期化が必要）
-    #[allow(dead_code)] // trait定義として必要だが現在未使用
-    fn capture_frame(&mut self) -> DomainResult<Option<Frame>> {
-        let info = self.device_info();
-        let full_roi = Roi::new(0, 0, info.width, info.height);
-        self.capture_frame_with_roi(&full_roi)
-    }
-
-    /// キャプチャセッションを再初期化
-    ///
-    /// DDA接続が切断された場合などに呼び出される。
-    #[allow(dead_code)] // trait定義として必要だが現在未使用
+    /// キャプチャ実装を再初期化します。
     fn reinitialize(&mut self) -> DomainResult<()>;
 
-    /// キャプチャデバイスの情報を取得
+    /// キャプチャデバイス情報を返します。
     fn device_info(&self) -> DeviceInfo;
 
-    /// GPU処理をサポートしているかを確認
-    ///
-    /// trueを返す場合、capture_gpu_frame()が有効なGpuFrameを返せます。
+    /// GPUフレーム取得に対応しているかを返します。
     fn supports_gpu_frame(&self) -> bool {
         false
     }
 }
 
-/// デバイス情報
-#[derive(Debug, Clone)]
-pub struct DeviceInfo {
-    pub width: u32,
-    pub height: u32,
-    pub refresh_rate: u32,
-    pub name: String,
-}
-
-/// 処理ポート: 画像処理（色検知/YOLO等）を抽象化
-pub trait ProcessPort: Send + Sync {
-    /// フレームを処理して検出結果を返す
-    ///
-    /// # Arguments
-    /// - `frame`: 処理対象のフレーム
-    /// - `roi`: 処理領域
-    /// - `hsv_range`: 色検知の場合のHSVレンジ（YOLOの場合は無視）
-    ///
-    /// # Returns
-    /// - `Ok(DetectionResult)`: 検出結果
-    /// - `Err(DomainError)`: 処理エラー
+/// 画像処理ポート。
+pub trait ProcessPort: Send {
+    /// CPUフレームを処理して検出結果を返します。
     fn process_frame(
         &mut self,
         frame: &Frame,
@@ -101,501 +42,549 @@ pub trait ProcessPort: Send + Sync {
         hsv_range: &HsvRange,
     ) -> DomainResult<DetectionResult>;
 
-    /// 処理バックエンドを取得
-    #[allow(dead_code)] // trait定義として必要だが現在未使用
-    fn backend(&self) -> ProcessorBackend;
-
-    /// 処理統計を取得（オプション）
-    #[allow(dead_code)] // trait定義として必要だが現在未使用
-    fn stats(&self) -> ProcessStats {
-        ProcessStats::default()
+    /// GPUフレームを処理して検出結果を返します。
+    fn process_gpu_frame(
+        &mut self,
+        _gpu_frame: &GpuFrame,
+        _hsv_range: &HsvRange,
+    ) -> DomainResult<DetectionResult> {
+        Err(DomainError::GpuNotAvailable(
+            "このアダプタはGPU処理をサポートしていません".into(),
+        ))
     }
 
-    /// GPU処理がサポートされているかチェック（オプション、デフォルトはfalse）
-    ///
-    /// # Returns
-    /// - `true`: このprocessorはGPU処理をサポートしており、ゼロコピーGPUパイプラインが使用可能
-    /// - `false`: CPU処理のみ、従来のパイプラインを使用
+    /// 処理バックエンド種別を返します。
+    fn backend(&self) -> ProcessorBackend;
+
+    /// GPU処理に対応しているかを返します。
     fn supports_gpu_processing(&self) -> bool {
         false
     }
-
-    /// GPU フレームを直接処理する（オプション、デフォルトはエラー）
-    ///
-    /// ゼロコピーGPUパイプラインでのみ使用。
-    /// `supports_gpu_processing()` が `true` を返すprocessorのみがこれを実装すべき。
-    ///
-    /// # Arguments
-    /// - `gpu_frame`: GPU上のテクスチャフレーム
-    /// - `hsv_range`: HSV検知の場合のレンジ
-    ///
-    /// # Returns
-    /// - `Ok(DetectionResult)`: 検出結果
-    /// - `Err(DomainError)`: GPU処理非サポート、または処理エラー
-    fn process_gpu_frame(
-        &mut self,
-        _gpu_frame: &crate::domain::types::GpuFrame,
-        _hsv_range: &HsvRange,
-    ) -> DomainResult<DetectionResult> {
-        Err(DomainError::Process(
-            "GPU frame processing is not supported by this processor. \
-             Use process_frame() instead or ensure the processor supports GPU processing."
-                .to_string(),
-        ))
-    }
 }
 
-/// 処理統計情報
-#[allow(dead_code)] // ProcessPort::statsで使用されるが、そのメソッドが未呼び出し
-#[derive(Debug, Clone, Default)]
-pub struct ProcessStats {
-    pub total_frames: u64,
-    pub detected_frames: u64,
-    pub avg_process_time_us: u64,
-}
-
-/// 通信ポート: HID送信を抽象化
-pub trait CommPort: Send + Sync {
-    /// 検出結果をデバイスに送信
-    ///
-    /// # Arguments
-    /// - `data`: 送信データ（8バイトを想定）
-    ///
-    /// # Returns
-    /// - `Ok(())`: 送信成功
-    /// - `Err(DomainError)`: 送信エラー（デバイス切断等）
+/// 通信ポート。
+pub trait CommPort: Send {
+    /// データを送信します。
     fn send(&mut self, data: &[u8]) -> DomainResult<()>;
 
-    /// デバイスとの接続状態を確認
-    #[allow(dead_code)] // trait定義として必要だが現在未使用
-    fn is_connected(&self) -> bool;
-
-    /// デバイスとの接続を再試行
+    /// 接続を再確立します。
     fn reconnect(&mut self) -> DomainResult<()>;
+
+    /// 現在の接続状態を返します。
+    fn is_connected(&self) -> bool;
 }
 
-/// 座標変換を適用（感度・デッドゾーン・クリッピング）
-///
-/// ROI中心からの相対位置に対して、以下の処理を順次適用し、
-/// 中心からの相対座標（Δx, Δy）を返します：
-/// 1. デッドゾーン判定（中心からの距離がdead_zone未満なら(0, 0)に補正）
-/// 2. 感度適用（x_sensitivity, y_sensitivityで倍率変更）
-/// 3. クリッピング（±clip_limitで制限）
-///
-/// # 戻り値
-/// ROI中心からの相対座標（Δx, Δy）。HIDデバイスへの相対移動量として使用。
-///
-/// # 低レイテンシ設計
-/// - インライン展開可能な単純計算のみ
-/// - メモリアロケーションなし（スタック上で完結）
-/// - 分岐最小化
-#[inline]
-pub fn apply_coordinate_transform(
-    result: &DetectionResult,
-    roi: &Roi,
-    transform: &CoordinateTransformConfig,
-) -> TransformedCoordinates {
-    if !result.detected {
-        // 検出なしの場合は移動なし (Δx=0, Δy=0)
-        return TransformedCoordinates::new(0.0, 0.0, false);
-    }
-
-    // ROI中心からの相対位置（ピクセル）
-    let center_x = roi.width as f32 / 2.0;
-    let center_y = roi.height as f32 / 2.0;
-    let relative_x = result.center_x - center_x;
-    let relative_y = result.center_y - center_y;
-
-    // デッドゾーン判定（二乗比較）
-    let distance_sq = relative_x * relative_x + relative_y * relative_y;
-    let dead_zone_sq = transform.dead_zone * transform.dead_zone;
-    if distance_sq < dead_zone_sq {
-        // デッドゾーン内: 移動なし (Δx=0, Δy=0)
-        return TransformedCoordinates::new(0.0, 0.0, true);
-    }
-
-    // 感度適用
-    let scaled_x = relative_x * transform.sensitivity;
-    let scaled_y = relative_y * transform.sensitivity;
-
-    // クリッピング（対称: ±clip_limit）
-    let clipped_x = scaled_x.clamp(-transform.x_clip_limit, transform.x_clip_limit);
-    let clipped_y = scaled_y.clamp(-transform.y_clip_limit, transform.y_clip_limit);
-
-    // 中心からの相対座標として返す（Δx, Δy）
-    TransformedCoordinates::new(clipped_x, clipped_y, true)
-}
-
-/// 浮動小数点座標を符号付きバイトペアにエンコード
-///
-/// HIDデバイス固有のフォーマット: (符号バイト, 絶対値バイト)
-/// - 正の値: (0x00, 絶対値)  例: +100 -> (0x00, 100)
-/// - 負の値: (0xFF, 2の補数的値) 例: -100 -> (0xFF, 156)
-/// - ゼロ: (0x00, 0x00)
-///
-/// # 範囲制限
-/// - 入力値は整数部分のみ使用（小数点以下切り捨て）
-/// - ±255の範囲に制限（デバイス仕様による）
-///
-/// # 戻り値
-/// (符号バイト, 値バイト) のタプル
-#[inline]
-fn encode_hid_delta(value: f32) -> (u8, u8) {
-    let v = value.trunc() as i32;
-    if v > 0 {
-        let mag = v.min(255) as u8;
-        (0x00, mag)
-    } else if v < 0 {
-        let abs = (-v).min(255);
-        let mag = (0x100 - abs) as u8;
-        (0xFF, mag)
-    } else {
-        (0x00, 0x00)
-    }
-}
-
-/// 変換座標をHIDレポートに変換
-///
-/// 中心からの相対座標（Δx, Δy）をデバイス固有のフォーマットに変換します。
-///
-/// # 低レイテンシ設計
-/// - インライン展開により関数呼び出しオーバーヘッドを排除
-/// - 整数演算のみで高速処理
-///
-/// # レポート構造（8バイト）
-/// - `[0]`: ReportID (固定 0x01)
-/// - `[1-2]`: Reserved (0x00)
-/// - `[3-4]`: Δx (符号付きバイトペア: `[値バイト, 符号バイト]`, 範囲: -255 ~ 255)
-///   - 符号バイト: 正=0x00, 負=0xFF, ゼロ=0x00
-///   - 値バイト: 絶対値（正の場合）または2の補数的値（負の場合）
-/// - `[5-6]`: Δy (同上)
-/// - `[7]`: Reserved (0xFF)
-///
-/// # 注意
-/// このフォーマットは標準的な2の補数表現ではなく、特定のHIDデバイス向けの
-/// カスタムエンコーディングです。
-#[inline]
-pub fn coordinates_to_hid_report(coords: &TransformedCoordinates) -> Vec<u8> {
-    let mut report = vec![0x00; 8];
-    let (x_sign, x_value) = encode_hid_delta(coords.x);
-    let (y_sign, y_value) = encode_hid_delta(coords.y);
-
-    report[0] = 0x01;
-    report[1] = 0x00;
-    report[2] = 0x00;
-    report[3] = x_value;
-    report[4] = x_sign;
-    report[5] = y_value;
-    report[6] = y_sign;
-    report[7] = 0xFF;
-
-    report
-}
-
-/// 検出結果を直接HIDレポートに変換（後方互換性のため残す）
-///
-/// # Deprecated
-/// 新しいコードでは `apply_coordinate_transform()` + `coordinates_to_hid_report()` を使用してください。
-///
-/// # レポート構造（8バイト）
-/// - `[0]`: ReportID (固定 0x01)
-/// - `[3-4]`: Center X (u16, ビッグエンディアン)
-/// - `[5-6]`: Center Y (u16, ビッグエンディアン)
-/// - `[7]`: Reserved (0xFF)
-#[allow(dead_code)]
-pub fn detection_to_hid_report(result: &DetectionResult) -> Vec<u8> {
-    let mut report = vec![0u8; 8];
-
-    // ReportID
-    report[0] = 0x01;
-
-    report[1] = 0x00;
-    report[2] = 0x00;
-
-    // Center X (u16, ビッグエンディアン)
-    let cx = result.center_x.clamp(0.0, 65535.0) as u16;
-    let cx_bytes = cx.to_be_bytes();
-    report[3] = cx_bytes[0]; // 上位バイト
-    report[4] = cx_bytes[1]; // 下位バイト
-
-    // Center Y (u16, ビッグエンディアン)
-    let cy = result.center_y.clamp(0.0, 65535.0) as u16;
-    let cy_bytes = cy.to_be_bytes();
-    report[5] = cy_bytes[0]; // 上位バイト
-    report[6] = cy_bytes[1]; // 下位バイト
-
-    // Reserved
-    report[7] = 0xFF;
-
-    report
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Instant;
-
-    #[test]
-    fn test_detection_to_hid_report() {
-        let result = DetectionResult {
-            timestamp: Instant::now(),
-            center_x: 123.5,
-            center_y: 456.7,
-            coverage: 9999,
-            detected: true,
-            bounding_box: None,
-        };
-
-        let report = detection_to_hid_report(&result);
-
-        assert_eq!(report.len(), 8);
-        assert_eq!(report[0], 0x01); // ReportID
-        assert_eq!(report[1], 0x00); // Detection flag
-
-        // Center X (ビッグエンディアン)
-        let cx = u16::from_be_bytes([report[3], report[4]]);
-        assert_eq!(cx, 123);
-
-        // Center Y (ビッグエンディアン)
-        let cy = u16::from_be_bytes([report[5], report[6]]);
-        assert_eq!(cy, 456);
-
-        // Reserved bytes
-        assert_eq!(report[2], 0x00);
-        assert_eq!(report[7], 0xFF);
-    }
-
-    #[test]
-    fn test_detection_to_hid_report_none() {
-        let result = DetectionResult::none();
-        let report = detection_to_hid_report(&result);
-
-        assert_eq!(report.len(), 8);
-        assert_eq!(report[0], 0x01); // ReportID
-        assert_eq!(report[1], 0); // Detection flag = 0
-
-        // Center X/Y は0
-        let cx = u16::from_be_bytes([report[3], report[4]]);
-        let cy = u16::from_be_bytes([report[5], report[6]]);
-        assert_eq!(cx, 0);
-        assert_eq!(cy, 0);
-    }
-
-    #[test]
-    fn test_apply_coordinate_transform_no_detection() {
-        let result = DetectionResult::none();
-        let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig::default();
-
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
-
-        assert!(!coords.detected);
-        assert_eq!(coords.x, 0.0); // 移動なし (Δx=0)
-        assert_eq!(coords.y, 0.0); // 移動なし (Δy=0)
-    }
-
-    #[test]
-    fn test_apply_coordinate_transform_no_transform() {
-        // 感度1.0、クリッピングなし、デッドゾーンなし
-        let result = DetectionResult::some(60.0, 70.0, 100); // 中心(50,50)から(+10, +20)
-        let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 1.0,
-            x_clip_limit: f32::MAX,
-            y_clip_limit: f32::MAX,
-            dead_zone: 0.0,
-        };
-
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
-
-        assert!(coords.detected);
-        assert_eq!(coords.x, 10.0); // Δx = +10
-        assert_eq!(coords.y, 20.0); // Δy = +20
-    }
-
-    #[test]
-    fn test_apply_coordinate_transform_sensitivity() {
-        // 感度2.0: 中心からの距離が2倍になる
-        let result = DetectionResult::some(60.0, 70.0, 100); // 中心(50,50)から(+10, +20)
-        let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 2.0,
-            x_clip_limit: f32::MAX,
-            y_clip_limit: f32::MAX,
-            dead_zone: 0.0,
-        };
-
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
-
-        assert!(coords.detected);
-        // Δx = 10 * 2.0 = 20, Δy = 20 * 2.0 = 40
-        assert_eq!(coords.x, 20.0);
-        assert_eq!(coords.y, 40.0);
-    }
-
-    #[test]
-    fn test_apply_coordinate_transform_clipping() {
-        // クリッピング: ±15でクリップ
-        let result = DetectionResult::some(80.0, 90.0, 100); // 中心(50,50)から(+30, +40)
-        let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 1.0,
-            x_clip_limit: 15.0,
-            y_clip_limit: 15.0,
-            dead_zone: 0.0,
-        };
-
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
-
-        assert!(coords.detected);
-        // Δx = clamp(30, -15, 15) = 15, Δy = clamp(40, -15, 15) = 15
-        assert_eq!(coords.x, 15.0);
-        assert_eq!(coords.y, 15.0);
-    }
-
-    #[test]
-    fn test_apply_coordinate_transform_dead_zone() {
-        // デッドゾーン: 中心て5.0未満は移動なし
-        let result = DetectionResult::some(52.0, 53.0, 100); // 中心(50,50)から(+2, +3)、距離3.6
-        let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 1.0,
-            x_clip_limit: f32::MAX,
-            y_clip_limit: f32::MAX,
-            dead_zone: 5.0,
-        };
-
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
-
-        assert!(coords.detected); // 検出はされているがデッドゾーン内
-        assert_eq!(coords.x, 0.0); // 移動なし (Δx=0)
-        assert_eq!(coords.y, 0.0); // 移動なし (Δy=0)
-    }
-
-    #[test]
-    fn test_apply_coordinate_transform_combined() {
-        // 感度2.0 + クリッピング20.0 + デッドゾーン3.0
-        let result = DetectionResult::some(65.0, 60.0, 100); // 中心(50,50)から(+15, +10)
-        let roi = Roi::new(0, 0, 100, 100);
-        let transform = CoordinateTransformConfig {
-            sensitivity: 2.0,
-            x_clip_limit: 20.0,
-            y_clip_limit: 20.0,
-            dead_zone: 3.0,
-        };
-
-        let coords = apply_coordinate_transform(&result, &roi, &transform);
-
-        assert!(coords.detected);
-        // 距離 = sqrt(15^2 + 10^2) = 18.0 > 3.0 (デッドゾーン外)
-        // スケール後: (15*2, 10*2) = (30, 20)
-        // クリップ後: clamp(30, -20, 20) = 20, clamp(20, -20, 20) = 20
-        // 結果: Δx = 20, Δy = 20
-        assert_eq!(coords.x, 20.0);
-        assert_eq!(coords.y, 20.0);
-    }
-
-    #[test]
-    fn test_coordinates_to_hid_report_positive() {
-        let coords = TransformedCoordinates::new(123.5, 456.7, true);
-        let report = coordinates_to_hid_report(&coords);
-
-        assert_eq!(report.len(), 8);
-        assert_eq!(report[0], 0x01);
-
-        // カスタムフォーマット: [値バイト, 符号バイト]
-        // 正の値: 符号=0x00
-        assert_eq!(report[3], 123); // X値バイト
-        assert_eq!(report[4], 0x00); // X符号バイト（正）
-                                     // 456は255を超えるので255にクリップされる
-        assert_eq!(report[5], 255); // Y値バイト（クリップ）
-        assert_eq!(report[6], 0x00); // Y符号バイト（正）
-        assert_eq!(report[7], 0xFF);
-    }
-
-    #[test]
-    fn test_coordinates_to_hid_report_negative() {
-        // 負の値をテスト (左・上方向の移動)
-        let coords = TransformedCoordinates::new(-50.3, -100.8, true);
-        let report = coordinates_to_hid_report(&coords);
-
-        assert_eq!(report.len(), 8);
-        assert_eq!(report[0], 0x01);
-
-        // カスタムフォーマット: [値バイト, 符号バイト]
-        // 負の値: 符号=0xFF, 値=2の補数的値
-        assert_eq!(report[3], (256 - 50) as u8); // X値バイト（2の補数的）
-        assert_eq!(report[4], 0xFF); // X符号バイト（負）
-        assert_eq!(report[5], (256 - 100) as u8); // Y値バイト（2の補数的）
-        assert_eq!(report[6], 0xFF); // Y符号バイト（負）
-        assert_eq!(report[7], 0xFF);
-    }
-
-    #[test]
-    fn test_coordinates_to_hid_report_zero() {
-        // 移動なし (Δx=0, Δy=0)
-        let coords = TransformedCoordinates::new(0.0, 0.0, true);
-        let report = coordinates_to_hid_report(&coords);
-
-        assert_eq!(report.len(), 8);
-        assert_eq!(report[0], 0x01);
-
-        let dx = i16::from_be_bytes([report[3], report[4]]);
-        let dy = i16::from_be_bytes([report[5], report[6]]);
-        assert_eq!(dx, 0);
-        assert_eq!(dy, 0);
-        assert_eq!(report[7], 0xFF);
-    }
-}
-
-/// 仮想キーコード（Windows VK_* 定数に対応）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VirtualKey {
-    Insert,
-    LeftButton,
-    RightButton,
-}
-
-impl VirtualKey {
-    /// Windows VK_*定数へ変換
-    pub fn to_vk_code(self) -> i32 {
-        match self {
-            VirtualKey::Insert => 0x2D,      // VK_INSERT
-            VirtualKey::LeftButton => 0x01,  // VK_LBUTTON
-            VirtualKey::RightButton => 0x02, // VK_RBUTTON
-        }
-    }
-}
-
-/// 入力状態（キーボードとマウス）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct InputState {
-    pub mouse_left: bool,
-    pub mouse_right: bool,
-}
-
-/// 入力ポート: キーボードとマウスの状態取得を抽象化
-///
-/// Windows APIや将来的に他のOS対応を抽象化するtrait。
-/// Infrastructure層が実装し、Application層がDIで注入します。
+/// 入力ポート。
 pub trait InputPort: Send + Sync {
-    /// 指定したキーが現在押下されているかを確認
-    ///
-    /// # Arguments
-    /// * `key` - 仮想キーコード
-    ///
-    /// # Returns
-    /// キーが現在押下されていればtrue
+    /// 指定キーが押されているかを返します。
     fn is_key_pressed(&self, key: VirtualKey) -> bool;
 
-    /// 現在の入力状態を一括取得
-    ///
-    /// # Returns
-    /// マウスボタンの状態を含むInputState
+    /// 入力状態を一括取得します。
     fn poll_input_state(&self) -> InputState {
         InputState {
             mouse_left: self.is_key_pressed(VirtualKey::LeftButton),
             mouse_right: self.is_key_pressed(VirtualKey::RightButton),
         }
+    }
+}
+
+/// 検出結果に座標変換（感度・デッドゾーン・クリップリミット適用）を行います。
+#[inline]
+pub fn apply_coordinate_transform(
+    result: &DetectionResult,
+    roi: &Roi,
+    sensitivity: f64,
+    dead_zone: f64,
+    x_clip_limit: f64,
+    y_clip_limit: f64,
+) -> TransformedCoordinates {
+    if !result.detected {
+        return TransformedCoordinates::new(0.0, 0.0, false);
+    }
+
+    let center_x = roi.width as f64 / 2.0;
+    let center_y = roi.height as f64 / 2.0;
+
+    // 1. raw delta
+    let mut delta_x = result.center_x as f64 - center_x;
+    let mut delta_y = result.center_y as f64 - center_y;
+
+    // 2. dead_zone: ROI中心からのユークリッド距離が閾値未満なら無効化
+    let distance_sq = delta_x * delta_x + delta_y * delta_y;
+    let dead_zone_sq = dead_zone * dead_zone;
+    if distance_sq < dead_zone_sq {
+        delta_x = 0.0;
+        delta_y = 0.0;
+    }
+
+    // 3. sensitivity
+    delta_x *= sensitivity;
+    delta_y *= sensitivity;
+
+    // 4. clip_limit: 0.0 means force zero on that axis
+    if x_clip_limit == 0.0 {
+        delta_x = 0.0;
+    } else {
+        delta_x = delta_x.clamp(-x_clip_limit, x_clip_limit);
+    }
+    if y_clip_limit == 0.0 {
+        delta_y = 0.0;
+    } else {
+        delta_y = delta_y.clamp(-y_clip_limit, y_clip_limit);
+    }
+
+    TransformedCoordinates::new(delta_x, delta_y, true)
+}
+
+#[inline]
+fn encode_hid_delta(delta: f64) -> (u8, u8) {
+    if delta == 0.0 {
+        return (0x00, 0x00);
+    }
+
+    let magnitude = delta.abs().round().min(255.0) as u8;
+    if delta > 0.0 {
+        (magnitude, 0x00)
+    } else {
+        ((256.0 - f64::from(magnitude)) as u8, 0xFF)
+    }
+}
+
+/// 相対座標を8バイトHIDレポートへ変換します。
+#[inline]
+pub fn coordinates_to_hid_report(coords: &TransformedCoordinates) -> Vec<u8> {
+    if !coords.detected {
+        return vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF];
+    }
+
+    let (x_val, x_sign) = encode_hid_delta(coords.delta_x);
+    let (y_val, y_sign) = encode_hid_delta(coords.delta_y);
+    vec![0x01, 0x00, 0x00, x_val, x_sign, y_val, y_sign, 0xFF]
+}
+
+/// 検出結果を絶対座標モードの8バイトHIDレポートへ変換します。
+#[inline]
+pub fn detection_to_hid_report(result: &DetectionResult) -> Vec<u8> {
+    let x = result.center_x.clamp(0.0, 65535.0) as u16;
+    let y = result.center_y.clamp(0.0, 65535.0) as u16;
+    let xb = x.to_be_bytes();
+    let yb = y.to_be_bytes();
+    vec![0x01, 0x00, 0x00, xb[0], xb[1], yb[0], yb[1], 0xFF]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+
+    struct MockCapture {
+        info: DeviceInfo,
+        frame: Option<Frame>,
+        gpu_supported: bool,
+        reinitialized: bool,
+    }
+
+    impl MockCapture {
+        fn new() -> Self {
+            Self {
+                info: DeviceInfo::new(1920, 1080, "Mock Display".to_string()),
+                frame: Some(Frame::new(vec![1, 2, 3], 1, 1)),
+                gpu_supported: true,
+                reinitialized: false,
+            }
+        }
+    }
+
+    impl CapturePort for MockCapture {
+        fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
+            Ok(self.frame.clone())
+        }
+
+        fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+            if self.gpu_supported {
+                Ok(Some(GpuFrame::new(None, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM)))
+            } else {
+                Err(DomainError::GpuNotAvailable(
+                    "このアダプタはGPUフレームをサポートしていません".into(),
+                ))
+            }
+        }
+
+        fn reinitialize(&mut self) -> DomainResult<()> {
+            self.reinitialized = true;
+            Ok(())
+        }
+
+        fn device_info(&self) -> DeviceInfo {
+            self.info.clone()
+        }
+
+        fn supports_gpu_frame(&self) -> bool {
+            self.gpu_supported
+        }
+    }
+
+    struct MockProcess;
+
+    impl ProcessPort for MockProcess {
+        fn process_frame(
+            &mut self,
+            _frame: &Frame,
+            _roi: &Roi,
+            _hsv_range: &HsvRange,
+        ) -> DomainResult<DetectionResult> {
+            Ok(DetectionResult::detected(55.0, 44.0, 0.8))
+        }
+
+        fn process_gpu_frame(
+            &mut self,
+            _gpu_frame: &GpuFrame,
+            _hsv_range: &HsvRange,
+        ) -> DomainResult<DetectionResult> {
+            Ok(DetectionResult::detected(12.0, 34.0, 0.6))
+        }
+
+        fn backend(&self) -> ProcessorBackend {
+            ProcessorBackend::Gpu
+        }
+
+        fn supports_gpu_processing(&self) -> bool {
+            true
+        }
+    }
+
+    struct MockComm {
+        sent_packets: Vec<Vec<u8>>,
+        connected: bool,
+    }
+
+    impl MockComm {
+        fn new() -> Self {
+            Self {
+                sent_packets: Vec::new(),
+                connected: false,
+            }
+        }
+    }
+
+    impl CommPort for MockComm {
+        fn send(&mut self, data: &[u8]) -> DomainResult<()> {
+            self.sent_packets.push(data.to_vec());
+            Ok(())
+        }
+
+        fn reconnect(&mut self) -> DomainResult<()> {
+            self.connected = true;
+            Ok(())
+        }
+
+        fn is_connected(&self) -> bool {
+            self.connected
+        }
+    }
+
+    struct MockInput {
+        pressed: Vec<VirtualKey>,
+    }
+
+    impl MockInput {
+        fn new(pressed: &[VirtualKey]) -> Self {
+            Self {
+                pressed: pressed.to_vec(),
+            }
+        }
+    }
+
+    impl InputPort for MockInput {
+        fn is_key_pressed(&self, key: VirtualKey) -> bool {
+            self.pressed.contains(&key)
+        }
+    }
+
+    #[test]
+    fn capture_port_mock_returns_frame_and_device_info() {
+        let mut capture = MockCapture::new();
+        let frame = capture
+            .capture_frame(&Roi::new(0, 0, 100, 100))
+            .expect("capture should succeed")
+            .expect("frame should exist");
+        assert_eq!(frame.width, 1);
+        assert_eq!(frame.height, 1);
+
+        let info = capture.device_info();
+        assert_eq!(info.width, 1920);
+        assert_eq!(info.height, 1080);
+        assert_eq!(info.name, "Mock Display");
+    }
+
+    #[test]
+    fn capture_port_default_gpu_method_returns_not_available() {
+        struct CpuOnlyCapture;
+        impl CapturePort for CpuOnlyCapture {
+            fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
+                Ok(None)
+            }
+            fn reinitialize(&mut self) -> DomainResult<()> {
+                Ok(())
+            }
+            fn device_info(&self) -> DeviceInfo {
+                DeviceInfo::new(800, 600, "CPU Only".to_string())
+            }
+        }
+
+        let mut capture = CpuOnlyCapture;
+        let err = capture
+            .capture_gpu_frame(&Roi::new(0, 0, 1, 1))
+            .expect_err("default impl should return error");
+        match err {
+            DomainError::GpuNotAvailable(msg) => {
+                assert_eq!(msg, "このアダプタはGPUフレームをサポートしていません")
+            }
+            _ => panic!("unexpected error variant"),
+        }
+    }
+
+    #[test]
+    fn capture_port_reinitialize_and_gpu_support() {
+        let mut capture = MockCapture::new();
+        assert!(capture.supports_gpu_frame());
+        assert!(!capture.reinitialized);
+        capture.reinitialize().expect("reinitialize should succeed");
+        assert!(capture.reinitialized);
+    }
+
+    #[test]
+    fn process_port_mock_processes_cpu_and_gpu_frames() {
+        let mut process = MockProcess;
+        let frame = Frame::new(vec![0; 9], 1, 3);
+        let gpu_frame = GpuFrame::new(None, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM);
+        let roi = Roi::new(0, 0, 100, 100);
+        let hsv = HsvRange::new(0, 180, 0, 255, 0, 255);
+
+        let cpu_result = process
+            .process_frame(&frame, &roi, &hsv)
+            .expect("cpu process should succeed");
+        assert!(cpu_result.detected);
+        assert_eq!(cpu_result.center_x, 55.0);
+
+        let gpu_result = process
+            .process_gpu_frame(&gpu_frame, &hsv)
+            .expect("gpu process should succeed");
+        assert!(gpu_result.detected);
+        assert_eq!(gpu_result.center_y, 34.0);
+
+        assert_eq!(process.backend(), ProcessorBackend::Gpu);
+        assert!(process.supports_gpu_processing());
+    }
+
+    #[test]
+    fn process_port_default_gpu_method_returns_not_available() {
+        struct CpuOnlyProcess;
+        impl ProcessPort for CpuOnlyProcess {
+            fn process_frame(
+                &mut self,
+                _frame: &Frame,
+                _roi: &Roi,
+                _hsv_range: &HsvRange,
+            ) -> DomainResult<DetectionResult> {
+                Ok(DetectionResult::not_detected())
+            }
+            fn backend(&self) -> ProcessorBackend {
+                ProcessorBackend::Cpu
+            }
+        }
+
+        let mut process = CpuOnlyProcess;
+        let gpu_frame = GpuFrame::new(None, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM);
+        let hsv = HsvRange::new(0, 180, 0, 255, 0, 255);
+        let err = process
+            .process_gpu_frame(&gpu_frame, &hsv)
+            .expect_err("default impl should return error");
+        match err {
+            DomainError::GpuNotAvailable(msg) => {
+                assert_eq!(msg, "このアダプタはGPU処理をサポートしていません")
+            }
+            _ => panic!("unexpected error variant"),
+        }
+    }
+
+    #[test]
+    fn comm_port_mock_records_bytes_and_reconnects() {
+        let mut comm = MockComm::new();
+        assert!(!comm.is_connected());
+        comm.send(&[0x01, 0x02, 0x03]).expect("send should succeed");
+        comm.reconnect().expect("reconnect should succeed");
+        assert!(comm.is_connected());
+        assert_eq!(comm.sent_packets[0], vec![0x01, 0x02, 0x03]);
+    }
+
+    #[test]
+    fn input_port_mock_returns_key_and_input_state() {
+        let input = MockInput::new(&[VirtualKey::LeftButton]);
+        assert!(input.is_key_pressed(VirtualKey::LeftButton));
+        assert!(!input.is_key_pressed(VirtualKey::RightButton));
+        let state = input.poll_input_state();
+        assert!(state.mouse_left);
+        assert!(!state.mouse_right);
+    }
+
+    #[test]
+    fn apply_coordinate_transform_returns_zero_when_not_detected() {
+        let result = DetectionResult::not_detected();
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 1.5, 0.0, 0.0, 0.0);
+        assert!(!coords.detected);
+        assert_eq!(coords.delta_x, 0.0);
+        assert_eq!(coords.delta_y, 0.0);
+    }
+
+    #[test]
+    fn apply_coordinate_transform_uses_roi_center_and_sensitivity() {
+        let result = DetectionResult::detected(60.0, 30.0, 0.5);
+        let roi = Roi::new(300, 400, 100, 80);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 100.0, 100.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 20.0);
+        assert_eq!(coords.delta_y, -20.0);
+    }
+
+    #[test]
+    fn coordinates_to_hid_report_uses_hardware_contract_bytes() {
+        let coords = TransformedCoordinates {
+            delta_x: 5.0,
+            delta_y: -3.0,
+            detected: true,
+        };
+        let report = coordinates_to_hid_report(&coords);
+        assert_eq!(report, vec![0x01, 0x00, 0x00, 0x05, 0x00, 0xFD, 0xFF, 0xFF]);
+    }
+
+    #[test]
+    fn coordinates_to_hid_report_returns_zero_payload_when_not_detected() {
+        let coords = TransformedCoordinates {
+            delta_x: 12.0,
+            delta_y: -9.0,
+            detected: false,
+        };
+        let report = coordinates_to_hid_report(&coords);
+        assert_eq!(report, vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF]);
+    }
+
+    #[test]
+    fn detection_to_hid_report_encodes_absolute_coordinates_big_endian() {
+        let result = DetectionResult::detected(123.9, 456.1, 0.7);
+        let report = detection_to_hid_report(&result);
+        assert_eq!(report, vec![0x01, 0x00, 0x00, 0x00, 0x7B, 0x01, 0xC8, 0xFF]);
+    }
+
+    #[test]
+    fn test_transform_basic_sensitivity() {
+        let result = DetectionResult::detected(60.0, 50.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        // delta_x = 60 - 50 = 10, * sensitivity 2.0 = 20.0
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 100.0, 100.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 20.0);
+        assert_eq!(coords.delta_y, 0.0);
+    }
+
+    #[test]
+    fn test_transform_dead_zone_zeroes_small_distance() {
+        // ROI中心からの距離 sqrt(2^2 + 0^2) = 2 < 5 → zeroed
+        let result = DetectionResult::detected(52.0, 50.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 1.0, 5.0, 100.0, 100.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 0.0);
+        assert_eq!(coords.delta_y, 0.0);
+    }
+
+    #[test]
+    fn test_transform_dead_zone_passes_large_distance() {
+        // ROI中心からの距離 sqrt(6^2 + 0^2) = 6 >= 5 → passes
+        let result = DetectionResult::detected(56.0, 50.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 5.0, 100.0, 100.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 12.0);
+    }
+
+    #[test]
+    fn test_transform_dead_zone_uses_radial_distance_for_diagonal_motion() {
+        // ROI中心からの距離 sqrt(4^2 + 4^2) ≈ 5.66 >= 5 → 対角移動は維持
+        let result = DetectionResult::detected(54.0, 54.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 1.0, 5.0, 100.0, 100.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 4.0);
+        assert_eq!(coords.delta_y, 4.0);
+    }
+
+    #[test]
+    fn test_transform_clip_limit_clamps() {
+        // delta_x = 60 - 50 = 10, * sensitivity 2.0 = 20.0, clip 10.0 → 10.0
+        let result = DetectionResult::detected(60.0, 50.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 10.0, 0.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 10.0);
+    }
+
+    #[test]
+    fn test_transform_clip_zero_forces_x_to_zero() {
+        // x_clip_limit = 0.0 → force x to 0 after dead_zone and sensitivity
+        let result = DetectionResult::detected(90.0, 50.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 3.0, 0.0, 0.0, 0.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 0.0);
+        assert_eq!(coords.delta_y, 0.0);
+    }
+
+    #[test]
+    fn test_transform_clip_zero_forces_only_y_to_zero() {
+        let result = DetectionResult::detected(60.0, 70.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 50.0, 0.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 20.0);
+        assert_eq!(coords.delta_y, 0.0);
+    }
+
+    #[test]
+    fn test_transform_clip_zero_forces_only_x_to_zero() {
+        let result = DetectionResult::detected(60.0, 70.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 0.0, 0.0, 50.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 0.0);
+        assert_eq!(coords.delta_y, 40.0);
+    }
+
+    #[test]
+    fn test_transform_not_detected_returns_zero() {
+        let result = DetectionResult::not_detected();
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 2.0, 5.0, 10.0, 10.0);
+        assert!(!coords.detected);
+        assert_eq!(coords.delta_x, 0.0);
+        assert_eq!(coords.delta_y, 0.0);
+    }
+
+    #[test]
+    fn test_transform_order_dead_zone_then_sensitivity_then_clip() {
+        let roi = Roi::new(0, 0, 100, 100);
+        // 距離=4: 4 >= dead_zone(3) → * 5.0 = 20.0 → clip(20.0) = 20.0
+        let result_passes = DetectionResult::detected(54.0, 50.0, 0.5);
+        let coords_passes = apply_coordinate_transform(&result_passes, &roi, 5.0, 3.0, 20.0, 100.0);
+        assert!(coords_passes.detected);
+        assert_eq!(coords_passes.delta_x, 20.0);
+
+        // 距離=2: 2 < dead_zone(3) → 0.0 → * 5.0 = 0.0 → clip(0.0) = 0.0
+        let result_blocked = DetectionResult::detected(52.0, 50.0, 0.5);
+        let coords_blocked =
+            apply_coordinate_transform(&result_blocked, &roi, 5.0, 3.0, 20.0, 100.0);
+        assert!(coords_blocked.detected);
+        assert_eq!(coords_blocked.delta_x, 0.0);
     }
 }

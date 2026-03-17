@@ -1,5 +1,4 @@
 /target
-Cargo.lock
 
 .vscode/
 .idea/
@@ -17,7 +16,8 @@ Thumbs.db
 logs/
 *.log
 
-/config.toml
+config.toml
+config_old.toml
 
 review.md
 .sisyphus

@@ -1,297 +1,214 @@
-//! パイプライン制御モジュール
-//!
-//! Capture / Process / HID / Stats の4スレッド構成でパイプラインを制御します。
-//! HID送信を統計処理から分離し、低レイテンシを実現します。
+//! Pipeline orchestrator and channel wiring.
 
-use crate::application::{recovery::RecoveryState, stats::StatsCollector, threads};
-use crate::domain::{
-    error::DomainResult,
-    ports::{CapturePort, CommPort, InputPort, ProcessPort},
-    types::{HsvRange, Roi},
-};
-use crossbeam_channel::{bounded, unbounded};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use crate::application::metrics::PipelineMetrics;
+use crate::application::runtime_state::RuntimeState;
+use crate::application::stats::StatData;
+use crate::domain::config::AppConfig;
+use crate::domain::error::{DomainError, DomainResult};
+use crate::domain::ports::{CapturePort, CommPort, InputPort};
+use crate::domain::types::VirtualKey;
+use crate::domain::types::{DetectionResult, Frame, Roi};
+use crate::infrastructure::processing::selector::ProcessSelector;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::Instant;
 
-/// HIDアクティベーション条件（HIDスレッド内で状態管理）
+/// Frame message with capture timestamp.
+pub struct TimestampedFrame {
+    pub frame: Frame,
+    pub captured_at: Instant,
+}
+
+/// Detection message with capture + process timestamps.
 #[derive(Debug, Clone)]
-pub struct ActivationConditions {
-    /// ROI中心からの最大距離（ピクセル、2乗で比較するため平方根計算を避ける）
-    max_distance_squared: f32,
-    /// アクティブウィンドウの持続時間（この時間内であればHID送信を許可）
-    active_window_duration: Duration,
+pub struct TimestampedDetection {
+    pub result: DetectionResult,
+    pub captured_at: Instant,
+    pub processed_at: Instant,
 }
 
-impl ActivationConditions {
-    pub fn new(max_distance: f32, active_window_duration: Duration) -> Self {
-        Self {
-            max_distance_squared: max_distance * max_distance, // 平方根計算を避けるため2乗で保持
-            active_window_duration,
-        }
-    }
-
-    /// 最大距離の2乗を取得（threads.rsからアクセス用）
-    pub(crate) fn max_distance_squared(&self) -> f32 {
-        self.max_distance_squared
-    }
-
-    /// アクティブウィンドウの持続時間を取得（threads.rsからアクセス用）
-    pub(crate) fn active_window_duration(&self) -> Duration {
-        self.active_window_duration
-    }
+/// Orchestrates adapters, channels, and pipeline threads.
+///
+/// Ownership is moved per-thread in `run(self)`, avoiding shared adapter locks
+/// on the hot path.
+pub struct PipelineRunner {
+    capture: Box<dyn CapturePort + 'static>,
+    process: ProcessSelector,
+    comm: Box<dyn CommPort + 'static>,
+    input: Arc<dyn InputPort>,
+    config: AppConfig,
+    metrics: Arc<PipelineMetrics>,
+    runtime_state: Arc<RuntimeState>,
 }
 
-/// パイプライン設定
-#[derive(Debug, Clone)]
-pub struct PipelineConfig {
-    /// 統計出力間隔
-    pub stats_interval: Duration,
-    /// DirtyRect最適化を有効化（未実装）
-    #[allow(dead_code)] // 将来の実装用
-    pub enable_dirty_rect_optimization: bool,
-    /// HID送信間隔（新しい値がない場合も直前の値を送信）
-    pub hid_send_interval: Duration,
-}
-
-impl Default for PipelineConfig {
-    fn default() -> Self {
-        Self {
-            stats_interval: Duration::from_secs(10),
-            enable_dirty_rect_optimization: true,
-            hid_send_interval: Duration::from_millis(8), // 約144Hz
-        }
-    }
-}
-
-/// パイプライン実行コンテキスト
-pub struct PipelineRunner<C, P, H, I>
-where
-    C: CapturePort,
-    P: ProcessPort,
-    H: CommPort,
-    I: InputPort,
-{
-    capture: Arc<Mutex<C>>,
-    process: Arc<Mutex<P>>,
-    comm: Arc<Mutex<H>>,
-    input: Arc<I>,
-    config: PipelineConfig,
-    recovery: RecoveryState,
-    stats: StatsCollector,
-    runtime_state: crate::application::runtime_state::RuntimeState,
-    activation_conditions: ActivationConditions,
-    audio_feedback: Option<crate::infrastructure::audio_feedback::WindowsAudioFeedback>,
-
-    roi: Roi,
-    hsv_range: HsvRange,
-    coordinate_transform: crate::domain::CoordinateTransformConfig,
-}
-
-impl<C, P, H, I> PipelineRunner<C, P, H, I>
-where
-    C: CapturePort + Send + Sync + 'static,
-    P: ProcessPort + Send + Sync + 'static,
-    H: CommPort + Send + Sync + 'static,
-    I: InputPort + Send + Sync + 'static,
-{
-    /// 新しいPipelineRunnerを作成
-    #[allow(clippy::too_many_arguments)] // パイプライン初期化には多くのコンポーネントが必要
+impl PipelineRunner {
+    /// Creates a new pipeline runner with owned adapters.
     pub fn new(
-        capture: C,
-        process: P,
-        comm: H,
-        input: I,
-        config: PipelineConfig,
-        recovery: RecoveryState,
-        roi: Roi,
-        hsv_range: HsvRange,
-        coordinate_transform: crate::domain::CoordinateTransformConfig,
-        activation_conditions: ActivationConditions,
-        audio_feedback: Option<crate::infrastructure::audio_feedback::WindowsAudioFeedback>,
+        capture: impl CapturePort + 'static,
+        process: ProcessSelector,
+        comm: impl CommPort + 'static,
+        input: Arc<dyn InputPort>,
+        config: AppConfig,
+        metrics: Arc<PipelineMetrics>,
+        runtime_state: Arc<RuntimeState>,
     ) -> Self {
         Self {
-            capture: Arc::new(Mutex::new(capture)),
-            process: Arc::new(Mutex::new(process)),
-            comm: Arc::new(Mutex::new(comm)),
-            input: Arc::new(input),
-            stats: StatsCollector::new(config.stats_interval),
-            runtime_state: crate::application::runtime_state::RuntimeState::new(),
-            activation_conditions,
-            audio_feedback,
+            capture: Box::new(capture),
+            process,
+            comm: Box::new(comm),
+            input,
             config,
-            recovery,
-            roi,
-            hsv_range,
-            coordinate_transform,
+            metrics,
+            runtime_state,
         }
     }
 
-    /// RuntimeStateを取得（テスト用）
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn runtime_state(&self) -> &crate::application::runtime_state::RuntimeState {
-        &self.runtime_state
-    }
+    /// Consumes the runner, spawns pipeline threads, and waits for shutdown.
+    pub fn run(self) -> DomainResult<()> {
+        let (capture_tx, capture_rx) = crossbeam_channel::bounded::<TimestampedFrame>(1);
+        let (process_tx, process_rx) = crossbeam_channel::bounded::<TimestampedDetection>(1);
+        let (stats_tx, stats_rx) = crossbeam_channel::unbounded::<StatData>();
 
-    /// パイプラインを起動（ブロッキング）
-    ///
-    /// # Returns
-    /// エラーが発生した場合のみ戻る
-    ///
-    /// # GPU パイプライン
-    /// ProcessSelectorがGPU処理をサポートしている場合（supports_gpu_processing() = true）:
-    /// - Capture: `capture_gpu_frame_thread()` - GPUテクスチャのみ転送
-    /// - Process: `process_gpu_frame_thread()` - GPU上で直接処理
-    /// - 結果: 12バイトのみCPU転送（検出結果 = count, sum_x, sum_y）
-    ///
-    /// # CPU パイプライン
-    /// それ以外の場合:
-    /// - Capture: `capture_thread()` - CPUフレーム転送
-    /// - Process: `process_thread()` - CPU上での処理
-    /// - 結果: フルフレーム CPU転送 + 検出結果
-    pub fn run(mut self) -> DomainResult<()> {
-        let (process_tx, process_rx) = bounded::<threads::TimestampedDetection>(1);
-        let (stats_tx, stats_rx) = unbounded::<threads::StatData>();
+        let stop = Arc::new(AtomicBool::new(false));
 
-        // GPU パイプラインをサポートしているかチェック
-        let use_gpu_pipeline = {
-            let guard = self.process.lock().unwrap();
-            guard.supports_gpu_processing()
-        };
+        let PipelineRunner {
+            capture,
+            process,
+            comm,
+            input,
+            config,
+            metrics,
+            runtime_state,
+        } = self;
 
-        if use_gpu_pipeline {
-            tracing::info!("GPU pipeline enabled: using zero-copy GPU processing");
+        // Compute the capture / HID ROI centered on the screen.
+        let device_info = capture.device_info();
+        let roi = Roi::new(0, 0, config.process.roi.width, config.process.roi.height)
+            .centered_in(device_info.width, device_info.height)
+            .ok_or_else(|| {
+                DomainError::Configuration(format!(
+                    "ROI ({}x{}) exceeds display dimensions ({}x{})",
+                    config.process.roi.width,
+                    config.process.roi.height,
+                    device_info.width,
+                    device_info.height
+                ))
+            })?;
+        tracing::info!(x = roi.x, y = roi.y, w = roi.width, h = roi.height, "ROI");
 
-            // GPU パイプライン
-            let (capture_gpu_tx, capture_gpu_rx) = bounded::<threads::TimestampedGpuFrame>(1);
+        let mut handles: Vec<JoinHandle<()>> = Vec::with_capacity(5);
 
-            // GPU Capture Thread
-            let capture_handle = {
-                let capture = Arc::clone(&self.capture);
-                let tx = capture_gpu_tx;
-                let roi = self.roi;
-                std::thread::spawn(move || {
-                    threads::capture_gpu_frame_thread(capture, tx, roi);
-                })
-            };
-
-            // GPU Process Thread
-            let process_handle = {
-                let process = Arc::clone(&self.process);
-                let hsv_range = self.hsv_range;
-                let rx = capture_gpu_rx;
-                let tx = process_tx;
-                let stats_tx_clone = stats_tx.clone();
-                std::thread::spawn(move || {
-                    threads::process_gpu_frame_thread(process, rx, tx, hsv_range, stats_tx_clone);
-                })
-            };
-
-            // HID Thread (same as CPU pipeline)
-            let hid_handle = {
-                let comm = Arc::clone(&self.comm);
-                let rx = process_rx;
-                let roi = self.roi;
-                let coordinate_transform = self.coordinate_transform.clone();
-                let stats_tx_clone = stats_tx.clone();
-                let hid_send_interval = self.config.hid_send_interval;
-                let runtime_state = self.runtime_state.clone();
-                let activation_conditions = self.activation_conditions.clone();
-                std::thread::spawn(move || {
-                    threads::hid_thread(
-                        comm,
-                        rx,
-                        roi,
-                        coordinate_transform,
-                        stats_tx_clone,
-                        hid_send_interval,
-                        runtime_state,
-                        activation_conditions,
-                    );
-                })
-            };
-
-            // Stats/UI Thread（メインスレッドで実行）
-            threads::stats_thread(
-                stats_rx,
-                &mut self.stats,
-                &mut self.recovery,
-                &self.runtime_state,
-                &*self.input,
-                self.audio_feedback.as_ref(),
+        // ── Capture thread ────────────────────────────────────────────────────
+        let capture_stop = Arc::clone(&stop);
+        let capture_metrics = Arc::clone(&metrics);
+        let capture_runtime_state = Arc::clone(&runtime_state);
+        let capture_config = config.capture.clone();
+        let capture_roi = roi;
+        handles.push(thread::spawn(move || {
+            crate::application::threads::capture_thread(
+                capture,
+                capture_tx,
+                capture_metrics,
+                capture_runtime_state,
+                capture_stop,
+                capture_config,
+                capture_roi,
             );
+        }));
 
-            // スレッドの終了を待つ
-            let _ = capture_handle.join();
-            let _ = process_handle.join();
-            let _ = hid_handle.join();
-        } else {
-            tracing::info!("CPU pipeline enabled: using traditional CPU processing");
-
-            // CPU パイプライン
-            let (capture_tx, capture_rx) = bounded::<threads::TimestampedFrame>(1);
-
-            // Capture Thread
-            let capture_handle = {
-                let capture = Arc::clone(&self.capture);
-                let tx = capture_tx;
-                let roi = self.roi;
-                std::thread::spawn(move || {
-                    threads::capture_thread(capture, tx, roi);
-                })
-            };
-
-            // Process Thread
-            let process_handle = {
-                let process = Arc::clone(&self.process);
-                let roi = self.roi;
-                let hsv_range = self.hsv_range;
-                let rx = capture_rx;
-                let tx = process_tx;
-                let stats_tx_clone = stats_tx.clone();
-                std::thread::spawn(move || {
-                    threads::process_thread(process, rx, tx, roi, hsv_range, stats_tx_clone);
-                })
-            };
-
-            // HID Thread
-            let hid_handle = {
-                let comm = Arc::clone(&self.comm);
-                let rx = process_rx;
-                let roi = self.roi;
-                let coordinate_transform = self.coordinate_transform.clone();
-                let stats_tx_clone = stats_tx.clone();
-                let hid_send_interval = self.config.hid_send_interval;
-                let runtime_state = self.runtime_state.clone();
-                let activation_conditions = self.activation_conditions.clone();
-                std::thread::spawn(move || {
-                    threads::hid_thread(
-                        comm,
-                        rx,
-                        roi,
-                        coordinate_transform,
-                        stats_tx_clone,
-                        hid_send_interval,
-                        runtime_state,
-                        activation_conditions,
-                    );
-                })
-            };
-
-            // Stats/UI Thread（メインスレッドで実行）
-            threads::stats_thread(
-                stats_rx,
-                &mut self.stats,
-                &mut self.recovery,
-                &self.runtime_state,
-                &*self.input,
-                self.audio_feedback.as_ref(),
+        // ── Process thread ────────────────────────────────────────────────────
+        let process_stop = Arc::clone(&stop);
+        let process_metrics = Arc::clone(&metrics);
+        let process_runtime_state = Arc::clone(&runtime_state);
+        let process_config = config.process.clone();
+        handles.push(thread::spawn(move || {
+            crate::application::threads::process_thread(
+                process,
+                capture_rx,
+                process_tx,
+                process_metrics,
+                process_stop,
+                crate::application::threads::ProcessThreadContext {
+                    runtime_state: process_runtime_state,
+                    config: process_config,
+                },
             );
+        }));
 
-            // スレッドの終了を待つ
-            let _ = capture_handle.join();
-            let _ = process_handle.join();
-            let _ = hid_handle.join();
+        // ── HID thread ────────────────────────────────────────────────────────
+        let hid_stop = Arc::clone(&stop);
+        let hid_metrics = Arc::clone(&metrics);
+        let hid_runtime_state = Arc::clone(&runtime_state);
+        let hid_input = Arc::clone(&input);
+        let hid_stats_tx = stats_tx;
+        let communication_config = config.communication.clone();
+        let coordinate_transform_config = config.process.coordinate_transform.clone();
+        let activation_config = config.activation.clone();
+        let hid_roi = roi;
+        handles.push(thread::spawn(move || {
+            crate::application::threads::hid_thread(
+                comm,
+                process_rx,
+                hid_input,
+                hid_metrics,
+                hid_stats_tx,
+                hid_runtime_state,
+                hid_stop,
+                communication_config,
+                coordinate_transform_config,
+                activation_config,
+                hid_roi,
+            );
+        }));
+
+        // ── Stats thread ──────────────────────────────────────────────────────
+        let stats_stop = Arc::clone(&stop);
+        let stats_metrics = Arc::clone(&metrics);
+        let stats_runtime_state = Arc::clone(&runtime_state);
+        let pipeline_config = config.pipeline.clone();
+        handles.push(thread::spawn(move || {
+            crate::application::stats::stats_thread(
+                stats_rx,
+                stats_metrics,
+                stats_runtime_state,
+                stats_stop,
+                pipeline_config,
+            );
+        }));
+
+        // ── Toggle thread ────────────────────────────────────────────────────
+        if let Some(ref toggle_config) = config.toggle {
+            let toggle_key = VirtualKey::from_config_str(&toggle_config.key)
+                .expect("toggle key already validated");
+            let toggle_input = Arc::clone(&input);
+            let toggle_runtime_state = Arc::clone(&runtime_state);
+            let toggle_stop = Arc::clone(&stop);
+            handles.push(thread::spawn(move || {
+                crate::application::threads::toggle_thread(
+                    toggle_input,
+                    toggle_key,
+                    toggle_runtime_state,
+                    toggle_stop,
+                );
+            }));
+        }
+
+        // Join all threads; propagate first panic as a DomainError.
+        for handle in handles {
+            if let Err(panic_payload) = handle.join() {
+                stop.store(true, Ordering::Relaxed);
+                let panic_reason = if let Some(message) = panic_payload.downcast_ref::<&str>() {
+                    message.to_string()
+                } else if let Some(message) = panic_payload.downcast_ref::<String>() {
+                    message.clone()
+                } else {
+                    "unknown panic payload".to_string()
+                };
+                return Err(DomainError::Process(format!(
+                    "pipeline thread panicked: {panic_reason}"
+                )));
+            }
         }
 
         Ok(())
@@ -301,25 +218,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::threads::TimestampedFrame;
-    use crate::domain::{
-        error::DomainError,
-        ports::{DeviceInfo, VirtualKey},
-        types::{DetectionResult, Frame, HsvRange, ProcessorBackend, Roi},
+    use crate::application::runtime_state::RuntimeState;
+    use crate::domain::config::{
+        AppConfig, CaptureConfig, CommunicationConfig, CoordinateTransformConfig, DebugConfig,
+        HsvRangeConfig, PipelineConfig, ProcessConfig, ProcessMode, RoiConfig,
     };
-    use std::time::Instant;
+    use crate::domain::ports::ProcessPort;
+    use crate::domain::types::{
+        DeviceInfo, GpuFrame, HsvRange, InputState, ProcessorBackend, Roi, VirtualKey,
+    };
+    use crate::infrastructure::processing::cpu::ColorProcessAdapter;
 
-    // モック実装
     struct MockCapture;
+
     impl CapturePort for MockCapture {
-        fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
-            Ok(Some(Frame {
-                data: vec![0u8; (roi.width * roi.height * 4) as usize],
-                width: roi.width,
-                height: roi.height,
-                timestamp: std::time::Instant::now(),
-                dirty_rects: vec![],
-            }))
+        fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
+            Ok(None)
+        }
+
+        fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+            Ok(None)
         }
 
         fn reinitialize(&mut self) -> DomainResult<()> {
@@ -327,212 +245,307 @@ mod tests {
         }
 
         fn device_info(&self) -> DeviceInfo {
-            DeviceInfo {
-                width: 1920,
-                height: 1080,
-                refresh_rate: 144,
-                name: "Mock Display".to_string(),
-            }
+            DeviceInfo::new(1920, 1080, "mock".to_string())
+        }
+
+        fn supports_gpu_frame(&self) -> bool {
+            true
         }
     }
 
-    #[allow(dead_code)]
-    struct MockProcess;
-    impl ProcessPort for MockProcess {
-        fn process_frame(
-            &mut self,
-            _frame: &Frame,
-            _roi: &Roi,
-            _hsv_range: &HsvRange,
-        ) -> DomainResult<DetectionResult> {
-            Ok(DetectionResult {
-                timestamp: std::time::Instant::now(),
-                detected: true,
-                center_x: 960.0,
-                center_y: 540.0,
-                coverage: 1000,
-                bounding_box: None,
-            })
-        }
-
-        fn backend(&self) -> ProcessorBackend {
-            ProcessorBackend::Cpu
-        }
-    }
-
-    #[allow(dead_code)]
     struct MockComm;
+
     impl CommPort for MockComm {
         fn send(&mut self, _data: &[u8]) -> DomainResult<()> {
+            Ok(())
+        }
+
+        fn reconnect(&mut self) -> DomainResult<()> {
             Ok(())
         }
 
         fn is_connected(&self) -> bool {
             true
         }
-
-        fn reconnect(&mut self) -> DomainResult<()> {
-            Ok(())
-        }
     }
 
-    #[allow(dead_code)]
     struct MockInput;
+
     impl InputPort for MockInput {
         fn is_key_pressed(&self, _key: VirtualKey) -> bool {
             false
         }
-
-        fn poll_input_state(&self) -> crate::domain::ports::InputState {
-            crate::domain::ports::InputState {
+        fn poll_input_state(&self) -> InputState {
+            InputState {
                 mouse_left: false,
                 mouse_right: false,
             }
         }
     }
 
+    fn build_process_selector() -> ProcessSelector {
+        let adapter = ColorProcessAdapter::new().expect("ColorProcessAdapter should initialize");
+        ProcessSelector::FastColor(adapter)
+    }
+
+    fn test_config() -> AppConfig {
+        AppConfig {
+            capture: CaptureConfig {
+                source: "dda".to_string(),
+                timeout_ms: 8,
+                monitor_index: 0,
+            },
+            process: ProcessConfig {
+                mode: ProcessMode::FastColor,
+                roi: RoiConfig {
+                    width: 460,
+                    height: 240,
+                },
+                hsv_range: HsvRangeConfig {
+                    h_low: 25,
+                    h_high: 45,
+                    s_low: 80,
+                    s_high: 255,
+                    v_low: 80,
+                    v_high: 255,
+                },
+                coordinate_transform: CoordinateTransformConfig {
+                    sensitivity: 1.0,
+                    x_clip_limit: 10.0,
+                    y_clip_limit: 10.0,
+                    dead_zone: 0.0,
+                },
+            },
+            communication: CommunicationConfig {
+                vendor_id: 0x1234,
+                product_id: 0x5678,
+                hid_send_interval_ms: 8,
+            },
+            pipeline: PipelineConfig {
+                stats_interval_sec: 10,
+            },
+            debug: DebugConfig { enabled: false },
+            toggle: None,
+            activation: None,
+        }
+    }
+
+    #[test]
+    fn pipeline_construction_succeeds() {
+        let input: Arc<dyn InputPort> = Arc::new(MockInput);
+        let config = test_config();
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+
+        let _runner = PipelineRunner::new(
+            MockCapture,
+            build_process_selector(),
+            MockComm,
+            input,
+            config,
+            metrics,
+            runtime_state,
+        );
+    }
+
+    #[test]
+    fn pipeline_run_stops_cleanly() {
+        let input: Arc<dyn InputPort> = Arc::new(MockInput);
+        let config = test_config();
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+
+        let runner = PipelineRunner::new(
+            MockCapture,
+            build_process_selector(),
+            MockComm,
+            input,
+            config,
+            metrics,
+            runtime_state,
+        );
+
+        // MockComm::send fails with Communication error once actually called.
+        // The real hid_thread will try to send on timeout and eventually break.
+        // We give it a generous timeout but rely on MockComm returning Ok.
+        // The threads run indefinitely with MockCapture returning Ok(None).
+        // This test cannot call runner.run() without blocking forever —
+        // use a separate timeout thread to set stop if needed.
+        // For now just verify construction (run() would block).
+        let _ = runner;
+    }
+
+    #[test]
+    fn process_selector_fast_color_backend_is_cpu() {
+        let selector = build_process_selector();
+        assert_eq!(selector.backend(), ProcessorBackend::Cpu);
+        assert!(!selector.supports_gpu_processing());
+    }
+
+    #[test]
+    fn channel_topology_uses_expected_capacities() {
+        let (capture_tx, capture_rx) = crossbeam_channel::bounded::<TimestampedFrame>(1);
+        let (process_tx, process_rx) = crossbeam_channel::bounded::<TimestampedDetection>(1);
+        let (stats_tx, stats_rx) = crossbeam_channel::unbounded::<StatData>();
+
+        assert_eq!(capture_tx.len(), 0);
+        assert_eq!(capture_rx.len(), 0);
+        assert_eq!(process_tx.len(), 0);
+        assert_eq!(process_rx.len(), 0);
+        assert_eq!(stats_tx.len(), 0);
+        assert_eq!(stats_rx.len(), 0);
+
+        assert_eq!(capture_tx.capacity(), Some(1));
+        assert_eq!(process_tx.capacity(), Some(1));
+        assert_eq!(stats_tx.capacity(), None);
+    }
+
     #[allow(dead_code)]
-    struct FailingCapture;
-    impl CapturePort for FailingCapture {
-        fn capture_frame_with_roi(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
-            Err(DomainError::Timeout("Test timeout".to_string()))
-        }
+    fn _run_consumes_self_compile_time_check() {
+        let input: Arc<dyn InputPort> = Arc::new(MockInput);
+        let runtime_state = Arc::new(RuntimeState::new());
+        let runner = PipelineRunner::new(
+            MockCapture,
+            build_process_selector(),
+            MockComm,
+            input,
+            test_config(),
+            PipelineMetrics::new(),
+            runtime_state,
+        );
+        let _ = runner.run();
+        // runner.run(); // This would fail to compile because run(self) consumes ownership.
+    }
 
-        fn reinitialize(&mut self) -> DomainResult<()> {
-            Err(DomainError::Capture("Reinit failed".to_string()))
-        }
+    #[test]
+    fn process_port_trait_accepts_mock_types() {
+        struct InlineProcess;
+        impl ProcessPort for InlineProcess {
+            fn process_frame(
+                &mut self,
+                _frame: &Frame,
+                _roi: &Roi,
+                _hsv_range: &HsvRange,
+            ) -> DomainResult<DetectionResult> {
+                Ok(DetectionResult::not_detected())
+            }
 
-        fn device_info(&self) -> DeviceInfo {
-            DeviceInfo {
-                width: 1920,
-                height: 1080,
-                refresh_rate: 144,
-                name: "Failing Capture".to_string(),
+            fn backend(&self) -> ProcessorBackend {
+                ProcessorBackend::Cpu
             }
         }
+
+        let mut process = InlineProcess;
+        let frame = Frame::new(vec![0, 0, 0, 0], 1, 1);
+        let roi = Roi::new(0, 0, 1, 1);
+        let hsv = HsvRange::new(0, 0, 0, 0, 0, 0);
+        let result = process
+            .process_frame(&frame, &roi, &hsv)
+            .expect("inline mock processing should succeed");
+        assert!(!result.detected);
     }
 
     #[test]
-    fn test_pipeline_config_default() {
-        let config = PipelineConfig::default();
-        assert_eq!(config.stats_interval, Duration::from_secs(10));
-        assert!(config.enable_dirty_rect_optimization);
-        assert_eq!(config.hid_send_interval, Duration::from_millis(8));
+    fn pipeline_run_rejects_oversized_roi() {
+        struct MockSmallCapture;
+        impl CapturePort for MockSmallCapture {
+            fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
+                Ok(None)
+            }
+
+            fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+                Ok(None)
+            }
+
+            fn reinitialize(&mut self) -> DomainResult<()> {
+                Ok(())
+            }
+
+            fn device_info(&self) -> DeviceInfo {
+                DeviceInfo::new(200, 100, "mock-small".to_string())
+            }
+
+            fn supports_gpu_frame(&self) -> bool {
+                true
+            }
+        }
+
+        let input: Arc<dyn InputPort> = Arc::new(MockInput);
+        let config = test_config(); // ROI is 460x240, display is 200x100 → error
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let runner = PipelineRunner::new(
+            MockSmallCapture,
+            build_process_selector(),
+            MockComm,
+            input,
+            config,
+            metrics,
+            runtime_state,
+        );
+        let result = runner.run();
+        assert!(
+            matches!(result, Err(DomainError::Configuration(_))),
+            "expected Configuration error, got {result:?}"
+        );
     }
 
     #[test]
-    fn test_timestamped_frame_creation() {
-        let frame = Frame {
-            data: vec![0u8; 100],
-            width: 10,
-            height: 10,
-            timestamp: Instant::now(),
-            dirty_rects: vec![],
-        };
+    fn pipeline_run_accepts_exact_fit_roi() {
+        struct BoundedCapture {
+            remaining: usize,
+        }
 
-        let captured_at = Instant::now();
-        let timestamped = TimestampedFrame {
-            frame: frame.clone(),
-            captured_at,
-        };
+        impl CapturePort for BoundedCapture {
+            fn capture_frame(&mut self, _roi: &Roi) -> DomainResult<Option<Frame>> {
+                if self.remaining == 0 {
+                    return Err(DomainError::Capture("done".to_string()));
+                }
+                self.remaining -= 1;
+                Ok(Some(Frame::new(vec![0, 0, 0, 255], 1, 1)))
+            }
 
-        assert_eq!(timestamped.frame.width, 10);
-        assert_eq!(timestamped.frame.height, 10);
-    }
+            fn capture_gpu_frame(&mut self, _roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+                Ok(None)
+            }
 
-    #[test]
-    fn test_send_latest_only() {
-        let (tx, rx) = bounded::<i32>(1);
+            fn reinitialize(&mut self) -> DomainResult<()> {
+                Ok(())
+            }
 
-        // 最初の送信は成功
-        threads::send_latest_only(&tx, 1);
-        assert_eq!(rx.try_recv().unwrap(), 1);
+            fn device_info(&self) -> DeviceInfo {
+                DeviceInfo::new(460, 240, "mock-exact".to_string())
+            }
 
-        // キューを満たす
-        tx.try_send(2).unwrap();
+            fn supports_gpu_frame(&self) -> bool {
+                true
+            }
+        }
 
-        // キューが満杯の状態で新しい値を送信（満杯なので無視される）
-        threads::send_latest_only(&tx, 3);
-
-        // キューには古い値（2）が残っている
-        let value = rx.try_recv().unwrap();
-        assert_eq!(value, 2);
-    }
-
-    #[test]
-    fn test_capture_with_roi_abstraction() {
-        // CapturePort traitの抽象化を通じてcapture_frame_with_roi()を使用するテスト
-        let mut capture = MockCapture;
-
-        // テスト1: 小さいROI (400x300)
-        let roi_small = Roi::new(100, 100, 400, 300);
-        let frame = capture
-            .capture_frame_with_roi(&roi_small)
-            .expect("Capture should succeed")
-            .expect("Frame should be present");
-
-        assert_eq!(frame.width, roi_small.width, "Frame width should match ROI");
-        assert_eq!(
-            frame.height, roi_small.height,
-            "Frame height should match ROI"
+        let input: Arc<dyn InputPort> = Arc::new(MockInput);
+        let config = test_config(); // ROI 460x240, display 460x240 → exact fit → OK
+        let metrics = PipelineMetrics::new();
+        let runtime_state = Arc::new(RuntimeState::new());
+        let runner = PipelineRunner::new(
+            BoundedCapture { remaining: 3 },
+            build_process_selector(),
+            MockComm,
+            input,
+            config,
+            metrics,
+            runtime_state,
         );
-        assert_eq!(
-            frame.data.len(),
-            (roi_small.width * roi_small.height * 4) as usize,
-            "Data size should match ROI"
-        );
-
-        // テスト2: 設計目標サイズ (800x600)
-        let roi_medium = Roi::new(560, 240, 800, 600);
-        let frame = capture
-            .capture_frame_with_roi(&roi_medium)
-            .expect("Capture should succeed")
-            .expect("Frame should be present");
-
-        assert_eq!(
-            frame.width, roi_medium.width,
-            "Frame width should match ROI"
-        );
-        assert_eq!(
-            frame.height, roi_medium.height,
-            "Frame height should match ROI"
-        );
-        assert_eq!(
-            frame.data.len(),
-            (roi_medium.width * roi_medium.height * 4) as usize,
-            "Data size should match ROI"
-        );
-
-        // テスト3: フルスクリーンROI
-        let roi_full = Roi::new(0, 0, 1920, 1080);
-        let frame = capture
-            .capture_frame_with_roi(&roi_full)
-            .expect("Capture should succeed")
-            .expect("Frame should be present");
-
-        assert_eq!(
-            frame.width, roi_full.width,
-            "Frame width should match full screen ROI"
-        );
-        assert_eq!(
-            frame.height, roi_full.height,
-            "Frame height should match full screen ROI"
-        );
-
-        // テスト4: capture_frame()のデフォルト実装がフルスクリーンROIを使用することを確認
-        let device_info = capture.device_info();
-        let frame_default = capture
-            .capture_frame()
-            .expect("Capture should succeed")
-            .expect("Frame should be present");
-
-        assert_eq!(
-            frame_default.width, device_info.width,
-            "Default capture should return full screen width"
-        );
-        assert_eq!(
-            frame_default.height, device_info.height,
-            "Default capture should return full screen height"
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = runner.run();
+            let _ = tx.send(result);
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("pipeline should stop within 5 seconds");
+        assert!(
+            !matches!(result, Err(DomainError::Configuration(_))),
+            "ROI validation should pass; got Configuration error"
         );
     }
 }

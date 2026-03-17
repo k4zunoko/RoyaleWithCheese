@@ -1,6 +1,6 @@
 [package]
 name = "RoyaleWithCheese"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 default-run = "RoyaleWithCheese"
 
@@ -66,10 +66,7 @@ lto = true
 codegen-units = 1
 strip = true
 
-[[bin]]
-name = "generate_schema"
-path = "tools/generate_schema.rs"
-
 [dev-dependencies]
 # テスト用
 criterion = "0.5"
+tempfile = "3.10"

@@ -1,79 +1,181 @@
-# RoyaleWithCheese
+# AGENTS.md
 
-Windows環境で、画面キャプチャ → 画像処理 → HID出力を低レイテンシで実行するRustプロジェクトです。
-このプロジェクトでは、低レイテンシを最優先に設計されており、リアルタイム性が求められるアプリケーションに適しています。
+`C:\Programs\RoyaleWithCheese` で作業するコーディングエージェント向けのリポジトリガイダンス。
 
-## まず見る
-
-- docs/README.md（docs全体の索引）
-- README.md（クイックスタート）
-- config.toml.example（設定例）
-
-## docs/ ドキュメント一覧
-
-| ドキュメント | 内容 |
-|------------|------|
-| docs/README.md | docs全体の索引（まず読む） |
-| docs/Architecture.md | 全体アーキテクチャの俯瞰 |
-| docs/DESIGN_PHILOSOPHY.md | 設計原則・判断の根拠 |
-| docs/REQUIREMENTS.md | 要求仕様（機能/非機能、スコープ） |
-| docs/CLI_CONTRACT.md | 実行時契約（config.toml、終了コード、feature等） |
-| docs/DOMAIN_LAYER.md | Domain層の詳細仕様 |
-| docs/APPLICATION_LAYER.md | Application層の詳細仕様 |
-| docs/INFRASTRUCTURE_CAPTURE.md | DDAキャプチャ実装の詳細 |
-| docs/INFRASTRUCTURE_SPOUT.md | Spoutテクスチャ受信の詳細 |
-| docs/INFRASTRUCTURE_WGC.md | WGCキャプチャ実装の詳細（完了） |
-| docs/WGC_PHASE1_REPORT.md | WGC Phase 1技術検証レポート |
-| docs/ERROR_HANDLING.md | エラーハンドリング戦略 |
-| docs/TESTING_STRATEGY.md | テスト戦略 |
-| docs/LOGGING.md | ログ実装の詳細 |
-| docs/RELEASE_BUILD.md | Releaseビルド時のログ無効化 |
-| docs/VISUAL_DEBUG_GUIDE.md | 視覚デバッグ（opencv-debug-display）の使い方 |
-| docs/ROADMAP.md | 現状と今後（未実装/制約含む） |
-
-## ドキュメント管理方針
-
-**重要**: これらのドキュメントは実装状況と常に一致するよう、以下のタイミングで更新してください:
-
-1. **設計判断の変更時**: DESIGN_PHILOSOPHY.md, 該当レイヤのドキュメント
-2. **実装追加時**: 該当レイヤのドキュメント
-3. **テスト追加時**: TESTING_STRATEGY.md
-4. **エラーハンドリング変更時**: ERROR_HANDLING.md
-
-GitHub Copilotは常にこれらのドキュメントを参照してサポートを提供します。
+## Review guidelines
+- Always review in Japanese
 
 ---
 
-## LLM向けメタ情報
+## スコープ
 
-### このドキュメント群について
+-   このガイドはリポジトリ全体に適用されます。
+-   これは Windows 向けのキャプチャ／処理／HID パイプラインのための Rust 2021 Cargo プロジェクトです。
+-   このプロジェクトは内部コードを理解できるプログラマが利用することを想定しているので、内部の状態や処理構造を、そのまま理解できることを優先したシステム中心設計になっています。
 
-**AGENTS.mdとdocs/配下のドキュメント群は、GitHub CopilotなどのLLM言語モデルがプロジェクト状況を正確に理解するために設計されています。**
+---
 
-### ドキュメント設計の責務
+## 環境およびネイティブ依存関係
 
-#### AGENTS.md
-- **プロジェクトの最低限の概要**（目的、技術スタック、アーキテクチャ）
-- **docs/配下のドキュメントへのナビゲーション**（索引・使用ガイド）
-- **このメタ情報**（LLMがドキュメント管理を理解するため）
+-   コマンドはリポジトリのルートから実行してください。
+-   Cargo は `.cargo/config.toml` から必要な環境変数を継承します。
+-   主な環境変数（既に設定済み）:
+    -   `LIBCLANG_PATH`
+    -   `LLVM_CONFIG_PATH`
+    -   `CLANG_PATH`
+    -   `OPENCV_INCLUDE_PATHS`
+    -   `OPENCV_LINK_PATHS`
+    -   `OPENCV_LINK_LIBS`
+-   このリポジトリは Windows 向けであり、`third_party/` 配下のアセットに依存しています。
 
-#### docs/配下のドキュメント
-- **詳細な設計方針と実装指針**（AGENTS.mdには書かない）
-- **設計判断の根拠**（なぜこの設計にしたのか）
-- **具体的な実装例とコードスニペット**
-- **変更許容性のガイドライン**（何を変更してよいか、何を保護すべきか）
-- **レイヤごとの責務と境界**
+---
 
-### ドキュメント品質の原則
+## 単一テストの実行
 
-1. **具体性**: 抽象的な記述ではなく、コード例や具体的な数値を含める
-2. **根拠**: 設計判断には必ず理由を明記（パフォーマンス、保守性、安全性など）
-3. **最新性**: 実装と常に一致させる（古い情報は削除または更新）
-4. **ナビゲーション**: AGENTS.mdから各ドキュメントへの明確な案内
-5. **文脈**: LLMが次回セッションで読んでも理解できる十分な文脈情報
+このリポジトリには `src/--` 内のユニットテストと、`tests/-.rs` の統合テストがあります。
 
-### 注意事項
+### 単一ユニットテスト
 
-- **AGENTS.mdに詳細を書かない**: 詳細はdocs/配下に分離
-- **重複を避ける**: 同じ情報は1箇所のみに記載し、相互参照を使用
-- **実装との一致**: ドキュメントと実装が乖離した場合、必ず同期する
+```powershell
+cargo test application::pipeline::tests::pipeline_construction_succeeds -- --exact --nocapture
+```
+
+-   `--` の前は Cargo のテストフィルタです。
+-   `--exact` は部分一致を防ぎます。
+-   `--nocapture` はデバッグ出力に有用です。
+
+### 単一の統合テストクレート
+
+```powershell
+cargo test --test pipeline_integration
+```
+
+### 統合テスト内の単一テスト
+
+```powershell
+cargo test --test pipeline_integration mock_pipeline_runs_and_stops -- --exact --nocapture
+```
+
+### 無効化されたハードウェアテスト
+
+```powershell
+cargo test real_hardware_pipeline_smoke_test -- --ignored --nocapture --test-threads=1
+```
+
+タイミング依存またはハードウェア依存テストには `--test-threads=1` を使用してください。
+
+---
+
+## テスト規約
+
+-   ユニットテストは通常 `#[cfg(test)] mod tests` 内に配置されます。
+-   統合テストは `tests/` に配置されます。
+-   ハードウェア依存テストは `#[ignore = "..."]` が付与されています。
+-   CI 対応のため、モックベースのテストを推奨します。
+-   モックは一般的に以下を実装します:
+    -   `CapturePort`
+    -   `ProcessPort`
+    -   `CommPort`
+    -   `InputPort`
+-   GPU／ディスプレイ／HID テストは、環境が対応していない限り有効化しないでください。
+
+---
+
+## インポートとファイル構成
+
+-   インポートは論理グループごとに空行で区切ります。
+-   一般的な順序:
+    1.  `std::...`
+    2.  クレート内 (`crate::...` または `RoyaleWithCheese::...`)
+    3.  サードパーティクレート
+-   一部のファイルでは順序が異なるため、周囲のスタイルに合わせてください。
+-   ワイルドカードインポートは避けてください。
+-   例外: `opencv::prelude::-`
+-   アーキテクチャ境界を維持してください:
+    -   抽象: `domain`
+    -   オーケストレーション: `application`
+    -   実装: `infrastructure`
+-   `main.rs` は起動および配線処理のみに限定してください。
+
+---
+
+## フォーマット規約
+
+-   rustfmt のデフォルトに従います。
+-   複数行の構造体／列挙型／呼び出しには末尾カンマを使用します。
+-   文にはセミコロン、末尾式には付けません。
+-   文字列はダブルクォートを使用します。
+-   コメントは短く、対象コードの近くに配置します。
+
+---
+
+## 命名規約
+
+-   型、列挙型、トレイト: `PascalCase`
+-   関数、メソッド、モジュール、フィールド: `snake_case`
+-   設定構造体: `-Config`
+-   アダプタ実装: `-Adapter`
+-   トレイト抽象: `-Port`
+-   テストは説明的な `snake_case`
+-   クレート名 `RoyaleWithCheese` は意図的なもの（`src/lib.rs` に例外あり）
+
+---
+
+## 型および API 設計
+
+-   フォールバック可能な API には `DomainError` と `DomainResult<T>` を優先します。
+-   小さなコンストラクタを使用:
+    -   `Roi::new`
+    -   `HsvRange::new`
+    -   `Frame::new`
+    -   `DeviceInfo::new`
+-   `#[derive(Debug, Clone)]` を優先し、必要な場合のみ `Copy` 等を追加。
+-   ランタイム共有状態は `Arc` + アトミックで管理。
+-   トレイトオブジェクトや enum dispatch は既存設計に従う。
+-   網羅的な enum マッチを維持し、ワイルドカードは避ける。
+
+---
+
+## エラーハンドリング
+
+-   本番コードでの `unwrap()` や `expect()` は避けてください。
+-   外部ライブラリエラーは `map_err(...)` で `DomainError` に変換。
+-   その後 `?` を使用。
+-   GPU 初期化失敗時の CPU フォールバック等、既存挙動を維持。
+-   問題は `tracing` でログ出力。
+-   テストや `build.rs` は例外的に `unwrap` 可（本番コードには持ち込まない）。
+
+---
+
+## ログと設定
+
+-   構造化ログには `tracing` を使用。
+-   Debug ビルドは詳細、Release は簡潔。
+-   `performance-timing` feature でタイミングログ有効化。
+-   設定は `config.toml` からロード。
+-   `config.toml` の読み込み・パース・検証に失敗した場合はエラー終了させ、暗黙のデフォルトフォールバックを追加しないでください。
+-   検証は `AppConfig::validate()` を使用。
+-   対応キャプチャソース:
+    -   `dda`
+    -   `wgc`
+
+---
+
+## 推奨検証フロー
+
+```powershell
+cargo fmt -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+変更箇所が限定的な場合は、該当テストのみ実行してください。
+
+---
+
+## コード編集時
+
+-   インポート順序やコメント量は周囲に合わせる。
+-   可能なら変更箇所付近にテストを追加／更新。
+-   パイプライン挙動にはモックテストを優先。
+-   新しいコマンドやワークフローを追加した場合は、このファイルを更新してください。

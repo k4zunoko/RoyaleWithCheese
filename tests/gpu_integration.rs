@@ -5,14 +5,12 @@
 
 use std::time::Instant;
 use RoyaleWithCheese::domain::{
-    config::DetectionMethod,
     ports::ProcessPort,
     types::{Frame, HsvRange, Roi},
 };
 use RoyaleWithCheese::infrastructure::{
     gpu_device::create_d3d11_device,
-    process_selector::ProcessSelector,
-    processing::{ColorProcessAdapter, GpuColorAdapter},
+    processing::{cpu::ColorProcessAdapter, gpu::GpuColorAdapter, selector::ProcessSelector},
 };
 
 /// GPUデバイスが利用可能かチェック
@@ -65,24 +63,22 @@ fn test_gpu_process_selector_creation() {
     let gpu_adapter = GpuColorAdapter::with_device_context(device, context)
         .expect("Failed to create GPU adapter");
 
-    let selector = ProcessSelector::new_gpu(gpu_adapter);
-
-    assert!(selector.is_gpu());
-    assert!(!selector.is_cpu());
-    assert_eq!(selector.backend_type(), "GPU (D3D11 Compute Shader)");
+    let selector = ProcessSelector::FastColorGpu(gpu_adapter);
+    assert_eq!(
+        selector.backend(),
+        RoyaleWithCheese::domain::types::ProcessorBackend::Gpu
+    );
 }
 
 #[test]
 #[ignore = "Requires GPU"]
 fn test_cpu_process_selector_creation() {
-    let cpu_adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments)
-        .expect("Failed to create CPU adapter");
-
-    let selector = ProcessSelector::new_cpu(cpu_adapter);
-
-    assert!(!selector.is_gpu());
-    assert!(selector.is_cpu());
-    assert_eq!(selector.backend_type(), "CPU (OpenCV)");
+    let cpu_adapter = ColorProcessAdapter::new().expect("Failed to create CPU adapter");
+    let selector = ProcessSelector::FastColor(cpu_adapter);
+    assert_eq!(
+        selector.backend(),
+        RoyaleWithCheese::domain::types::ProcessorBackend::Cpu
+    );
 }
 
 #[test]
@@ -106,7 +102,7 @@ fn test_gpu_processes_frame() {
         .expect("GPU processing failed");
 
     assert!(result.detected, "Should detect yellow color");
-    assert!(result.coverage > 0, "Coverage should be > 0");
+    assert!(result.coverage > 0.0, "Coverage should be > 0");
 
     // Center should be near frame center (with some tolerance)
     let expected_center_x = 320.0;
@@ -140,8 +136,7 @@ fn test_cpu_gpu_process_comparison() {
     let hsv_range = HsvRange::new(20, 40, 100, 255, 100, 255);
 
     // CPU processing
-    let mut cpu_adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments)
-        .expect("Failed to create CPU adapter");
+    let mut cpu_adapter = ColorProcessAdapter::new().expect("Failed to create CPU adapter");
     let cpu_result = cpu_adapter
         .process_frame(&frame, &roi, &hsv_range)
         .expect("CPU processing failed");
@@ -199,7 +194,7 @@ fn test_process_selector_enum_dispatch() {
     let (device, context) = create_d3d11_device().expect("Failed to create D3D11 device");
     let gpu_adapter = GpuColorAdapter::with_device_context(device, context)
         .expect("Failed to create GPU adapter");
-    let mut gpu_selector = ProcessSelector::new_gpu(gpu_adapter);
+    let mut gpu_selector = ProcessSelector::FastColorGpu(gpu_adapter);
 
     let gpu_result = gpu_selector
         .process_frame(&frame, &roi, &hsv_range)
@@ -207,9 +202,8 @@ fn test_process_selector_enum_dispatch() {
     assert!(gpu_result.detected);
 
     // Test CPU variant
-    let cpu_adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments)
-        .expect("Failed to create CPU adapter");
-    let mut cpu_selector = ProcessSelector::new_cpu(cpu_adapter);
+    let cpu_adapter = ColorProcessAdapter::new().expect("Failed to create CPU adapter");
+    let mut cpu_selector = ProcessSelector::FastColor(cpu_adapter);
 
     let cpu_result = cpu_selector
         .process_frame(&frame, &roi, &hsv_range)
@@ -218,13 +212,12 @@ fn test_process_selector_enum_dispatch() {
 }
 
 #[test]
-fn test_fallback_when_gpu_unavailable() {
-    // This test simulates the fallback behavior when GPU is not available
-    // We can't easily simulate GPU failure, but we can verify CPU fallback works
+fn test_cpu_mode_processes_correctly() {
+    // This test verifies CPU processing mode works correctly
+    // ProcessMode::FastColor uses CPU-based HSV color detection
 
-    let cpu_adapter = ColorProcessAdapter::new(100, DetectionMethod::Moments)
-        .expect("Failed to create CPU adapter");
-    let selector = ProcessSelector::new_cpu(cpu_adapter);
+    let cpu_adapter = ColorProcessAdapter::new().expect("Failed to create CPU adapter");
+    let selector = ProcessSelector::FastColor(cpu_adapter);
 
     // Verify CPU processing works
     let frame = create_yellow_frame(640, 480);
@@ -234,8 +227,11 @@ fn test_fallback_when_gpu_unavailable() {
     let mut selector = selector;
     let result = selector
         .process_frame(&frame, &roi, &hsv_range)
-        .expect("CPU fallback processing failed");
+        .expect("CPU mode processing failed");
 
     assert!(result.detected);
-    assert_eq!(selector.backend_type(), "CPU (OpenCV)");
+    assert_eq!(
+        selector.backend(),
+        RoyaleWithCheese::domain::types::ProcessorBackend::Cpu
+    );
 }

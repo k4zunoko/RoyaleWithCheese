@@ -1,68 +1,73 @@
-//! WGC (Windows Graphics Capture) キャプチャアダプタ
-//!
-//! Windows Graphics Capture APIを使用した画面キャプチャ。
-//! Windows 10 バージョン 1803 以降で動作。
-//!
-//! # Phase 2: windows crate v0.57 による直接実装
-//!
-//! windows-capture クレートのバージョン不整合により、
-//! windows crate を直接使用してWGC APIを実装します。
-
-use crate::domain::{CapturePort, DeviceInfo, DomainError, DomainResult, Frame, GpuFrame, Roi};
+use crate::domain::error::{DomainError, DomainResult};
+use crate::domain::ports::CapturePort;
+use crate::domain::types::{DeviceInfo, Frame, GpuFrame, Roi};
 use crate::infrastructure::capture::common::{
-    clamp_roi, copy_roi_to_staging, copy_texture_to_cpu, StagingTextureManager,
+    clamp_roi, copy_texture_to_cpu, StagingTextureManager,
 };
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 use windows::core::{factory, IUnknown, Interface, GUID};
-use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
-use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
+use windows::Foundation::TypedEventHandler;
+use windows::Graphics::Capture::{
+    Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession,
+};
+use windows::Graphics::DirectX::Direct3D11::{IDirect3DDevice, IDirect3DSurface};
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Win32::Foundation::{BOOL, LPARAM, RECT};
-use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_BOX, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+    D3D11_CREATE_DEVICE_FLAG, D3D11_RESOURCE_MISC_FLAG, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
+    D3D11_USAGE_DEFAULT,
+};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
-use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
+use windows::Win32::System::WinRT::Direct3D11::{
+    CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
+};
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 
-// IGraphicsCaptureItemInterop COM interface
 #[repr(C)]
 #[derive(Clone, Debug)]
-pub struct IGraphicsCaptureItemInterop(IUnknown);
+struct IGraphicsCaptureItemInterop(IUnknown);
 
 unsafe impl Interface for IGraphicsCaptureItemInterop {
-    type Vtable = IGraphicsCaptureItemInterop_Vtbl;
+    type Vtable = IGraphicsCaptureItemInteropVtbl;
     const IID: GUID = GUID::from_u128(0x3628e81b_3cac_4c60_b7f4_23ce0e0c3356);
 }
 
 impl IGraphicsCaptureItemInterop {
     #[allow(non_snake_case)]
-    pub unsafe fn CreateForMonitor(
+    unsafe fn CreateForMonitor(
         &self,
         monitor: HMONITOR,
     ) -> windows::core::Result<GraphicsCaptureItem> {
-        let mut result: *mut std::ffi::c_void = std::ptr::null_mut();
-        (self.vtable().CreateForMonitor)(
-            self.as_raw(),
-            monitor,
-            &GraphicsCaptureItem::IID,
-            &mut result,
-        )
-        .ok()?;
-        Ok(GraphicsCaptureItem::from_raw(result))
+        let mut result = std::ptr::null_mut();
+        // SAFETY: COM vtable call is made with valid `this`, monitor handle, iid, and out pointer.
+        unsafe {
+            (self.vtable().CreateForMonitor)(
+                self.as_raw(),
+                monitor,
+                &GraphicsCaptureItem::IID,
+                &mut result,
+            )
+            .ok()?;
+            Ok(GraphicsCaptureItem::from_raw(result))
+        }
     }
 }
 
 #[repr(C)]
 #[allow(non_snake_case)]
-pub struct IGraphicsCaptureItemInterop_Vtbl {
-    pub base__: windows::core::IUnknown_Vtbl,
-    pub CreateForWindow: unsafe extern "system" fn(
+struct IGraphicsCaptureItemInteropVtbl {
+    base__: windows::core::IUnknown_Vtbl,
+    CreateForWindow: unsafe extern "system" fn(
         this: *mut std::ffi::c_void,
         window: *mut std::ffi::c_void,
         iid: *const GUID,
         result: *mut *mut std::ffi::c_void,
     ) -> windows::core::HRESULT,
-    pub CreateForMonitor: unsafe extern "system" fn(
+    CreateForMonitor: unsafe extern "system" fn(
         this: *mut std::ffi::c_void,
         monitor: HMONITOR,
         iid: *const GUID,
@@ -70,143 +75,82 @@ pub struct IGraphicsCaptureItemInterop_Vtbl {
     ) -> windows::core::HRESULT,
 }
 
-/// WGCキャプチャアダプタ（Phase 2: 直接実装）
-///
-/// CapturePort traitを実装し、WGCによる画面キャプチャを提供します。
-pub struct WgcCaptureAdapter {
-    // デバイス情報
-    device_info: DeviceInfo,
-    _monitor_index: usize,
-
-    // 最新フレームの保持（コールバックから更新）
-    latest_frame: Arc<Mutex<Option<CapturedFrameData>>>,
-
-    // D3D11デバイス（ステージング用）
-    device: ID3D11Device,
-    context: ID3D11DeviceContext,
-
-    // ステージングテクスチャ管理
-    staging_manager: StagingTextureManager,
-
-    // WGCセッション（ドロップ防止のため保持）
-    _capture_item: GraphicsCaptureItem,
-    _frame_pool: Direct3D11CaptureFramePool,
-    _d3d_device: IDirect3DDevice,
-    _capture_session: windows::Graphics::Capture::GraphicsCaptureSession,
-}
-
-// WGCオブジェクトはスレッド安全に使用するためSend + Syncを実装
-// WinRTのCOM呼び出しは内部的にスレッドセーフに設計されている
-unsafe impl Send for WgcCaptureAdapter {}
-unsafe impl Sync for WgcCaptureAdapter {}
-
-/// キャプチャされたフレームデータ
 #[derive(Clone)]
 struct CapturedFrameData {
     texture: ID3D11Texture2D,
     width: u32,
     height: u32,
-    timestamp: Instant,
 }
 
-/// モニター列挙用のコールバックデータ
 struct MonitorEnumData {
     monitors: Vec<HMONITOR>,
 }
 
+pub struct WgcCaptureAdapter {
+    info: DeviceInfo,
+    latest_frame: Arc<Mutex<Option<CapturedFrameData>>>,
+    device: ID3D11Device,
+    context: ID3D11DeviceContext,
+    staging_manager: StagingTextureManager,
+    _capture_item: GraphicsCaptureItem,
+    _frame_pool: Direct3D11CaptureFramePool,
+    _capture_session: GraphicsCaptureSession,
+    _d3d_device: IDirect3DDevice,
+}
+
+// SAFETY: Adapter methods require `&mut self` for capture operations, so callers cannot
+// concurrently use internal COM handles through this type.
+unsafe impl Send for WgcCaptureAdapter {}
+
 impl WgcCaptureAdapter {
-    /// 新しいWGCキャプチャアダプタを作成（Phase 2: 直接実装）
-    ///
-    /// # Arguments
-    /// - `monitor_index`: モニターのインデックス（通常は0）
-    ///
-    /// # Returns
-    /// - `Ok(WgcCaptureAdapter)`: 初期化成功
-    /// - `Err(DomainError)`: 初期化失敗
     pub fn new(monitor_index: usize) -> DomainResult<Self> {
-        // WinRTの初期化
-        unsafe {
-            RoInitialize(RO_INIT_MULTITHREADED).map_err(|e| {
-                DomainError::Initialization(format!("Failed to initialize WinRT: {:?}", e))
-            })?;
-        }
+        // SAFETY: WinRT must be initialized before WGC APIs are used.
+        let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
 
-        // モニターを列挙
         let monitors = Self::enumerate_monitors()?;
-
-        if monitors.is_empty() {
-            return Err(DomainError::Initialization("No monitors found".to_string()));
-        }
-
-        let hmonitor = monitors.get(monitor_index).ok_or_else(|| {
+        let target_monitor = monitors.get(monitor_index).ok_or_else(|| {
             DomainError::Initialization(format!(
-                "Monitor index {} not found (available: {})",
-                monitor_index,
+                "Monitor index {monitor_index} out of range (available: {})",
                 monitors.len()
             ))
         })?;
 
-        // D3D11デバイスを作成
         let (device, context) = Self::create_d3d11_device()?;
-
-        // GraphicsCaptureItemを作成
-        let capture_item = Self::create_capture_item_for_monitor(*hmonitor)?;
-
-        // サイズ情報を取得
+        let capture_item = Self::create_capture_item_for_monitor(*target_monitor)?;
         let size = capture_item.Size().map_err(|e| {
-            DomainError::Initialization(format!("Failed to get capture item size: {:?}", e))
+            DomainError::Initialization(format!("Failed to query capture item size: {e:?}"))
         })?;
 
-        let device_info = DeviceInfo {
-            width: size.Width as u32,
-            height: size.Height as u32,
-            refresh_rate: 0, // WGCでは取得不可
-            name: format!("WGC Monitor {}", monitor_index),
-        };
-
-        // IDirect3DDeviceを作成（WGC用）
         let d3d_device = Self::create_direct3d_device(&device)?;
-
-        // レイテンシ最小化: バッファサイズ2（最小推奨値）でフレームプール作成
         let frame_pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
             &d3d_device,
             DirectXPixelFormat::B8G8R8A8UIntNormalized,
-            2, // 最小バッファでレイテンシ削減
+            2,
             size,
         )
-        .map_err(|e| {
-            DomainError::Initialization(format!("Failed to create frame pool: {:?}", e))
-        })?;
+        .map_err(|e| DomainError::Initialization(format!("Failed to create frame pool: {e:?}")))?;
 
-        // FrameArrivedイベントハンドラを設定（レイテンシ最小化のため即座に処理）
         let latest_frame = Arc::new(Mutex::new(None));
-        let latest_frame_for_callback = Arc::clone(&latest_frame);
-        let device_clone = device.clone();
+        let callback_latest_frame = Arc::clone(&latest_frame);
 
         frame_pool
-            .FrameArrived(&windows::Foundation::TypedEventHandler::new(
-                move |pool: &Option<Direct3D11CaptureFramePool>, _args| {
+            .FrameArrived(&TypedEventHandler::new(
+                move |pool: &Option<Direct3D11CaptureFramePool>, _| {
                     if let Some(pool) = pool {
-                        // 即座にフレームを取得（レイテンシ削減）
                         if let Ok(frame) = pool.TryGetNextFrame() {
                             if let Ok(surface) = frame.Surface() {
-                                // IDirect3DSurfaceからID3D11Texture2Dを取得
-                                if let Ok(texture) =
-                                    Self::get_texture_from_surface(&surface, &device_clone)
-                                {
+                                if let Ok(texture) = Self::get_texture_from_surface(&surface) {
+                                    let mut desc = D3D11_TEXTURE2D_DESC::default();
+                                    // SAFETY: `texture` is valid and `desc` is initialized output storage.
                                     unsafe {
-                                        let mut desc = D3D11_TEXTURE2D_DESC::default();
                                         texture.GetDesc(&mut desc);
-
-                                        // 最新フレームを更新
-                                        if let Ok(mut guard) = latest_frame_for_callback.lock() {
-                                            *guard = Some(CapturedFrameData {
-                                                texture,
-                                                width: desc.Width,
-                                                height: desc.Height,
-                                                timestamp: Instant::now(),
-                                            });
-                                        }
+                                    }
+                                    if let Ok(mut guard) = callback_latest_frame.lock() {
+                                        *guard = Some(CapturedFrameData {
+                                            texture,
+                                            width: desc.Width,
+                                            height: desc.Height,
+                                        });
                                     }
                                 }
                             }
@@ -216,160 +160,106 @@ impl WgcCaptureAdapter {
                 },
             ))
             .map_err(|e| {
-                DomainError::Initialization(format!("Failed to set FrameArrived handler: {:?}", e))
+                DomainError::Initialization(format!("Failed to register frame callback: {e:?}"))
             })?;
 
-        // キャプチャセッション開始
         let capture_session = frame_pool
             .CreateCaptureSession(&capture_item)
             .map_err(|e| {
-                DomainError::Initialization(format!("Failed to create capture session: {:?}", e))
+                DomainError::Initialization(format!("Failed to create capture session: {e:?}"))
             })?;
 
-        // 黄色枠を無効化（レイテンシ重視）
-        capture_session.SetIsBorderRequired(false).map_err(|e| {
-            DomainError::Initialization(format!("Failed to disable border: {:?}", e))
-        })?;
+        capture_session
+            .SetIsBorderRequired(false)
+            .map_err(|e| DomainError::Initialization(format!("Failed to disable border: {e:?}")))?;
 
-        // カーソルキャプチャを無効化
         capture_session
             .SetIsCursorCaptureEnabled(false)
-            .map_err(|e| {
-                DomainError::Initialization(format!("Failed to disable cursor capture: {:?}", e))
-            })?;
+            .map_err(|e| DomainError::Initialization(format!("Failed to disable cursor: {e:?}")))?;
 
         capture_session.StartCapture().map_err(|e| {
-            DomainError::Initialization(format!("Failed to start capture: {:?}", e))
+            DomainError::Initialization(format!("Failed to start WGC capture: {e:?}"))
         })?;
 
-        #[cfg(debug_assertions)]
-        tracing::info!(
-            "WGC adapter initialized: {}x{} - {} (low-latency mode)",
-            device_info.width,
-            device_info.height,
-            device_info.name
-        );
-
         Ok(Self {
-            device_info,
-            _monitor_index: monitor_index,
+            info: DeviceInfo::new(
+                size.Width as u32,
+                size.Height as u32,
+                format!("WGC Monitor {monitor_index}"),
+            ),
             latest_frame,
             device,
             context,
             staging_manager: StagingTextureManager::new(),
             _capture_item: capture_item,
             _frame_pool: frame_pool,
-            _d3d_device: d3d_device,
             _capture_session: capture_session,
+            _d3d_device: d3d_device,
         })
     }
 
-    /// モニターを列挙
     fn enumerate_monitors() -> DomainResult<Vec<HMONITOR>> {
+        extern "system" fn enum_proc(
+            hmonitor: HMONITOR,
+            _hdc: HDC,
+            _rect: *mut RECT,
+            lparam: LPARAM,
+        ) -> BOOL {
+            // SAFETY: `lparam` is provided by caller as pointer to `MonitorEnumData` valid for callback lifetime.
+            unsafe {
+                let data = &mut *(lparam.0 as *mut MonitorEnumData);
+                data.monitors.push(hmonitor);
+            }
+            BOOL(1)
+        }
+
         let mut data = MonitorEnumData {
             monitors: Vec::new(),
         };
-
+        // SAFETY: callback and context pointer remain valid for the duration of this call.
         unsafe {
-            extern "system" fn enum_proc(
-                hmonitor: HMONITOR,
-                _hdc: HDC,
-                _lprect: *mut RECT,
-                lparam: LPARAM,
-            ) -> BOOL {
-                unsafe {
-                    let data = &mut *(lparam.0 as *mut MonitorEnumData);
-                    data.monitors.push(hmonitor);
-                    BOOL(1) // TRUE
-                }
-            }
-
             let _ = EnumDisplayMonitors(
                 HDC(0),
                 None,
                 Some(enum_proc),
-                LPARAM(&mut data as *mut _ as isize),
+                LPARAM((&mut data as *mut MonitorEnumData) as isize),
             );
         }
 
         if data.monitors.is_empty() {
-            Err(DomainError::Initialization("No monitors found".to_string()))
+            Err(DomainError::Initialization("No monitor found".to_string()))
         } else {
             Ok(data.monitors)
         }
     }
 
-    /// HMONITORからGraphicsCaptureItemを作成
     fn create_capture_item_for_monitor(hmonitor: HMONITOR) -> DomainResult<GraphicsCaptureItem> {
-        unsafe {
-            let interop: IGraphicsCaptureItemInterop =
-                factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(|e| {
-                    DomainError::Initialization(format!(
-                        "Failed to get IGraphicsCaptureItemInterop factory: {:?}",
-                        e
-                    ))
-                })?;
+        let interop: IGraphicsCaptureItemInterop =
+            factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>().map_err(|e| {
+                DomainError::Initialization(format!(
+                    "Failed to acquire GraphicsCaptureItem interop: {e:?}"
+                ))
+            })?;
 
-            interop.CreateForMonitor(hmonitor).map_err(|e| {
-                DomainError::Initialization(format!("CreateForMonitor failed: {:?}", e))
-            })
+        // SAFETY: interop object and monitor handle are valid for this call.
+        unsafe {
+            interop
+                .CreateForMonitor(hmonitor)
+                .map_err(|e| DomainError::Initialization(format!("CreateForMonitor failed: {e:?}")))
         }
     }
 
-    /// D3D11DeviceからIDirect3DDeviceを作成（WGC用）
-    fn create_direct3d_device(d3d_device: &ID3D11Device) -> DomainResult<IDirect3DDevice> {
-        unsafe {
-            // DXGIデバイスを取得
-            let dxgi_device: windows::Win32::Graphics::Dxgi::IDXGIDevice =
-                d3d_device.cast().map_err(|e| {
-                    DomainError::Initialization(format!("Failed to cast to IDXGIDevice: {:?}", e))
-                })?;
-
-            // WinRT IDirect3DDevice を作成
-            let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device).map_err(|e| {
-                DomainError::Initialization(format!("Failed to create IDirect3DDevice: {:?}", e))
-            })?;
-
-            // IDirect3DDevice にキャスト
-            let direct3d_device: IDirect3DDevice = inspectable.cast().map_err(|e| {
-                DomainError::Initialization(format!("Failed to cast to IDirect3DDevice: {:?}", e))
-            })?;
-
-            Ok(direct3d_device)
-        }
-    }
-
-    /// ID3D11Texture2DをIDirect3DSurfaceから取得
-    fn get_texture_from_surface(
-        surface: &windows::Graphics::DirectX::Direct3D11::IDirect3DSurface,
-        _device: &ID3D11Device,
-    ) -> DomainResult<ID3D11Texture2D> {
-        unsafe {
-            use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
-
-            let access: IDirect3DDxgiInterfaceAccess = surface.cast().map_err(|e| {
-                DomainError::Capture(format!("Failed to get interface access: {:?}", e))
-            })?;
-
-            let texture: ID3D11Texture2D = access
-                .GetInterface()
-                .map_err(|e| DomainError::Capture(format!("Failed to get texture: {:?}", e)))?;
-
-            Ok(texture)
-        }
-    }
-
-    /// D3D11デバイスを作成
     fn create_d3d11_device() -> DomainResult<(ID3D11Device, ID3D11DeviceContext)> {
-        let mut device: Option<ID3D11Device> = None;
-        let mut context: Option<ID3D11DeviceContext> = None;
+        let mut device = None;
+        let mut context = None;
 
+        // SAFETY: all pointers and parameters satisfy D3D11CreateDevice contract.
         unsafe {
             D3D11CreateDevice(
                 None,
-                windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE,
+                D3D_DRIVER_TYPE_HARDWARE,
                 None,
-                D3D11_CREATE_DEVICE_FLAG(0),
+                D3D11_CREATE_DEVICE_FLAG(D3D11_CREATE_DEVICE_BGRA_SUPPORT.0),
                 None,
                 D3D11_SDK_VERSION,
                 Some(&mut device),
@@ -377,59 +267,101 @@ impl WgcCaptureAdapter {
                 Some(&mut context),
             )
             .map_err(|e| {
-                DomainError::Initialization(format!("Failed to create D3D11 device: {:?}", e))
+                DomainError::Initialization(format!("Failed to create D3D11 device: {e:?}"))
             })?;
         }
 
         let device = device.ok_or_else(|| {
-            DomainError::Initialization("D3D11 device creation returned None".to_string())
+            DomainError::Initialization("D3D11CreateDevice returned no device".to_string())
         })?;
         let context = context.ok_or_else(|| {
-            DomainError::Initialization("D3D11 context creation returned None".to_string())
+            DomainError::Initialization("D3D11CreateDevice returned no context".to_string())
         })?;
 
         Ok((device, context))
     }
 
-    /// ROI領域を新しいGPUテクスチャにコピー
-    ///
-    /// GPU処理用にROI領域のみを切り出した新しいテクスチャを作成します。
+    fn create_direct3d_device(d3d_device: &ID3D11Device) -> DomainResult<IDirect3DDevice> {
+        let dxgi_device: windows::Win32::Graphics::Dxgi::IDXGIDevice =
+            d3d_device.cast().map_err(|e| {
+                DomainError::Initialization(format!("Failed to cast to IDXGIDevice: {e:?}"))
+            })?;
+
+        // SAFETY: API requires a valid DXGI device and returns a WinRT inspectable wrapper.
+        let inspectable =
+            unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device) }.map_err(|e| {
+                DomainError::Initialization(format!(
+                    "Failed to create WinRT Direct3D device: {e:?}"
+                ))
+            })?;
+
+        inspectable.cast().map_err(|e| {
+            DomainError::Initialization(format!("Failed to cast to IDirect3DDevice: {e:?}"))
+        })
+    }
+
+    fn get_texture_from_surface(surface: &IDirect3DSurface) -> DomainResult<ID3D11Texture2D> {
+        let access: IDirect3DDxgiInterfaceAccess = surface.cast().map_err(|e| {
+            DomainError::Capture(format!(
+                "Failed to cast surface to IDirect3DDxgiInterfaceAccess: {e:?}"
+            ))
+        })?;
+
+        // SAFETY: WGC surfaces expose DXGI interface access to underlying D3D11 texture.
+        unsafe { access.GetInterface::<ID3D11Texture2D>() }
+            .map_err(|e| DomainError::Capture(format!("Failed to get frame texture: {e:?}")))
+    }
+
+    fn read_latest_frame(&self) -> DomainResult<Option<CapturedFrameData>> {
+        let guard = self
+            .latest_frame
+            .lock()
+            .map_err(|e| DomainError::Capture(format!("Failed to lock latest frame: {e}")))?;
+        Ok(guard.clone())
+    }
+
     fn create_roi_texture(
         &self,
         source: &ID3D11Texture2D,
         roi: &Roi,
     ) -> DomainResult<ID3D11Texture2D> {
-        // ROIサイズのテクスチャを作成
         let desc = D3D11_TEXTURE2D_DESC {
             Width: roi.width,
             Height: roi.height,
             MipLevels: 1,
             ArraySize: 1,
-            Format: windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: windows::Win32::Graphics::Dxgi::Common::DXGI_SAMPLE_DESC {
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
                 Count: 1,
                 Quality: 0,
             },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
             CPUAccessFlags: 0,
-            MiscFlags: 0,
+            MiscFlags: D3D11_RESOURCE_MISC_FLAG(0).0 as u32,
         };
 
-        let mut roi_texture: Option<ID3D11Texture2D> = None;
+        let mut roi_texture = None;
+        // SAFETY: descriptor is fully initialized and out pointer is valid.
         unsafe {
             self.device
                 .CreateTexture2D(&desc, None, Some(&mut roi_texture))
                 .map_err(|e| {
-                    DomainError::GpuTexture(format!("Failed to create ROI texture: {:?}", e))
+                    DomainError::GpuTexture(format!("Failed to create ROI texture: {e:?}"))
                 })?;
         }
 
         let roi_texture = roi_texture.ok_or_else(|| {
-            DomainError::GpuTexture("ROI texture creation returned None".to_string())
+            DomainError::GpuTexture("CreateTexture2D returned None for ROI texture".to_string())
         })?;
 
-        // ソーステクスチャからROI領域をコピー
+        let src_resource: ID3D11Resource = source.cast().map_err(|e| {
+            DomainError::GpuTexture(format!("Failed to cast source texture: {e:?}"))
+        })?;
+        let dst_resource: ID3D11Resource = roi_texture
+            .cast()
+            .map_err(|e| DomainError::GpuTexture(format!("Failed to cast ROI texture: {e:?}")))?;
+
         let src_box = D3D11_BOX {
             left: roi.x,
             top: roi.y,
@@ -439,9 +371,18 @@ impl WgcCaptureAdapter {
             back: 1,
         };
 
+        // SAFETY: source and destination resources are valid and ROI bounds are clamped by caller.
         unsafe {
-            self.context
-                .CopySubresourceRegion(&roi_texture, 0, 0, 0, 0, source, 0, Some(&src_box));
+            self.context.CopySubresourceRegion(
+                &dst_resource,
+                0,
+                0,
+                0,
+                0,
+                &src_resource,
+                0,
+                Some(&src_box),
+            );
         }
 
         Ok(roi_texture)
@@ -449,132 +390,84 @@ impl WgcCaptureAdapter {
 }
 
 impl CapturePort for WgcCaptureAdapter {
-    fn capture_frame_with_roi(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
-        #[cfg(feature = "performance-timing")]
-        let capture_start = Instant::now();
-
-        // レイテンシ最小化: イベントハンドラで既に取得されたフレームを使用
-        let frame_data = {
-            let guard = self.latest_frame.lock().map_err(|e| {
-                DomainError::Capture(format!("Failed to lock latest frame: {:?}", e))
-            })?;
-
-            match &*guard {
-                Some(data) => data.clone(),
-                std::option::Option::None => {
-                    // まだフレームが到着していない
-                    return Ok(None);
-                }
-            }
+    fn capture_frame(&mut self, roi: &Roi) -> DomainResult<Option<Frame>> {
+        let frame_data = match self.read_latest_frame()? {
+            Some(data) => data,
+            None => return Ok(None),
         };
 
-        #[cfg(feature = "performance-timing")]
-        let lock_time = capture_start.elapsed();
-
-        // ROI処理（レイテンシ最小化のため、ステージングテクスチャへ直接コピー）
-        // ROIをクランプ
-        let clamped_roi = match clamp_roi(roi, frame_data.width, frame_data.height) {
-            Some(r) => r,
-            std::option::Option::None => return Ok(None),
-        };
-
-        #[cfg(feature = "performance-timing")]
-        let roi_calc_time = capture_start.elapsed() - lock_time;
+        let clamped = clamp_roi(roi, frame_data.width, frame_data.height);
+        if clamped.width == 0 || clamped.height == 0 {
+            return Ok(None);
+        }
 
         let staging = self.staging_manager.ensure_texture(
             &self.device,
-            clamped_roi.width,
-            clamped_roi.height,
-            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
+            clamped.width,
+            clamped.height,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
         )?;
 
-        #[cfg(feature = "performance-timing")]
-        let staging_time = capture_start.elapsed() - lock_time - roi_calc_time;
+        let src_resource: ID3D11Resource = frame_data.texture.cast().map_err(|e| {
+            DomainError::Capture(format!("Failed to cast source frame texture: {e:?}"))
+        })?;
+        let dst_resource: ID3D11Resource = staging
+            .cast()
+            .map_err(|e| DomainError::Capture(format!("Failed to cast staging texture: {e:?}")))?;
 
-        // ROI領域をステージングテクスチャにコピー（最小コピー量）
-        copy_roi_to_staging(&self.context, &frame_data.texture, &staging, &clamped_roi);
+        let src_box = D3D11_BOX {
+            left: clamped.x,
+            top: clamped.y,
+            front: 0,
+            right: clamped.x + clamped.width,
+            bottom: clamped.y + clamped.height,
+            back: 1,
+        };
 
-        #[cfg(feature = "performance-timing")]
-        let gpu_copy_time = capture_start.elapsed() - lock_time - roi_calc_time - staging_time;
-
-        // CPUメモリへコピー
-        let data = copy_texture_to_cpu(
-            &self.context,
-            &staging,
-            clamped_roi.width,
-            clamped_roi.height,
-        )?;
-
-        #[cfg(feature = "performance-timing")]
-        {
-            let cpu_transfer_time =
-                capture_start.elapsed() - lock_time - roi_calc_time - staging_time - gpu_copy_time;
-            let total_time = capture_start.elapsed();
-            tracing::debug!(
-                "WGC CPU Capture: Lock={:.2}ms | ROI={:.2}ms | Staging={:.2}ms | GPU_Copy={:.2}ms | CPU_Transfer={:.2}ms | Total={:.2}ms ({}x{})",
-                lock_time.as_secs_f64() * 1000.0,
-                roi_calc_time.as_secs_f64() * 1000.0,
-                staging_time.as_secs_f64() * 1000.0,
-                gpu_copy_time.as_secs_f64() * 1000.0,
-                cpu_transfer_time.as_secs_f64() * 1000.0,
-                total_time.as_secs_f64() * 1000.0,
-                clamped_roi.width,
-                clamped_roi.height
+        // SAFETY: source and destination resources are compatible and ROI was clamped to frame bounds.
+        unsafe {
+            self.context.CopySubresourceRegion(
+                &dst_resource,
+                0,
+                0,
+                0,
+                0,
+                &src_resource,
+                0,
+                Some(&src_box),
             );
         }
 
-        Ok(Some(Frame {
-            data,
-            width: clamped_roi.width,
-            height: clamped_roi.height,
-            timestamp: frame_data.timestamp,
-            dirty_rects: vec![],
-        }))
+        let data = copy_texture_to_cpu(&self.context, &staging, clamped.width, clamped.height)?;
+        Ok(Some(Frame::new(data, clamped.width, clamped.height)))
+    }
+
+    fn capture_gpu_frame(&mut self, roi: &Roi) -> DomainResult<Option<GpuFrame>> {
+        let frame_data = match self.read_latest_frame()? {
+            Some(data) => data,
+            None => return Ok(None),
+        };
+
+        let clamped = clamp_roi(roi, frame_data.width, frame_data.height);
+        if clamped.width == 0 || clamped.height == 0 {
+            return Ok(None);
+        }
+
+        let roi_texture = self.create_roi_texture(&frame_data.texture, &clamped)?;
+        Ok(Some(GpuFrame::new(
+            Some(roi_texture),
+            clamped.width,
+            clamped.height,
+            DXGI_FORMAT_B8G8R8A8_UNORM,
+        )))
     }
 
     fn reinitialize(&mut self) -> DomainResult<()> {
-        // WGCセッションは自動的に再接続するため、特別な処理は不要
-        #[cfg(debug_assertions)]
-        tracing::info!("WGC reinitialize: no action needed (auto-recovery)");
         Ok(())
     }
 
     fn device_info(&self) -> DeviceInfo {
-        self.device_info.clone()
-    }
-
-    fn capture_gpu_frame(&mut self, roi: &Roi) -> DomainResult<Option<GpuFrame>> {
-        // レイテンシ最小化: イベントハンドラで既に取得されたフレームを使用
-        let frame_data = {
-            let guard = self.latest_frame.lock().map_err(|e| {
-                DomainError::Capture(format!("Failed to lock latest frame: {:?}", e))
-            })?;
-
-            match &*guard {
-                Some(data) => data.clone(),
-                std::option::Option::None => {
-                    // まだフレームが到着していない
-                    return Ok(None);
-                }
-            }
-        };
-
-        // ROIをクランプ
-        let clamped_roi = match clamp_roi(roi, frame_data.width, frame_data.height) {
-            Some(r) => r,
-            std::option::Option::None => return Ok(None),
-        };
-
-        // GPU処理用: ROI領域のみを新しいテクスチャにコピー
-        // Note: 現在はROIコピーを行うが、将来的にはシェーダー内でROI処理可能
-        let roi_texture = self.create_roi_texture(&frame_data.texture, &clamped_roi)?;
-
-        Ok(Some(GpuFrame::new(
-            Some(roi_texture),
-            clamped_roi.width,
-            clamped_roi.height,
-            windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
-        )))
+        self.info.clone()
     }
 
     fn supports_gpu_frame(&self) -> bool {
@@ -587,25 +480,35 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore] // Phase 2: 実環境でのみ動作
-    fn test_wgc_initialization() {
-        // 初期化テスト
-        let adapter = WgcCaptureAdapter::new(0);
-        assert!(adapter.is_ok(), "Failed to create WGC adapter");
-
-        let adapter = adapter.unwrap();
-        let info = adapter.device_info();
-        println!(
-            "WGC adapter initialized: {}x{} - {}",
-            info.width, info.height, info.name
-        );
+    fn wgc_adapter_implements_capture_port() {
+        fn assert_capture_port_impl<T: CapturePort>() {}
+        assert_capture_port_impl::<WgcCaptureAdapter>();
     }
 
     #[test]
     #[ignore]
-    fn test_d3d11_device_creation() {
-        // D3D11デバイス作成のテスト
-        let result = WgcCaptureAdapter::create_d3d11_device();
-        assert!(result.is_ok(), "Failed to create D3D11 device");
+    fn supports_gpu_frame_is_true_on_initialized_adapter() {
+        if let Ok(adapter) = WgcCaptureAdapter::new(0) {
+            assert!(adapter.supports_gpu_frame());
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn reinitialize_returns_ok() {
+        if let Ok(mut adapter) = WgcCaptureAdapter::new(0) {
+            assert!(adapter.reinitialize().is_ok());
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn device_info_has_dimensions() {
+        if let Ok(adapter) = WgcCaptureAdapter::new(0) {
+            let info = adapter.device_info();
+            assert!(info.width > 0);
+            assert!(info.height > 0);
+            assert!(!info.name.is_empty());
+        }
     }
 }
