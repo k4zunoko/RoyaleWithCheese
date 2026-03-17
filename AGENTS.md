@@ -15,17 +15,6 @@
 
 ---
 
-## リポジトリ構成
-
--   `src/application/` — オーケストレーション、スレッド、メトリクス、リカバリー、ランタイム状態
--   `src/domain/` — コア型、ポート、設定、エラーモデル
--   `src/infrastructure/` — キャプチャ、処理、入力、HID、および GPU の具体的アダプタ
--   `tests/` — GPU／ディスプレイなどのハードウェア依存テストを含む統合テスト
--   `config.toml.example` および `CONFIGURATION.md` — ランタイム設定ドキュメント
--   `.cargo/config.toml` — LLVM / libclang / OpenCV のローカル環境設定
-
----
-
 ## 環境およびネイティブ依存関係
 
 -   コマンドはリポジトリのルートから実行してください。
@@ -38,33 +27,6 @@
     -   `OPENCV_LINK_PATHS`
     -   `OPENCV_LINK_LIBS`
 -   このリポジトリは Windows 向けであり、`third_party/` 配下のアセットに依存しています。
-
----
-
-## デフォルトコマンド
-
-Cargo を基本のコマンドインターフェースとして使用してください。
-
-```powershell
-# 高速コンパイルチェック
-cargo check
-
-# デバッグおよびリリースビルド
-cargo build
-cargo build --release
-
-# フォーマット
-cargo fmt
-cargo fmt -- --check
-
-# Lint
-cargo clippy --all-targets -- -D warnings
-
-# テスト
-cargo test
-cargo test --lib
-cargo test --tests
-```
 
 ---
 
@@ -196,14 +158,6 @@ cargo test real_hardware_pipeline_smoke_test -- --ignored --nocapture --test-thr
 -   対応キャプチャソース:
     -   `dda`
     -   `wgc`
-
----
-
-## リポジトリ固有の注意
-
--   `.github/workflows/` に CI は存在しません。
--   `scripts/create-release-tag.ps1` は `package.json` を参照しますが、このリポジトリには存在しません（古いスクリプト）。
--   ネイティブ／GPU／ディスプレイテストは環境によって失敗する可能性があります。
 
 ---
 
