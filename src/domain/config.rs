@@ -59,7 +59,7 @@ pub struct CoordinateTransformConfig {
     pub x_clip_limit: f64,
     /// Y軸クリップリミット (0.0 なら Y 出力を無効化)
     pub y_clip_limit: f64,
-    /// デッドゾーン（中心からの無視距離）
+    /// デッドゾーン（ROI中心からのユークリッド距離）
     #[serde(default)]
     pub dead_zone: f64,
 }

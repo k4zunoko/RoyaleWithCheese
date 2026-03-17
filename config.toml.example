@@ -24,6 +24,7 @@ v_high = 255
 
 [process.coordinate_transform]
 sensitivity = 1.0
+# ROI中心からのユークリッド距離がこの値未満なら X/Y ともに 0 にする
 dead_zone = 0.0
 x_clip_limit = 10.0
 y_clip_limit = 10.0

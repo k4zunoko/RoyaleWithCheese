@@ -109,11 +109,11 @@ pub fn apply_coordinate_transform(
     let mut delta_x = result.center_x as f64 - center_x;
     let mut delta_y = result.center_y as f64 - center_y;
 
-    // 2. dead_zone: deltas inside zone become 0
-    if delta_x.abs() < dead_zone {
+    // 2. dead_zone: ROI中心からのユークリッド距離が閾値未満なら無効化
+    let distance_sq = delta_x * delta_x + delta_y * delta_y;
+    let dead_zone_sq = dead_zone * dead_zone;
+    if distance_sq < dead_zone_sq {
         delta_x = 0.0;
-    }
-    if delta_y.abs() < dead_zone {
         delta_y = 0.0;
     }
 
@@ -489,23 +489,35 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_dead_zone_zeroes_small_delta() {
-        // delta_x = 52 - 50 = 2, dead_zone = 5.0 → 2 < 5 → zeroed
+    fn test_transform_dead_zone_zeroes_small_distance() {
+        // ROI中心からの距離 sqrt(2^2 + 0^2) = 2 < 5 → zeroed
         let result = DetectionResult::detected(52.0, 50.0, 0.5);
         let roi = Roi::new(0, 0, 100, 100);
         let coords = apply_coordinate_transform(&result, &roi, 1.0, 5.0, 100.0, 100.0);
         assert!(coords.detected);
         assert_eq!(coords.delta_x, 0.0);
+        assert_eq!(coords.delta_y, 0.0);
     }
 
     #[test]
-    fn test_transform_dead_zone_passes_large_delta() {
-        // delta_x = 56 - 50 = 6, dead_zone = 5.0 → 6 >= 5 → passes
+    fn test_transform_dead_zone_passes_large_distance() {
+        // ROI中心からの距離 sqrt(6^2 + 0^2) = 6 >= 5 → passes
         let result = DetectionResult::detected(56.0, 50.0, 0.5);
         let roi = Roi::new(0, 0, 100, 100);
         let coords = apply_coordinate_transform(&result, &roi, 2.0, 5.0, 100.0, 100.0);
         assert!(coords.detected);
         assert_eq!(coords.delta_x, 12.0);
+    }
+
+    #[test]
+    fn test_transform_dead_zone_uses_radial_distance_for_diagonal_motion() {
+        // ROI中心からの距離 sqrt(4^2 + 4^2) ≈ 5.66 >= 5 → 対角移動は維持
+        let result = DetectionResult::detected(54.0, 54.0, 0.5);
+        let roi = Roi::new(0, 0, 100, 100);
+        let coords = apply_coordinate_transform(&result, &roi, 1.0, 5.0, 100.0, 100.0);
+        assert!(coords.detected);
+        assert_eq!(coords.delta_x, 4.0);
+        assert_eq!(coords.delta_y, 4.0);
     }
 
     #[test]
@@ -562,13 +574,13 @@ mod tests {
     #[test]
     fn test_transform_order_dead_zone_then_sensitivity_then_clip() {
         let roi = Roi::new(0, 0, 100, 100);
-        // delta=4 (center_x=54): 4 >= dead_zone(3) → * 5.0 = 20.0 → clip(20.0) = 20.0
+        // 距離=4: 4 >= dead_zone(3) → * 5.0 = 20.0 → clip(20.0) = 20.0
         let result_passes = DetectionResult::detected(54.0, 50.0, 0.5);
         let coords_passes = apply_coordinate_transform(&result_passes, &roi, 5.0, 3.0, 20.0, 100.0);
         assert!(coords_passes.detected);
         assert_eq!(coords_passes.delta_x, 20.0);
 
-        // delta=2 (center_x=52): 2 < dead_zone(3) → 0.0 → * 5.0 = 0.0 → clip(0.0) = 0.0
+        // 距離=2: 2 < dead_zone(3) → 0.0 → * 5.0 = 0.0 → clip(0.0) = 0.0
         let result_blocked = DetectionResult::detected(52.0, 50.0, 0.5);
         let coords_blocked =
             apply_coordinate_transform(&result_blocked, &roi, 5.0, 3.0, 20.0, 100.0);
